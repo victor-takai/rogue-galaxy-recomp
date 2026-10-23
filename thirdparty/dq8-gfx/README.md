@@ -304,6 +304,58 @@ Five more fix results:
   lowest interval 26 to 50), the town at 3x from 55.0 to 58.4 (the worker
   82% to 66%); the logged frame is byte-identical at 1x and 3x.
   `DQ8_GFX_CYCLE_SNAPSHOTS=1` cycles them as before.
+- `sdlgpu_backend.cpp`, `sdlgpu_textures`: a replacement pack by region.
+  A whole texture's identity is no name for Rogue Galaxy's 2D art: its
+  font sheet declares 512x512 over rows of other data, which change with
+  the scene. Each UV sprite drawn from an indexed cached texture into the
+  frame has its texture rectangle (a glyph's cell, a label, an icon)
+  hashed as a whole texture is (`GsTextureCache::regionIdentity`: the
+  indices and the palette window). The frame is what the last
+  presentation showed and the target last copied into it (Rogue Galaxy
+  draws at 0 and copies to the displayed 0x70); other targets hold
+  texture animations redrawn every frame (water, sky) and masks (the
+  minimap's, at 0x165, whose alpha levels say what to paint: filtered,
+  it came out grey), and direct-colour textures are movie frames or the
+  frame itself. `setRegionDump` writes each new rectangle through the
+  host's image writer as `TEXELS_CLUT_WxH.png`, alpha doubled (the stats
+  line counts `regions dumped`); the 30 fps walk from the title to the
+  town writes 228, 605 KB. `setRegionReplacements` gives the host's
+  pack: the larger version of what a rectangle holds is a texture of its
+  own, kept by content (`GsTextureCache::replacement`; the least recently
+  drawn go past 768 MB), and the sprite samples it bilinear at that many
+  texels per GS texel, as an upscaled target is, its UVs moved to the
+  rectangle's corner and clamped (REGION_CLAMP) to the texels the GS
+  samples from it: a sprite's UVs often span a texel more than its
+  pixels, and that texel showed the next piece of art (dashes between
+  the item menu's cells). The host answers "pending" while it reads a
+  picture, and the region is drawn as it is meanwhile. Above 1x only.
+  A first version pasted each rectangle into one larger copy of its
+  texture: the item menu, which reloads an icon slot icon after icon,
+  pasted and re-read pictures all the time (the GS worker at 132% of the
+  wall against 64% without the pack, frames of 48 ms), the copy's
+  cleared rest showed through as black lines at the windows' joins, and
+  a memo of each rectangle's identity kept until the texture's next
+  update went stale when the tabs' digit sheet changed under it; now the
+  rectangle is hashed at every draw and the menu takes 69%. The stats
+  line counts `larger regions`; `DQ8_GFX_TRACE_LARGER=1` prints each
+  decision and the displayed buffers (a texture base in hex instead:
+  that texture's, with the region identities). A pack of the collected
+  art tinted red showed every replaced draw red and the minimap as it
+  was; without a pack the logged frames are byte-identical at 1x and 3x.
+- `sdlgpu_backend.cpp`: the presenting submissions go out under the
+  backend lock, after the pending command buffer (`submitAfterPending`).
+  SDL's Vulkan backend (3.2) defragments at a submission that presents,
+  or at any without a window, once some allocation needed a new memory
+  block: it copies every resource of one allocation to new memory within
+  that submission and points the handles at the copies. Commands the GS
+  thread had recorded and not yet submitted still named the old images,
+  so their writes landed there and the copies kept what came before. The
+  item menu creates about 330 of the pack's larger textures as it opens,
+  each uploaded once: in about one run in twenty, digits came out missing
+  ("15" as "1", the tabs' zeros) or as noise ("28"), with the same draws
+  as a good run's. The window
+  thread's present waits for the lock no longer than one GS call; the
+  town at 8x showed no difference beyond noise.
 
 The target trace numbers the batches from each present (`[target] batch N`),
 as a frame log numbers them. `DQ8_GFX_HIDDEN_WINDOW=1` creates the window

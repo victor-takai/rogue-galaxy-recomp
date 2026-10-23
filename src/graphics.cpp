@@ -17,6 +17,7 @@
 #include "loading_screen.h"
 #include "opening.h"
 #include "scene_timing.h"
+#include "texture_pack.h"
 #include "vif1_thread.h"
 #include "widescreen.h"
 #include "ps2_runtime.h"
@@ -217,8 +218,11 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "When a game loads, the story so far appears whole instead of line by line, and Press X comes as soon as "
          "it has loaded.",
          false},
+        {"larger_art", "Larger 2D art",
+         "Letters, menus and icons drawn from their larger versions in textures\\hd, where it has them, above 1x.",
+         true},
     };
-    host.setGameOption = [](const std::string &key, bool on) {
+    host.setGameOption = [&backend](const std::string &key, bool on) {
         if (key == "sixty_fps")
             rg::timing::setSixtyFpsPreferred(on);
         else if (key == "widescreen")
@@ -227,6 +231,8 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
             rg::opening::setSkip(on);
         else if (key == "instant_loading_recap")
             rg::loading::setInstantRecap(on);
+        else if (key == "larger_art")
+            backend.setRegionReplacementsEnabled(on);
     };
     auto menu = std::make_unique<dq8::ui::Overlay>(backend, std::move(settings), settingsPath, std::move(host));
     std::string error;
@@ -302,6 +308,7 @@ Setup::Setup(PS2Runtime &runtime)
         dq8::gfx::setPresentObserver(&debug::noteFrameTime);
         // Aspect ratio Auto follows the Widescreen option.
         sdl->setGameWidescreenQuery([] { return rg::widescreen::wide() ? 1 : 0; });
+        rg::texturePack::install(*sdl);
         if (noWindow)
         {
             std::printf("[rg] GS: sdlgpu, presenting through the runtime window\n");

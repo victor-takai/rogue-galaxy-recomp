@@ -200,6 +200,17 @@ GsTextureCache::GsTextureCache(SdlGpuDevice &device, GsVram &vram, GsTargetCache
 
 GsTextureCache::~GsTextureCache() {
     reset();
+    releaseLarger();
+}
+
+void GsTextureCache::releaseLarger() {
+    if (m_device.valid())
+        for (auto &[key, larger] : m_larger) {
+            (void)key;
+            SDL_ReleaseGPUTexture(m_device.handle(), larger.texture);
+        }
+    m_larger.clear();
+    m_largerBytes = 0u;
 }
 
 void GsTextureCache::reset() {
@@ -280,6 +291,88 @@ GsPageSet GsTextureCache::sourcePagesFor(const GSDrawState &state) const {
         m_lastSourceValid = true;
     }
     return m_lastSourcePages;
+}
+
+GsTextureIdentity GsTextureCache::regionIdentity(const GSDrawState &state, const GsRegion &region) {
+    const GsTextureKey key = keyFor(state);
+    GsTextureIdentity identity;
+    identity.texels = expand(key, region, true);
+    if (gsIsIndexedPsm(key.psm))
+        identity.clut = hashClutWindow(key);
+    return identity;
+}
+
+const std::vector<uint8_t> &GsTextureCache::expandRegion(const GSDrawState &state, const GsRegion &region) {
+    expand(keyFor(state), region);
+    return m_staging;
+}
+
+SDL_GPUTexture *GsTextureCache::replacement(const GSDrawState &state, const GsRegion &region, uint32_t &scale,
+                                            std::string &error) {
+    if (!m_regionLookup || region.empty())
+        return nullptr;
+    const GsTextureIdentity identity = regionIdentity(state, region);
+    // As the pack's files are named (src/texture_pack.cpp).
+    uint64_t id = kHashSeed;
+    for (const uint64_t value : {identity.texels, identity.clut,
+                                 uint64_t(region.width()) << 32u | region.height()}) {
+        id ^= value;
+        id *= 1099511628211ull;
+    }
+    if (const auto larger = m_larger.find(id); larger != m_larger.end()) {
+        larger->second.used = ++m_largerClock;
+        scale = larger->second.scale;
+        return larger->second.texture;
+    }
+    if (m_largerMissing.count(id))
+        return nullptr;
+    uint32_t width = 0u, height = 0u;
+    const int answer = m_regionLookup(identity.texels, identity.clut, region.width(), region.height(), width,
+                                      height, m_regionPixels);
+    if (answer == kRegionPending)
+        return nullptr;
+    const uint32_t factor = width / region.width();
+    if (answer != kRegionReady || factor < 2u || factor > 8u || width != region.width() * factor ||
+        height != region.height() * factor || m_regionPixels.size() != size_t(width) * height * 4u) {
+        m_largerMissing.insert(id);
+        return nullptr;
+    }
+    SDL_GPUTextureCreateInfo info{};
+    info.type = SDL_GPU_TEXTURETYPE_2D;
+    info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    info.width = width;
+    info.height = height;
+    info.layer_count_or_depth = 1u;
+    info.num_levels = 1u;
+    info.sample_count = SDL_GPU_SAMPLECOUNT_1;
+    info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    SDL_GPUTexture *texture = SDL_CreateGPUTexture(m_device.handle(), &info);
+    if (!texture) {
+        error = std::string("SDL_CreateGPUTexture(larger): ") + SDL_GetError();
+        return nullptr;
+    }
+    m_staging.swap(m_regionPixels);
+    if (!uploadRegion(texture, {0u, 0u, width, height}, error)) {
+        SDL_ReleaseGPUTexture(m_device.handle(), texture);
+        return nullptr;
+    }
+    // Past the budget the least recently drawn go; a queued draw of one
+    // lands first.
+    constexpr uint64_t kLargerBudget = 768ull << 20u;
+    m_largerBytes += uint64_t(width) * height * 4u;
+    while (m_largerBytes > kLargerBudget && !m_larger.empty()) {
+        auto oldest = m_larger.begin();
+        for (auto it = m_larger.begin(); it != m_larger.end(); ++it)
+            if (it->second.used < oldest->second.used)
+                oldest = it;
+        beforeRewrite(oldest->second.texture);
+        SDL_ReleaseGPUTexture(m_device.handle(), oldest->second.texture);
+        m_largerBytes -= oldest->second.bytes;
+        m_larger.erase(oldest);
+    }
+    m_larger[id] = {texture, factor, uint64_t(width) * height * 4u, ++m_largerClock};
+    scale = factor;
+    return texture;
 }
 
 GsTextureKey GsTextureCache::keyFor(const GSDrawState &state) {

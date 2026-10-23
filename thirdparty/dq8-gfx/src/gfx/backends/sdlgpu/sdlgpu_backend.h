@@ -12,6 +12,7 @@
 #include <memory>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace dq8::gfx {
 
@@ -37,6 +38,10 @@ struct SdlGpuStats {
     // done in the shader from a snapshot, without framebuffer fetch (Rogue
     // Galaxy: added).
     uint64_t destinationReads = 0u;
+    // Sprite regions written by setRegionDump, and primitives drawn from
+    // the pack's larger versions (Rogue Galaxy: added).
+    uint64_t regionsDumped = 0u;
+    uint64_t regionsReplaced = 0u;
     // Local-to-local transfers done on the GPU, not through local memory.
     uint64_t gpuLocalCopies = 0u;
     // Frames shown straight from a render target, with no readback or CPU
@@ -198,6 +203,28 @@ public:
     using GameWidescreenQuery = int (*)();
     void setGameWidescreenQuery(GameWidescreenQuery query);
     int gameWidescreen() const;
+    // Writes each new region a UV sprite samples from a cached texture -- a
+    // glyph, a menu label, an icon -- as DIRECTORY/TEXELS_CLUT_WxH.png (its
+    // identity in hex, GsTextureCache::regionIdentity; alpha doubled, so the
+    // GS's 0x80 is opaque) through `writer`, once per content: files already
+    // in the directory count as written. For a replacement pack. Before the
+    // game runs (Rogue Galaxy: added).
+    using ImageWriter = bool (*)(const char *path, uint32_t width, uint32_t height, const uint8_t *rgba);
+    void setRegionDump(const std::string &directory, ImageWriter writer);
+    // A replacement pack for those regions: `lookup` is given a region's
+    // identity and size as setRegionDump names it, and answers 2, filling a
+    // larger RGBA image of it (alpha as the GS's, 0x80 opaque) a whole
+    // multiple of that size, 2 to 8; 1 while it is still reading one (the
+    // region is drawn as it is meanwhile); or 0. A UV sprite drawn into the
+    // frame of an upscaled target from a region the pack has is drawn from
+    // that image alone, bilinear and clamped to it. Called on the GS
+    // thread; set before the game runs (Rogue Galaxy: added).
+    using RegionLookup = std::function<int(uint64_t texels, uint64_t clut, uint32_t width, uint32_t height,
+                                           uint32_t &largerWidth, uint32_t &largerHeight,
+                                           std::vector<uint8_t> &rgba)>;
+    void setRegionReplacements(RegionLookup lookup);
+    // Any thread (Rogue Galaxy: added).
+    void setRegionReplacementsEnabled(bool on);
     // Pumps SDL events into the overlay and the pad, and redraws the overlay
     // over the last frame while the game shows none. Returns false when the
     // window wants to close.

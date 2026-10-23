@@ -1119,6 +1119,72 @@ nearest pass so the bilinear one reads nothing outside); `src/graphics.cpp`
 sets 2 (`RG_CROP`). In the town at 3x and 16:9 the picture now runs clean
 to all four edges.
 
+**The 2D art collected for larger versions (2026-10-22).** The user found
+the letters pixelated at 8x. The font is a 512x512 sheet in each 4-bit
+half of one CT32 buffer (T4HL Latin and kana, T4HH kanji), white over 16
+alpha levels, glyphs of about 18x22 drawn about 1:1 as point-sampled
+sprites with the outline as black copies at small offsets; the menus'
+labels (Save, Teleport, Load) are multicolour T8 pictures. Edges redrawn
+in the shader (a B-spline over the coverage, a ramp one host pixel wide)
+were tried and taken out the same day: the user did not like the look,
+and the pictures stayed as they were. The way chosen is a pack of larger
+versions made on the player's machine, matched by content. A whole
+texture's identity cannot be the key, as the font sheet's rows past the
+glyphs hold other data that changes with the scene; each sprite's texture
+rectangle is, a glyph's cell or a label. `textures\RogueGalaxy-collect.bat`
+(`RG_TEXTURE_DUMP`, `src/texture_pack.h`, dq8-gfx's `setRegionDump`)
+writes every new one drawn into the frame; the first try, every target,
+wrote 4,439 files in the walk (water and sky redrawn every frame into
+small targets, movie frames), drawn into the frame 228, 605 KB. The
+user's first session collected 777 (12 MB): both fonts, dozens of menu
+labels, item icons, portraits, and the 46 help pages, each a 512x448
+picture with its text in it. The game reads `textures\hd` at start
+(`RG_TEXTURE_PACK`, the menu's "Larger 2D art"): the larger version of
+what a rectangle holds is a texture of its own, kept by content and read
+from disk on a thread of its own, and the sprite is drawn from it
+bilinear, clamped to the texels the GS samples (dq8-gfx's README has the
+first version's faults: stutters in the item menu, black lines at the
+windows' joins, the tabs' digits drawn as another picture). A first pack
+drew the minimap grey: it is drawn as masks of
+the font's palette into a buffer at 0x165 whose alpha levels say what to
+paint, so the frame is the displayed buffer and the target copied into
+it (0 here, displayed at 0x70), and only indexed textures (the frame
+copy strips went through too). A pack tinted red then showed the memory
+card notice, the load menu, the story so far, the transporter's menu
+and the compass red, the minimap blue. `textures\make-pack.bat`
+(`tools/texture_pack/`) splits each picture into colour (spread into the
+transparent pixels) and transparency, enlarges both with Real-ESRGAN's
+Vulkan build, which the user downloaded, and puts the pairs back. Of its
+two models for drawings, `realesrgan-x4plus-anime` was the sharper but
+turned an "e" of Equipment and the tint of Stereo; `realesr-animevideov3`
+kept the colours and shapes, and is the one used. The build loses the GPU
+on a picture a few pixels across (vkQueueSubmit failed -4) and turns
+every later picture of the run to garbage, so the pictures are padded to
+32 a side and cropped after: the 1,552 then took 7 seconds, the pack
+208 MB. The user found the pack blurred, then, sharpened, like
+watercolour, details lost, outlines heavy, the faces worst. Upscayl's
+models (the same engine; the user installed it) kept colours and detail
+far better, and with them the letters were "much better" but icons and
+faces still not: the pack is the text alone now (`prepare.py`: a font's
+glyphs, a palette's run of grey pictures of one height, and labels, low,
+wide and mostly grey; 200 of the 786 collected), made with UltraSharp
+without sharpening. In the item menu at 8x the letters, digits and labels
+are smooth and the icons and windows keep their pixels; the town at 8x
+held 58.6 frames a second with the first pack. The user then asked for
+xBR, the pixel-art filter, on the pictures and on the letters too:
+`tools/texture_pack/xbr.py` (2xBR level 2, twice for 4x) keeps the art's
+pixels and colours and blends only where an edge crosses a corner. On
+the letters it came out softer than UltraSharp side by side, so the pack
+is both, the 200 text pictures by UltraSharp and the other 546 by xBR
+(`make-pack.bat xbr` takes xBR for the text as well); the 46 help pages
+stay as they are (`make_pack.py --pages`: about 40 seconds each in
+Python). In one item-menu run in about twenty, digits came out missing
+("15" as "1", the tabs' zeros) or as noise ("28"), with the same draws as
+a good run's: SDL defragments memory at a presenting submission, moving
+textures while the GS thread's recorded uploads still named the old ones
+(dq8-gfx's README); the window thread's present now goes out under the
+backend lock after them.
+
 **8x without paging (2026-10-22).** The user, playing at 8x on purpose
 (scale 8 in settings.ini; 3x before), found a place where the frame rate
 fell hard; two F9 windows came after the dips (35 and 30 fps for a second

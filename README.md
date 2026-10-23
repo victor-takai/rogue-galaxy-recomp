@@ -116,6 +116,25 @@ next start; `RG_FPS=30` or `RG_FPS=60` decides for one run). On a 144 Hz
 monitor a frame lasts 2 or 3 refreshes at 60 and 4 or 5 at 30, which reads
 as judder, so 120 Hz or variable refresh looks smoother.
 
+Larger 2D art: the letters, menu labels drawn as pictures, icons, window
+pieces and help pages can be drawn from larger versions made on the machine
+(`src/texture_pack.h`). `textures\RogueGalaxy-collect.bat` plays the game
+while writing each of them that appears on the screen once into
+`textures\collected`, named by its content; the folder only grows with what
+has not been seen yet. `textures\make-pack.bat` then enlarges them 4x into
+`textures\hd`, which the game reads when it starts: the text among them (the
+fonts' glyphs and the menus' labels) with an image upscaler, Upscayl's
+UltraSharp model where Upscayl is installed (or Real-ESRGAN's
+`realesr-animevideov3`, its Windows build from
+github.com/xinntao/Real-ESRGAN/releases extracted into `textures\realesrgan`),
+made ready for it in `textures\to-upscale` (colour and transparency apart,
+small ones padded); the icons, portraits and window pieces with xBR, which
+keeps their pixels' shapes and smooths the staircases between them. The help
+pages stay as they are. `make-pack.bat xbr` enlarges the text with xBR too,
+`make-pack.bat all` everything with the upscaler. The menu's Interface >
+Game > "Larger 2D art" turns it off. All of it is made from the disc, so it stays on the
+machine: `.gitignore` keeps `textures\*\` out of the repository.
+
 ## Running
 
 On Windows, double-click `RogueGalaxy.bat` (or run it from a terminal): it
@@ -197,6 +216,8 @@ thread contexts) and a thread's call chain read from the dump with
 | `RG_SKIP_OPENING=1` | The logos at boot give way to the title screen (the menu's "Skip the opening") |
 | `RG_GS_CAPTURE=DIR` | F7 writes the next frame's batches, GS memory and the renderer's target trace (`RG_GS_FRAMELOG`'s files, as `DIR/capture-N.txt`); `debug\RogueGalaxy-capture.bat` sets it to `build\captures`, for a picture that looks wrong |
 | `RG_CROP=N` | GS pixels left off each edge of the picture (default 2: the border the game leaves black or half drawn, which a television's overscan hid; 0 shows the whole frame) |
+| `RG_TEXTURE_PACK=DIR` | The larger 2D art read from `DIR` instead of `textures\hd` (`src/texture_pack.h`) |
+| `RG_TEXTURE_DUMP=DIR` | Write each new region a sprite draws on the screen from a texture into `DIR` as `TEXELS_CLUT_WxH.png` (`textures\RogueGalaxy-collect.bat`; `src/texture_pack.h`) |
 | `RG_INSTANT_RECAP=1` | The loading screen's story so far appears whole at once, then Press X (the menu's "Show the loading recap at once") |
 | `RG_STICK_SQUARE=0` | Hand the game the host's round analog stick range as it is. By default `src/stick_response.cpp` reshapes both sticks onto the DualShock 2's square range (the direction and the pushed distance stay, the distance counts as the longer axis, so a full diagonal reads full on both), which the game's run threshold was tuned for: with a round stick the party only runs within about 20 degrees of each of the four directions and walks in between |
 | `RG_GS_TIMING=1` | Time every GS backend call on both sides of the worker queue, every 2 s |

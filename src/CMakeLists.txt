@@ -80,6 +80,7 @@ add_executable(roguegalaxy
     scene_timing.cpp
     step_fixes.cpp
     stick_response.cpp
+    texture_pack.cpp
     vif1_thread.cpp
     vu0_flags.cpp
     overlay/overlay_manager.cpp

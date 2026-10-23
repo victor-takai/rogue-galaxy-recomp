@@ -24,8 +24,10 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <filesystem>
 #include <optional>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 // Debug accounting published by ps2xRuntime's GIF frontend (gs_frontend.cpp).
@@ -361,6 +363,64 @@ bool samplesFitSurface(const GSPrimitiveBatch &batch, const GsSurface &surface,
     return fitsU && fitsV;
 }
 
+// A UV sprite's texture rectangle, the art it takes from its texture (a
+// glyph's cell, a label), when it lies within the texture (Rogue Galaxy:
+// added).
+bool spriteTexelRect(const GSPrimitiveBatch &batch, GsRegion &region) {
+    const GSDrawState &state = batch.state;
+    if (state.prim.type != GS_PRIM_SPRITE || !state.prim.fst || batch.vertexCount < 2u)
+        return false;
+    const GSVertex &a = batch.vertices[0];
+    const GSVertex &b = batch.vertices[1];
+    region = {std::min<uint32_t>(a.u, b.u) / 16u, std::min<uint32_t>(a.v, b.v) / 16u,
+              (std::max<uint32_t>(a.u, b.u) + 15u) / 16u, (std::max<uint32_t>(a.v, b.v) + 15u) / 16u};
+    return !region.empty() && region.x1 <= state.textureWidth && region.y1 <= state.textureHeight;
+}
+
+// The texels the GS samples drawing a point-sampled UV sprite, at each
+// covered pixel's position as samplesFitSurface takes it: a sprite's UVs
+// often span a texel more than its pixels, and that last texel, never
+// shown, can hold the next piece of art. False when it covers no pixel
+// (Rogue Galaxy: added).
+bool spriteSampledTexels(const GSPrimitiveBatch &batch, GsRegion &sampled) {
+    const auto &c = batch.state.context;
+    const auto &a = batch.vertices[0];
+    const auto &b = batch.vertices[1];
+    auto axis = [](double p0, double p1, double t0, double t1, uint32_t clip0, uint32_t clip1, uint32_t &first,
+                   uint32_t &end) {
+        if (p0 == p1 || !std::isfinite(p0) || !std::isfinite(p1))
+            return false;
+        const double start = std::max(std::ceil(std::min(p0, p1)), double(clip0));
+        const double last = std::min(std::ceil(std::max(p0, p1)) - 1.0, double(clip1));
+        if (start > last)
+            return false;
+        auto texel = [&](double pixel) {
+            return std::floor(t0 + (t1 - t0) * (pixel - p0) / (p1 - p0) + 1.0 / 256.0);
+        };
+        const double lo = std::min(texel(start), texel(last));
+        const double hi = std::max(texel(start), texel(last));
+        if (lo < 0.0)
+            return false;
+        first = uint32_t(lo);
+        end = uint32_t(hi) + 1u;
+        return true;
+    };
+    return axis(a.x - c.xyoffset.ofx / 16.0, b.x - c.xyoffset.ofx / 16.0, a.u / 16.0, b.u / 16.0, c.scissor.x0,
+                c.scissor.x1, sampled.x0, sampled.x1) &&
+           axis(a.y - c.xyoffset.ofy / 16.0, b.y - c.xyoffset.ofy / 16.0, a.v / 16.0, b.v / 16.0, c.scissor.y0,
+                c.scissor.y1, sampled.y0, sampled.y1);
+}
+
+// What setRegionDump keeps per written region (Rogue Galaxy: added).
+uint64_t regionDumpKey(uint64_t texels, uint64_t clut, uint32_t width, uint32_t height) {
+    uint64_t key = 1469598103934665603ull;
+    for (const uint64_t value : {texels, clut, uint64_t(width) << 32u | height}) {
+        key ^= value;
+        key *= 1099511628211ull;
+    }
+    return key;
+}
+
 // The pixels a draw can write: exact for a sprite at scale 1, where the vertex
 // shader's half-pixel shift covers [ceil(x0), ceil(x1)) as samplesFitSurface
 // assumes, and padded like primitiveBounds otherwise.
@@ -597,6 +657,9 @@ struct SdlGpuBackend::Impl {
         bool alphaPass = false;
         bool textured = false;
         SDL_GPUTexture *texture = nullptr;
+        // The replacement pack's larger texture the open batch draws from
+        // instead (Rogue Galaxy: added).
+        SDL_GPUTexture *larger = nullptr;
         GsPageSet sourcePages{};
         // The texels acquired from the cache under this state so far: a
         // primitive within them needs no cache call. reachAll after an
@@ -658,9 +721,30 @@ struct SdlGpuBackend::Impl {
                     last.reachAll = true;
             }
         }
+        if (last.textured && regionWriter)
+            dumpSpriteRegion(batch, *color);
+        // From the pack's version of the same content or not, as the open
+        // batch draws.
+        SDL_GPUTexture *larger = nullptr;
+        GsRegion largerArea;
+        if (last.textured && regionPack) {
+            uint32_t scale = 0u;
+            larger = largerRegion(batch, *color, scale, largerArea);
+            if (larger != last.larger)
+                return false;
+            if (larger) {
+                const GsClampState clamp = largerClamp(batch, largerArea);
+                const float *bounds = batches[open - span].fragmentUniforms.region;
+                if (bounds[0] != float(clamp.minU) || bounds[1] != float(clamp.maxU) ||
+                    bounds[2] != float(clamp.minV) || bounds[3] != float(clamp.maxV))
+                    return false;
+            }
+        }
         const uint32_t firstVertex = static_cast<uint32_t>(vertices.size());
         appendPrimitive(batch, last.offsetX, last.offsetY, last.depthScale);
         const uint32_t addedVertices = static_cast<uint32_t>(vertices.size()) - firstVertex;
+        if (larger)
+            toLargerTexels(firstVertex, largerArea);
         if (addedVertices == 0u)
             return true;
         ++stats.primitivesDrawn;
@@ -736,6 +820,119 @@ struct SdlGpuBackend::Impl {
     // DQ8_GFX_CYCLE_SNAPSHOTS: the copies into a snapshot texture cycle it,
     // as before, and count against the pending budget (see recordSnapshot).
     const bool cycleSnapshots = std::getenv("DQ8_GFX_CYCLE_SNAPSHOTS") != nullptr;
+    // setRegionDump: where, how, and the regions already written (Rogue
+    // Galaxy: added).
+    std::string regionDumpDirectory;
+    SdlGpuBackend::ImageWriter regionWriter = nullptr;
+    std::unordered_set<uint64_t> dumpedRegions;
+    std::vector<uint8_t> dumpPixels;
+    // The bases of the buffers the last presentation showed, and of the
+    // target last copied into one of them: the frame the HUD, menus and text
+    // are drawn into. Rogue Galaxy draws its frame at 0 and copies it to the
+    // displayed 0x70; the masks of its minimap go into a buffer of the same
+    // size at 0x165, whose alpha levels say what to paint, and stay out
+    // (Rogue Galaxy: added).
+    std::atomic<uint32_t> displayBase1{~0u}, displayBase2{~0u};
+    uint32_t frameSourceBase = ~0u;
+    bool displayed(const GsSurface &target) const {
+        return target.base == displayBase1.load(std::memory_order_relaxed) ||
+               target.base == displayBase2.load(std::memory_order_relaxed);
+    }
+    bool frameTarget(const GsSurface &target) const {
+        return target.base == frameSourceBase || displayed(target);
+    }
+    // setRegionReplacements (Rogue Galaxy: added).
+    bool regionPack = false;
+    std::atomic<bool> regionPackEnabled{true};
+
+    // The pack's version of the region a UV sprite samples (`region`), a
+    // texture of its own at `scale` texels per GS texel; null when it has
+    // none, has not read it yet, or the target is not upscaled.
+    SDL_GPUTexture *largerRegion(const GSPrimitiveBatch &batch, const GsSurface &target, uint32_t &scale,
+                                 GsRegion &region) {
+        if (!regionPack || target.scale <= 1u || !frameTarget(target) ||
+            !gsIsIndexedPsm(batch.state.context.tex0.psm) ||
+            !regionPackEnabled.load(std::memory_order_relaxed) ||
+            !spriteTexelRect(batch, region))
+            return nullptr;
+        std::string error;
+        SDL_GPUTexture *larger = textures->replacement(batch.state, region, scale, error);
+        if (!error.empty())
+            setError(std::move(error));
+        // DQ8_GFX_TRACE_LARGER=1, or a texture base in hex for that one.
+        static const char *traceValue = std::getenv("DQ8_GFX_TRACE_LARGER");
+        static const uint32_t traceBase = traceValue ? uint32_t(std::strtoul(traceValue, nullptr, 16)) : 0u;
+        if (traceValue && traceBase > 1u && traceBase == batch.state.context.tex0.tbp0) {
+            const GsTextureIdentity id = textures->regionIdentity(batch.state, region);
+            std::fprintf(stderr, "[larger] id %016llx_%016llx_%ux%u\n", static_cast<unsigned long long>(id.texels),
+                         static_cast<unsigned long long>(id.clut), region.width(), region.height());
+        }
+        if (traceValue && (traceBase <= 1u || traceBase == batch.state.context.tex0.tbp0))
+            std::fprintf(stderr, "[larger] fbp=%05x tbp=%05x psm=%02x cbp=%05x %ux%u region=%u,%u-%u,%u scale=%u %s test=%llx alpha=%llx\n",
+                         target.base, batch.state.context.tex0.tbp0, batch.state.context.tex0.psm, batch.state.context.tex0.cbp,
+                         batch.state.textureWidth, batch.state.textureHeight, region.x0, region.y0, region.x1, region.y1, scale,
+                         larger ? "yes" : "no", (unsigned long long)batch.state.context.test, (unsigned long long)batch.state.context.alpha);
+        return larger;
+    }
+
+    // The clamp a sprite drawn from its region's own texture takes: to the
+    // texels the GS samples from it, relative to the region (REGION_CLAMP
+    // bounds, inclusive). With a texel past them, the menus' item cells
+    // showed dashes of the next piece at their edges.
+    static GsClampState largerClamp(const GSPrimitiveBatch &batch, const GsRegion &region) {
+        GsRegion sampled;
+        if (!spriteSampledTexels(batch, sampled))
+            sampled = region;
+        const auto inside = [](uint32_t value, uint32_t low, uint32_t end) {
+            return std::min(std::max(value, low), end - 1u) - low;
+        };
+        GsClampState clamp{};
+        clamp.wrapU = kWrapRegionClamp;
+        clamp.wrapV = kWrapRegionClamp;
+        clamp.minU = inside(sampled.x0, region.x0, region.x1);
+        clamp.maxU = inside(sampled.x1 - 1u, region.x0, region.x1);
+        clamp.minV = inside(sampled.y0, region.y0, region.y1);
+        clamp.maxV = inside(sampled.y1 - 1u, region.y0, region.y1);
+        return clamp;
+    }
+
+    // A sprite drawn from its region's own texture samples it from the
+    // region's corner.
+    void toLargerTexels(uint32_t firstVertex, const GsRegion &region) {
+        for (size_t index = firstVertex; index < vertices.size(); ++index) {
+            vertices[index].s -= static_cast<float>(region.x0);
+            vertices[index].t -= static_cast<float>(region.y0);
+        }
+    }
+
+    // Writes the region a UV sprite samples from its cached texture, when
+    // its content is new. Only sprites drawn into the frame (frameTarget),
+    // the HUD, menus and text: other targets hold texture animations redrawn
+    // every frame (water, sky) and masks. Only indexed textures, as all of
+    // Rogue Galaxy's 2D art is: a direct-colour one is a movie's frame or
+    // the frame itself copied for display.
+    void dumpSpriteRegion(const GSPrimitiveBatch &batch, const GsSurface &target) {
+        GsRegion region;
+        if (!regionWriter || !frameTarget(target) || !spriteTexelRect(batch, region) ||
+            region.width() < 2u || region.height() < 2u)
+            return;
+        if (!gsIsIndexedPsm(batch.state.context.tex0.psm))
+            return;
+        const GsTextureIdentity identity = textures->regionIdentity(batch.state, region);
+        if (!dumpedRegions.insert(regionDumpKey(identity.texels, identity.clut, region.width(), region.height()))
+                 .second)
+            return;
+        const std::vector<uint8_t> &rgba = textures->expandRegion(batch.state, region);
+        dumpPixels.assign(rgba.begin(), rgba.end());
+        for (size_t index = 3u; index < dumpPixels.size(); index += 4u)
+            dumpPixels[index] = static_cast<uint8_t>(std::min<uint32_t>(dumpPixels[index] * 2u, 255u));
+        char name[96];
+        std::snprintf(name, sizeof(name), "/%016llx_%016llx_%ux%u.png",
+                      static_cast<unsigned long long>(identity.texels),
+                      static_cast<unsigned long long>(identity.clut), region.width(), region.height());
+        if (regionWriter((regionDumpDirectory + name).c_str(), region.width(), region.height(), dumpPixels.data()))
+            ++stats.regionsDumped;
+    }
     // DQ8_GFX_SUBMIT_DRAWS: a flush of the queued draws records them into the
     // device's pending command buffer and submits it only once this many
     // draws are in it (a readback, a present or the cycled-resource budget
@@ -1949,6 +2146,11 @@ struct SdlGpuBackend::Impl {
         GsPageSet plainSourcePages;
         GsRegion plainReach;
         bool plainBounded = false;
+        // Drawn from the replacement pack's larger texture, at this many
+        // texels per GS texel (Rogue Galaxy: added).
+        SDL_GPUTexture *largerTexture = nullptr;
+        uint32_t largerScale = 0u;
+        GsRegion largerArea;
         if (state.prim.tme) {
             ++stats.texturedPrimitives;
 
@@ -2056,6 +2258,10 @@ struct SdlGpuBackend::Impl {
                 textureScale = static_cast<float>(color->scale);
                 liveTargetTexa();
             } else if (directSample) {
+                // The frame copied into a displayed buffer (Rogue Galaxy:
+                // added; frameTarget).
+                if (displayed(*color) && sampled->width >= 512u)
+                    frameSourceBase = sampled->base;
                 texture = sampled->texture;
                 draw.source = sampled;
                 textureScale = static_cast<float>(sampled->scale);
@@ -2105,6 +2311,15 @@ struct SdlGpuBackend::Impl {
                 plainTextureHandle = texture;
                 plainReach = reach;
                 plainBounded = bounded;
+                if (texture && regionWriter)
+                    dumpSpriteRegion(batch, *color);
+                if (texture && regionPack) {
+                    if (SDL_GPUTexture *larger = largerRegion(batch, *color, largerScale, largerArea)) {
+                        texture = larger;
+                        largerTexture = larger;
+                        ++stats.regionsReplaced;
+                    }
+                }
             }
 
             if (texture) {
@@ -2113,8 +2328,12 @@ struct SdlGpuBackend::Impl {
                     control |= kFragFlagFst;
                 if (context.tex0.tcc != 0u)
                     control |= kFragFlagTcc;
-                if (state.linearFilter)
+                if (state.linearFilter || largerTexture)
                     control |= kFragFlagLinear;
+                // The pack's larger version is filtered across its own
+                // texels, as an upscaled target is (Rogue Galaxy: added).
+                if (largerTexture)
+                    textureScale = static_cast<float>(largerScale);
                 // A sprite's UVs can span a texel more than its pixels (DQ8's
                 // font: 23 texels over 22 pixels), so the GS never reaches the
                 // last one. Sampling between native pixels would, and pull in
@@ -2123,13 +2342,21 @@ struct SdlGpuBackend::Impl {
                 // copies of reinterpreted pixels. Filtering between native
                 // pixels would blend neighbouring halfwords, so they sample
                 // on the native grid too, bilinear or not.
-                if (state.prim.fst && color->scale > 1u &&
+                if (state.prim.fst && color->scale > 1u && !largerTexture &&
                     (!state.linearFilter || color->psm == GS_PSM_CT16 || color->psm == GS_PSM_CT16S))
                     control |= kFragFlagNativeGrid |
                                (std::min<uint32_t>(color->scale, 15u) << kFragTargetScaleShift);
                 textureWidth = static_cast<float>(std::max<uint16_t>(state.textureWidth, 1u));
                 textureHeight = static_cast<float>(std::max<uint16_t>(state.textureHeight, 1u));
                 clampState = gsDecodeClamp(context.clamp);
+                // The pack's version is the region alone, clamped to the
+                // texels the GS samples from it: no tap reaches past them
+                // (Rogue Galaxy: added).
+                if (largerTexture) {
+                    textureWidth = static_cast<float>(largerArea.width());
+                    textureHeight = static_cast<float>(largerArea.height());
+                    clampState = largerClamp(batch, largerArea);
+                }
                 draw.texture = texture;
             } else {
                 // A texture that cannot be built leaves the primitive drawing
@@ -2186,6 +2413,8 @@ struct SdlGpuBackend::Impl {
         const uint32_t addedVertices = static_cast<uint32_t>(vertices.size()) - firstVertex;
         if (addedVertices == 0u)
             return;
+        if (largerTexture)
+            toLargerTexels(firstVertex, largerArea);
 
         ++stats.primitivesDrawn;
         stats.trianglesDrawn += addedVertices / 3u;
@@ -2262,6 +2491,7 @@ struct SdlGpuBackend::Impl {
             last.alphaPass = alphaPass;
             last.textured = state.prim.tme;
             last.texture = plainTextureHandle;
+            last.larger = largerTexture;
             last.sourcePages = plainSourcePages;
             last.offsetX = offsetX;
             last.offsetY = offsetY;
@@ -2976,6 +3206,20 @@ struct SdlGpuBackend::Impl {
                 line += buf;
                 previousUnchanged = textureStats().unchangedUpdates;
             }
+            // Primitives drawn from a replacement pack's larger versions
+            // (Rogue Galaxy: added).
+            if (stats.regionsReplaced != previous.regionsReplaced) {
+                std::snprintf(buf, sizeof(buf), " | larger regions %llu",
+                              static_cast<unsigned long long>(stats.regionsReplaced - previous.regionsReplaced));
+                line += buf;
+            }
+            // Sprite regions written for a replacement pack (Rogue Galaxy:
+            // added).
+            if (stats.regionsDumped != previous.regionsDumped) {
+                std::snprintf(buf, sizeof(buf), " | regions dumped %llu",
+                              static_cast<unsigned long long>(stats.regionsDumped - previous.regionsDumped));
+                line += buf;
+            }
             // Draws blended in the shader from a snapshot (Rogue Galaxy: added).
             if (stats.destinationReads != previous.destinationReads) {
                 std::snprintf(buf, sizeof(buf), " | destination reads %llu",
@@ -3248,6 +3492,24 @@ struct SdlGpuBackend::Impl {
             appliedPresentMode = displayOptions.presentMode;
     }
 
+    // SDL moves resources to defragment memory at a submission that presents
+    // (at any, without a window), once a new memory block was needed: it
+    // copies each one within that submission and points its handle at the
+    // copy. Commands the GS thread has recorded and not yet submitted would
+    // still write the old one, and the copy keep what it held before; a
+    // larger 2D picture created as the item menu opened lost its upload so,
+    // a digit missing or noise. Such a submission from the presenting thread
+    // goes out under the backend lock, after the pending commands (Rogue
+    // Galaxy: added).
+    template <typename Submission>
+    auto submitAfterPending(Submission submission) {
+        std::lock_guard lock(mutex);
+        std::string error;
+        if (!device.submitPending(error))
+            std::fprintf(stderr, "[gfx] pending commands: %s\n", error.c_str());
+        return submission();
+    }
+
     // Fits a frame into the window, draws the overlay over it, and serves any
     // pending capture. A null slot shows the overlay over black.
     //
@@ -3285,7 +3547,7 @@ struct SdlGpuBackend::Impl {
         lastShown = std::chrono::steady_clock::now();
         if (!swapchain || swapchainWidth == 0u || swapchainHeight == 0u) {
             // Minimised or otherwise unavailable this frame; nothing to show.
-            if (!SDL_SubmitGPUCommandBuffer(commands))
+            if (!submitAfterPending([&] { return SDL_SubmitGPUCommandBuffer(commands); }))
                 return fail("SDL_SubmitGPUCommandBuffer(minimized): ");
             return true;
         }
@@ -3333,7 +3595,8 @@ struct SdlGpuBackend::Impl {
             blitRegion(commands, target, whole, swapchain, whole, SDL_GPU_FILTER_NEAREST,
                        SDL_GPU_LOADOP_DONT_CARE);
 
-        SDL_GPUFence *displayed = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+        SDL_GPUFence *displayed =
+            submitAfterPending([&] { return SDL_SubmitGPUCommandBufferAndAcquireFence(commands); });
         if (!displayed)
             return fail("SDL_SubmitGPUCommandBufferAndAcquireFence(present): ");
         if (slot)
@@ -3604,6 +3867,15 @@ struct SdlGpuBackend::Impl {
             return;
         if (circuit1.valid && circuit2.valid)
             ++stats.secondaryDisplayCircuits;
+        {
+            const uint32_t base1 = circuit1.valid ? circuit1.fbp << 5u : ~0u;
+            const uint32_t base2 = circuit2.valid ? circuit2.fbp << 5u : ~0u;
+            static const bool trace = std::getenv("DQ8_GFX_TRACE_LARGER") != nullptr;
+            if (trace && (base1 != displayBase1.load() || base2 != displayBase2.load()))
+                std::fprintf(stderr, "[larger] displayed %05x %05x\n", base1, base2);
+            displayBase1.store(base1, std::memory_order_relaxed);
+            displayBase2.store(base2, std::memory_order_relaxed);
+        }
 
         const uint32_t factor = std::max<uint32_t>(scale, 1u);
         frame.mode = GSPresentationMode::HostPixels;
@@ -3741,7 +4013,8 @@ struct SdlGpuBackend::Impl {
         // A one-shot request keeps readback stalls outside steady FPS measurements.
         std::vector<uint8_t> pixels;
         std::string error;
-        if (device.downloadTexture(slot.texture, slot.width, slot.height, pixels, error)) {
+        const auto download = [&] { return device.downloadTexture(slot.texture, slot.width, slot.height, pixels, error); };
+        if (window ? download() : submitAfterPending(download)) {
             std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> surface(
                 SDL_CreateSurfaceFrom(slot.width, slot.height, SDL_PIXELFORMAT_RGBA32,
                                       pixels.data(), slot.width * 4u), SDL_DestroySurface);
@@ -4237,7 +4510,11 @@ PresentationFrame SdlGpuBackend::DisplayPreparedPresentation(const GSPresentatio
     PresentationFrame frame = prepared->frame;
     if (prepared->download) {
         std::string error;
-        if (!m_impl->device.downloadTexture(slot.texture, slot.width, slot.height, frame.pixels, error))
+        const auto download = [&] {
+            return m_impl->device.downloadTexture(slot.texture, slot.width, slot.height, frame.pixels, error);
+        };
+        // Without a window this submission may defragment (submitAfterPending).
+        if (!(m_impl->window ? download() : m_impl->submitAfterPending(download)))
             throw std::runtime_error(error);
     }
     if (prepared->haveFrame)
@@ -4362,6 +4639,32 @@ void SdlGpuBackend::setGameWidescreenQuery(GameWidescreenQuery query) {
 
 int SdlGpuBackend::gameWidescreen() const {
     return m_impl->gameWidescreen();
+}
+
+void SdlGpuBackend::setRegionReplacements(RegionLookup lookup) {
+    // The texture cache exists from createSdlGpuBackend on.
+    m_impl->regionPack = lookup != nullptr && m_impl->textures;
+    if (m_impl->textures)
+        m_impl->textures->setRegionLookup(std::move(lookup));
+}
+
+void SdlGpuBackend::setRegionReplacementsEnabled(bool on) {
+    m_impl->regionPackEnabled.store(on, std::memory_order_relaxed);
+}
+
+void SdlGpuBackend::setRegionDump(const std::string &directory, ImageWriter writer) {
+    m_impl->regionDumpDirectory = directory;
+    m_impl->regionWriter = writer;
+    m_impl->dumpedRegions.clear();
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    for (const auto &file : std::filesystem::directory_iterator(directory, error)) {
+        unsigned long long texels = 0u, clut = 0u;
+        unsigned width = 0u, height = 0u;
+        if (std::sscanf(file.path().filename().string().c_str(), "%16llx_%16llx_%ux%u.png", &texels, &clut,
+                        &width, &height) == 4)
+            m_impl->dumpedRegions.insert(regionDumpKey(texels, clut, width, height));
+    }
 }
 
 void SdlGpuBackend::setOverlay(SdlGpuOverlay *overlay) {

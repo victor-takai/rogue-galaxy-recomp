@@ -21,6 +21,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace dq8::gfx {
@@ -136,6 +137,34 @@ public:
     // Pages a draw state's texture would be built from, so a caller can tell
     // whether queued work still owes it content.
     GsPageSet sourcePagesFor(const GSDrawState &state) const;
+    // A region of a draw state's texture by content, as a whole texture's
+    // identity is hashed: its texels (indices for an indexed format) and the
+    // palette window; and its final RGBA, row by row, valid until the next
+    // call into the cache. For a replacement pack keyed by what a sprite
+    // samples rather than by the whole texture, whose declared size often
+    // covers rows of other data (Rogue Galaxy: added).
+    GsTextureIdentity regionIdentity(const GSDrawState &state, const GsRegion &region);
+    const std::vector<uint8_t> &expandRegion(const GSDrawState &state, const GsRegion &region);
+    // A replacement pack keyed by region identity: `lookup` is given a
+    // region's texel and palette hashes and size, and answers
+    // kRegionReady, filling a larger RGBA image of it (alpha as the GS's,
+    // 0x80 opaque) a whole multiple of that size; kRegionPending while it
+    // reads one; or kRegionNone (Rogue Galaxy: added).
+    static constexpr int kRegionNone = 0, kRegionPending = 1, kRegionReady = 2;
+    using RegionLookup = std::function<int(uint64_t texels, uint64_t clut, uint32_t width, uint32_t height,
+                                           uint32_t &largerWidth, uint32_t &largerHeight,
+                                           std::vector<uint8_t> &rgba)>;
+    void setRegionLookup(RegionLookup lookup) { m_regionLookup = std::move(lookup); }
+    // After acquire() for the same state: the pack's version of what
+    // `region` holds now, a texture of its own at `scale` texels per GS
+    // texel, or null (none, or not read yet). Kept by content: a region
+    // whose content alternates, an icon slot the menus reload icon by icon,
+    // costs a hash, and the least recently drawn go past a budget. The
+    // region is hashed at every call: a memo kept until the texture's next
+    // update went stale in the item menu, where the tabs' digits came out
+    // as another picture (Rogue Galaxy: added).
+    SDL_GPUTexture *replacement(const GSDrawState &state, const GsRegion &region, uint32_t &scale,
+                                std::string &error);
 
 private:
     struct Entry {
@@ -254,6 +283,22 @@ private:
     std::array<std::vector<Entry *>, kGsPageCount> m_entriesByPage{};
     uint64_t m_invalidateGeneration = 0u;
     std::vector<uint8_t> m_staging;
+    // replacement(): the pack, the image it last handed over, its versions
+    // on the GPU by region content and the contents it has none for (Rogue
+    // Galaxy: added).
+    RegionLookup m_regionLookup;
+    std::vector<uint8_t> m_regionPixels;
+    struct Larger {
+        SDL_GPUTexture *texture = nullptr;
+        uint32_t scale = 0u;
+        uint64_t bytes = 0u;
+        uint64_t used = 0u;
+    };
+    std::unordered_map<uint64_t, Larger> m_larger;
+    std::unordered_set<uint64_t> m_largerMissing;
+    uint64_t m_largerBytes = 0u;
+    uint64_t m_largerClock = 0u;
+    void releaseLarger();
     // Expand scratch: raw texels for one row (indices for indexed PSMs, whole
     // words when the indices ride inside a 32-bit layout), and the palette
     // resolved to final RGBA so the texel loop is one lookup per pixel.
