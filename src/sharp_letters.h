@@ -5,7 +5,11 @@ class PS2Runtime;
 namespace dq8::gfx
 {
 class SdlGpuBackend;
+struct RegionRequest;
 }
+
+#include <cstdint>
+#include <vector>
 
 // The game's letters drawn sharp at any scale (the menu's "Sharp letters").
 //
@@ -32,5 +36,12 @@ void install(PS2Runtime &runtime);
 void installRenderer(dq8::gfx::SdlGpuBackend &backend);
 
 void setEnabled(bool on);
+
+// The region replacement's two halves, which texture_pack.cpp chains in front
+// of the pack's own (the backend takes one lookup): whether a palette is a
+// font's, and the lookup for the regions drawn with one.
+bool wantsRegion(uint64_t palette);
+int lookupRegion(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &height,
+                 std::vector<uint8_t> &rgba);
 
 } // namespace rg::letters

@@ -245,6 +245,9 @@ public:
     void setRegionReplacements(RegionLookup lookup, RegionPalettes palettes);
     // Any thread (Rogue Galaxy: added).
     void setRegionReplacementsEnabled(bool on);
+    // Any thread: the lookup's answers changed; see GsTextureCache::
+    // invalidateRegions (Rogue Galaxy: added).
+    void invalidateRegionReplacements();
     // Pumps SDL events into the overlay and the pad, and redraws the overlay
     // over the last frame while the game shows none. Returns false when the
     // window wants to close.

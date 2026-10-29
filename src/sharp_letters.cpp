@@ -529,9 +529,6 @@ void installRenderer(dq8::gfx::SdlGpuBackend &backend)
     {
         std::thread(worker).detach();
     }
-    backend.setRegionReplacements(&lookup,
-                                  [](uint64_t palette) { return g_tracePalettes || fontOf(palette) != nullptr; });
-    backend.setRegionReplacementsEnabled(g_enabled.load(std::memory_order_relaxed));
 #else
     (void)backend;
 #endif
@@ -544,12 +541,29 @@ void setEnabled(bool on)
         on = g_forced == 1;
     }
     g_enabled.store(on, std::memory_order_relaxed);
-#if defined(RG_HAS_SDLGPU)
-    if (g_backend)
-    {
-        g_backend->setRegionReplacementsEnabled(on);
-    }
-#endif
 }
+
+#if defined(RG_HAS_SDLGPU)
+bool wantsRegion(uint64_t palette)
+{
+    return g_enabled.load(std::memory_order_relaxed) && (g_tracePalettes || fontOf(palette) != nullptr);
+}
+
+int lookupRegion(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &height,
+                 std::vector<uint8_t> &rgba)
+{
+    return lookup(request, width, height, rgba);
+}
+#else
+bool wantsRegion(uint64_t)
+{
+    return false;
+}
+
+int lookupRegion(const dq8::gfx::RegionRequest &, uint32_t &, uint32_t &, std::vector<uint8_t> &)
+{
+    return 0;
+}
+#endif
 
 } // namespace rg::letters

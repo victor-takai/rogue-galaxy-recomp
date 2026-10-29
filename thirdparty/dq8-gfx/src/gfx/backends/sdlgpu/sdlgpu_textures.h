@@ -18,6 +18,7 @@
 #include <SDL3/SDL_gpu.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -149,6 +150,11 @@ public:
         m_regionPalettes = std::move(palettes);
     }
     bool hasRegionLookup() const { return static_cast<bool>(m_regionLookup); }
+    // Any thread: the host's answers changed (a pack switched on or off), so
+    // what was kept of them -- the larger pictures made, and the regions
+    // asked about and answered "none" -- is let go at the next lookup, and
+    // every region is asked about again (Rogue Galaxy: added).
+    void invalidateRegions() { m_regionGeneration.fetch_add(1u, std::memory_order_relaxed); }
     // The host's version of what `region` of an indexed texture holds now,
     // for a target at `wantedScale` (its border version with `border`, its
     // shadow version with `shadow`, its version for a draw past 0x80 alpha
@@ -298,6 +304,8 @@ private:
     };
     std::unordered_map<uint64_t, Larger> m_larger;
     std::unordered_set<uint64_t> m_largerMissing;
+    std::atomic<uint64_t> m_regionGeneration{0u};
+    uint64_t m_regionGenerationSeen = 0u;
     uint64_t m_largerBytes = 0u;
     uint64_t m_largerClock = 0u;
     // The palette last asked about, and the answer.

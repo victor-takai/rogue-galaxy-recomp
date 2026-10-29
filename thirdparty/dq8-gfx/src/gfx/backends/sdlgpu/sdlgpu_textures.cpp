@@ -307,6 +307,18 @@ SDL_GPUTexture *GsTextureCache::replacement(const GSDrawState &state, const GsRe
                                             uint32_t &scale, std::string &error) {
     if (!m_regionLookup || region.empty())
         return nullptr;
+    if (const uint64_t generation = m_regionGeneration.load(std::memory_order_relaxed);
+        generation != m_regionGenerationSeen) {
+        m_regionGenerationSeen = generation;
+        m_largerMissing.clear();
+        // A queued draw of one lands first.
+        for (auto &[id, larger] : m_larger) {
+            (void)id;
+            beforeRewrite(larger.texture);
+        }
+        releaseLarger();
+        m_lastPaletteValid = false;
+    }
     const GsTextureKey key = keyFor(state);
     if (!gsIsIndexedPsm(key.psm))
         return nullptr;

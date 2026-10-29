@@ -4937,6 +4937,11 @@ void SdlGpuBackend::setRegionReplacementsEnabled(bool on) {
     m_impl->regionPackEnabled.store(on, std::memory_order_relaxed);
 }
 
+void SdlGpuBackend::invalidateRegionReplacements() {
+    if (m_impl->textures)
+        m_impl->textures->invalidateRegions();
+}
+
 int SdlGpuBackend::gameWidescreen() const {
     return m_impl->gameWidescreen();
 }

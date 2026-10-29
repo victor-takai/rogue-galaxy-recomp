@@ -31,6 +31,7 @@
 #include "settings_pages.h"
 #include "sharp_letters.h"
 #include "shop_prices.h"
+#include "texture_pack.h"
 #include "vif1_thread.h"
 #include "hud_size.h"
 #include "save_anywhere.h"
@@ -226,7 +227,14 @@ void applyGameOption(const std::string &key, bool on)
     else if (key == "instant_text")
         rg::instanttext::setEnabled(on);
     else if (key == "sharp_letters")
+    {
         rg::letters::setEnabled(on);
+        rg::texturePack::refresh();
+    }
+    else if (key == "texture_packs")
+        rg::texturePack::setEnabled(on);
+    else if (key.rfind("texture_pack_", 0) == 0)
+        rg::texturePack::setPackEnabled(key.substr(13), on);
     else if (key == "save_anywhere")
         rg::saveanywhere::setEnabled(on);
     else if (key == "map_chests")
@@ -600,6 +608,11 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "with a round black border, instead of enlarged as blocks. Each new letter is made the first time it "
          "shows, in a frame or two.",
          true},
+        {"texture_packs", "Texture packs",
+         "Above 1x, the 2D art (icons, window pieces, menu pictures) is drawn from the larger versions in the "
+         "packs under textures\\packs, where they have it. The game ships none: packs are made from your own "
+         "disc or come from others (docs\\TEXTURE_PACKS.md).",
+         true},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},
         {"instant_loading_recap", "Show the loading recap at once",
@@ -662,8 +675,23 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "not let you skip, which can leave the story out of order.",
          false},
     };
+    // One switch for each pack found, under the one for them all.
+    {
+        auto after = std::find_if(host.gameOptions.begin(), host.gameOptions.end(),
+                                  [](const dq8::ui::GameOption &option) { return option.key == "texture_packs"; });
+        for (const rg::texturePack::PackInfo &pack : rg::texturePack::packs())
+        {
+            after = host.gameOptions.insert(
+                        after + 1, {"texture_pack_" + pack.key, "Pack: " + pack.name,
+                                    "The pack's pictures (" + std::to_string(pack.regions) +
+                                        " regions). Packs are read by name, a later one over an earlier one, "
+                                        "textures\\hd first.",
+                                    pack.enabled});
+        }
+    }
     host.gameSections = {
         {"sixty_fps", "Camera and view"},
+        {"texture_packs", "Texture packs"},
         {"skip_opening", "Convenience"},
         {"encounter_rate", "Battles and rewards"},
         {"dev_tools", "Developers"},
@@ -776,6 +804,7 @@ Setup::Setup(PS2Runtime &runtime)
         // Aspect ratio Auto follows the Widescreen option.
         sdl->setGameWidescreenQuery([] { return rg::widescreen::wide() ? 1 : 0; });
         rg::letters::installRenderer(*sdl);
+        rg::texturePack::install(*sdl);
         sdl->setSideImageLoader(&loadBorderImage);
         if (noWindow)
         {
