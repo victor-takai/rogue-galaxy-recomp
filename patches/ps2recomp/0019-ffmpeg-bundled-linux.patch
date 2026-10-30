@@ -1,0 +1,92 @@
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index 513d79e..313f898 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -249,6 +249,11 @@ else()
+ endif()
+ 
+ option(PS2X_ENABLE_FFMPEG "Enable FFmpeg-backed MPEG video decoding" ${PS2X_ENABLE_FFMPEG_DEFAULT})
++# Off Windows the runtime uses the system's FFmpeg (pkg-config). With this on
++# (Linux only) it builds the few parts it calls, statically, from the source
++# tarball, so the game does not depend on the FFmpeg a distribution ships
++# (SteamOS ships none).
++option(PS2X_FFMPEG_BUNDLE "Build a minimal static FFmpeg from source (Linux)" OFF)
+ 
+ if(NOT PS2X_ENABLE_FFMPEG)
+     message(STATUS "FFmpeg disabled; MPEG video decode falls back to stub frames")
+@@ -341,6 +346,75 @@ elseif(WIN32)
+         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyFfmpegDlls.cmake"
+         CACHE INTERNAL
+         "Script used to stage FFmpeg runtime DLLs beside executables")
++elseif(PS2X_FFMPEG_BUNDLE AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
++    include(ExternalProject)
++
++    # What MPEG.cpp calls: the MPEG-2 video decoder and its parser (libavcodec),
++    # libavutil, and libswscale to convert the picture. Nothing else is built,
++    # so no avformat and no swresample.
++    set(FFMPEG_SOURCE_VERSION "7.1.1")
++    set(FFMPEG_SOURCE_URL "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_SOURCE_VERSION}.tar.xz")
++    # Signed by FFmpeg's release key (FCF986EA15E6E293A5644F10B4322F04D67658D8).
++    set(FFMPEG_SOURCE_SHA256 "733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1")
++
++    find_program(FFMPEG_MAKE NAMES gmake make)
++    if(NOT FFMPEG_MAKE)
++        message(FATAL_ERROR "PS2X_FFMPEG_BUNDLE needs GNU make to build FFmpeg")
++    endif()
++    # Without an assembler FFmpeg still builds, with C versions of its x86
++    # routines (the movies decode slower).
++    find_program(FFMPEG_NASM NAMES nasm yasm)
++    if(FFMPEG_NASM)
++        set(FFMPEG_ASM_FLAGS "")
++    else()
++        set(FFMPEG_ASM_FLAGS --disable-x86asm)
++        message(WARNING "No nasm or yasm: FFmpeg is built without its x86 assembly; install nasm for faster movies")
++    endif()
++    cmake_host_system_information(RESULT FFMPEG_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
++
++    set(FFMPEG_PREFIX_DIR "${CMAKE_BINARY_DIR}/ThirdParty/ffmpeg-prefix")
++    set(FFMPEG_INSTALL_DIR "${FFMPEG_PREFIX_DIR}/install")
++    set(FFMPEG_INCLUDE_DIR "${FFMPEG_INSTALL_DIR}/include")
++    set(FFMPEG_LIB_DIR "${FFMPEG_INSTALL_DIR}/lib")
++    # An imported target's include directory must exist when CMake configures.
++    file(MAKE_DIRECTORY "${FFMPEG_INCLUDE_DIR}")
++
++    ExternalProject_Add(ffmpeg_external
++        URL "${FFMPEG_SOURCE_URL}"
++        URL_HASH SHA256=${FFMPEG_SOURCE_SHA256}
++        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
++        PREFIX "${FFMPEG_PREFIX_DIR}"
++        CONFIGURE_COMMAND <SOURCE_DIR>/configure
++            --prefix=${FFMPEG_INSTALL_DIR}
++            --cc=${CMAKE_C_COMPILER}
++            --enable-static --disable-shared --enable-pic
++            --disable-everything --disable-autodetect
++            --disable-programs --disable-doc --disable-debug
++            --disable-avdevice --disable-avformat --disable-avfilter
++            --disable-swresample --disable-postproc --disable-network
++            --enable-avcodec --enable-avutil --enable-swscale
++            --enable-decoder=mpeg2video --enable-parser=mpegvideo
++            ${FFMPEG_ASM_FLAGS}
++        BUILD_COMMAND ${FFMPEG_MAKE} -j${FFMPEG_JOBS}
++        INSTALL_COMMAND ${FFMPEG_MAKE} install
++        BUILD_BYPRODUCTS
++            "${FFMPEG_LIB_DIR}/libavcodec.a"
++            "${FFMPEG_LIB_DIR}/libswscale.a"
++            "${FFMPEG_LIB_DIR}/libavutil.a"
++    )
++
++    foreach(ffmpeg_lib avcodec swscale avutil)
++        add_library(ffmpeg_${ffmpeg_lib} STATIC IMPORTED GLOBAL)
++        set_target_properties(ffmpeg_${ffmpeg_lib} PROPERTIES
++            IMPORTED_LOCATION "${FFMPEG_LIB_DIR}/lib${ffmpeg_lib}.a"
++            INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_INCLUDE_DIR}"
++        )
++        add_dependencies(ffmpeg_${ffmpeg_lib} ffmpeg_external)
++    endforeach()
++
++    # Each library needs the ones after it.
++    add_library(ffmpeg INTERFACE)
++    target_link_libraries(ffmpeg INTERFACE ffmpeg_swscale ffmpeg_avcodec ffmpeg_avutil m pthread)
+ else()
+     find_package(PkgConfig REQUIRED)
+     pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET GLOBAL
