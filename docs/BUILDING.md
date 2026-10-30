@@ -77,7 +77,44 @@ VU0 alone), and CMake compiles every `build/vu-blocks/*.txt` it finds too
 (as many shards at a time as memory allows: each takes 2.2 GB to compile); maintainers:
 `python setup.py vu-blocks-manifest` folds the recordings into the manifest.
 
-## Steam Deck (untested)
+## Linux and Steam Deck
+
+`./install.sh [--iso FILE] [--container | --native]` does what `Install.bat`
+does: it builds on the machine when the tools are there, otherwise (SteamOS,
+whose root is read-only and has no compiler) in a distrobox container named
+`rg-build`, an Ubuntu 24.04 that it creates. `./rogue-galaxy.sh` is the
+launcher (the counterpart of `Rogue Galaxy.exe`): it starts the game, keeps
+the log in `build/last-run.log` and allows a single instance. The game it
+builds needs only the system's Vulkan, SDL's own dependencies (X11 or
+Wayland, ALSA or PulseAudio) and glibc 2.38 or later; the container is only
+for building.
+
+By hand, the steps above work as they are, with these needs:
+
+- clang with lld, CMake 3.24+, Ninja, Python 3.11+, git, GNU make, nasm,
+  xz, pkg-config and `glslc` (or let the build fetch glslang), plus the
+  development packages of Vulkan, X11 (Xext, Xrandr, Xinerama, Xcursor, Xi,
+  Xfixes, Xss), xkbcommon, Wayland, libdecor, udev, GL/EGL, ALSA, PulseAudio
+  and D-Bus.
+- `CC=clang CXX=clang++` in the environment if clang is not your default
+  compiler (`setup.py` passes them on to CMake).
+- FFmpeg is built from source inside the game (a minimal static build with
+  the MPEG-2 decoder and swscale: `PS2X_FFMPEG_BUNDLE`, ON by default on
+  Linux, patch 0019), so no FFmpeg package is needed. `-DPS2X_FFMPEG_BUNDLE=OFF`
+  uses the system's through pkg-config instead.
+- The GNU linker reads each archive once; the game links the generated
+  libraries as a rescanned group (`src/CMakeLists.txt`).
+
+On a Steam Deck play in game mode, with `rogue-galaxy.sh` added to Steam as
+a non-Steam game: a game started from desktop mode gets Steam's desktop
+layout, where the controller acts as a mouse and keyboard. The game starts
+in fullscreen when Steam sets `SteamDeck=1` (game mode) and `aspect = auto`
+follows the window's shape. In desktop mode the CPU can drop to 400 MHz
+during battles (amd-pstate, governor `powersave`); `echo performance | sudo
+tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference`
+avoids it until the next reboot.
+
+## Steam Deck through Proton (untested)
 
 The installer needs Windows, but the game it builds can go to a Steam Deck
 and run through Proton. On the Windows PC, after the install:

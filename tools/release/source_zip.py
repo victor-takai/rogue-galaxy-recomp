@@ -71,7 +71,7 @@ def add(zf: zipfile.ZipFile, name: str, data: bytes, mtime: float) -> None:
     # A day before, in UTC, is in the past in every time zone.
     info = zipfile.ZipInfo(f"{FOLDER}/{name}", time.gmtime(max(mtime - 86400, 315532800))[:6])
     info.compress_type = zipfile.ZIP_DEFLATED
-    info.external_attr = 0o644 << 16
+    info.external_attr = (0o755 if name.endswith(".sh") else 0o644) << 16
     zf.writestr(info, data, compresslevel=9)
 
 
