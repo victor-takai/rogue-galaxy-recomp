@@ -11,6 +11,7 @@
 #include "ps2_runtime.h"
 #include "return_hook.h"
 #include "scene_timing.h"
+#include "text_language.h"
 
 namespace rg::voicelanguage
 {
@@ -65,6 +66,7 @@ uint32_t readWord(const uint8_t *rdram, uint32_t address)
 void staticInitLangCodeTables(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     g_original(rdram, ctx, runtime);
+    rg::textlanguage::chooseAtBoot(rdram, *runtime);
 
     // RG_VOICE_LANG names any language of the game's table (a developer's
     // switch); the menu's switch means Japanese.
