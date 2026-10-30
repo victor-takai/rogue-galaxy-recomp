@@ -23,6 +23,13 @@
   transporter.
 - The free camera no longer lets a button pressed to move it reach a scene
   waiting for one, and gives the controller back at once when turned off.
+- Full bag to storage: an item found when the bag is full goes to the
+  transporter's item storage instead of the overflow, or of being lost
+  (Game > Full bag to storage).
+- Item limit 99: every item that stacks can be carried up to 99 in the bag
+  (Game > Item limit 99).
+- A seventh bag page: 280 items instead of 240 (Game > Seventh bag page,
+  from the next start). Saves made with it still load without it.
 - The free camera no longer leaves the game stuck at the battle's "escape?"
   question (a hit can push the leader out of the battle's area while the
   camera flies): the question turns it off, and it can be answered.

@@ -33,6 +33,7 @@
 #include "shop_prices.h"
 #include "vif1_thread.h"
 #include "hud_size.h"
+#include "inventory.h"
 #include "save_anywhere.h"
 #include "widescreen.h"
 #include "ps2_runtime.h"
@@ -229,6 +230,12 @@ void applyGameOption(const std::string &key, bool on)
         rg::letters::setEnabled(on);
     else if (key == "save_anywhere")
         rg::saveanywhere::setEnabled(on);
+    else if (key == "full_bag_to_storage")
+        rg::inventory::setFullBagToStorage(on);
+    else if (key == "stack_limit_99")
+        rg::inventory::setStackLimit99(on);
+    else if (key == "bigger_bag")
+        rg::inventory::setBiggerBag(on);
     else if (key == "map_chests")
         rg::mapchests::setEnabled(on);
     else if (key == "dev_tools")
@@ -426,6 +433,14 @@ bool pump(void *userData)
             g_menu->notify(freeCamera ? "Free camera on: Start or F6 to leave" : "Free camera off",
                            dq8::ui::Icon::Camera);
         }
+    }
+    // Items the bag had no room for, sent to the storage.
+    if (const unsigned sent = rg::inventory::takeSentToStorage(); sent != 0u && g_menu)
+    {
+        g_menu->notify(sent == 1u ? "The bag is full: the item went to the transporter's item storage"
+                                  : "The bag is full: " + std::to_string(sent) +
+                                        " items went to the transporter's item storage",
+                       dq8::ui::Icon::Info);
     }
     // A newer release found by the check of this run: a toast, once.
     static bool releaseTold = false;
@@ -625,6 +640,21 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "At each start the game asks GitHub for this project's releases (nothing is sent but the request) and, "
          "when a newer one is out, says so and links to it from the menu's About window.",
          true},
+        {"full_bag_to_storage", "Full bag to storage",
+         "An item found when the bag has no room for it (no free space, or as many of that item as the bag "
+         "holds) goes to the transporter's item storage, instead of the overflow the game makes you sort out in "
+         "the item menu, or losing it when that is full too. Shops and the Factory still ask for room in the "
+         "bag.",
+         false},
+        {"stack_limit_99", "Item limit 99",
+         "Every item that stacks can be carried up to 99 in the bag. The game holds some to 20, 30 or 50, healing "
+         "items and boosts among them. Off again, nothing carried is lost; more just cannot be added.",
+         false},
+        {"bigger_bag", "Seventh bag page",
+         "The bag gets a seventh page: 280 spaces instead of 240. The transporter's storage keeps its 320. A save "
+         "made with it still loads without it: the seventh page's items are kept, hidden, until it is on again. "
+         "Takes effect the next time the game starts.",
+         false, 0, 0, 0, "", 1, true, true},
         {"fast_revelation", "Fast Revelation Flow",
          "Items going into a Revelation Flow cell, the zoom, the glow and the ability won, play at up to twice "
          "the speed.",
