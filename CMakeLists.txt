@@ -36,6 +36,13 @@ set(PS2X_BUILD_TEST OFF)
 set(PS2X_BUILD_STUDIO OFF)
 set(PS2X_BUILD_RUNTIME ON)
 set(PS2X_ENABLE_DEBUG_UI OFF)
+# On Linux the runtime's FFmpeg is built from source into the game (the few
+# parts MPEG.cpp calls, static): SteamOS ships none and a distribution's
+# version changes. -DPS2X_FFMPEG_BUNDLE=OFF uses the system's through
+# pkg-config instead.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(PS2X_FFMPEG_BUNDLE ON CACHE BOOL "Build a minimal static FFmpeg from source")
+endif()
 
 # VU1 microprograms compiled to C++ ahead of time, from two places:
 # build/vu1-manifest, which setup.py recompile rebuilds from
