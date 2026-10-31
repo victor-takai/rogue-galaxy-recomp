@@ -134,6 +134,8 @@ struct DecodePiece
     Piece b;
     Decode decode;
     uint8_t maxBones;
+    bool raw = false;         // the positions, normals and UVs arrive as floats and are only skinned
+    bool skinNormals = true;  // false: the normals are left as they are
 };
 constexpr DecodePiece kDecodes[] = {
     {{0x0960u, 0x0a38u, 0xaf62ff64ac67b45full}, Decode::Plain, 0},
@@ -141,6 +143,11 @@ constexpr DecodePiece kDecodes[] = {
     {{0x0960u, 0x0f30u, 0x542b235c4775a710ull}, Decode::Skinned, 2},
     // Positions only, one entry (a shadow volume B).
     {{0x0960u, 0x09e0u, 0xa293001f25f94532ull}, Decode::Plain, 0},
+    // UNVERIFIED (nothing was seen to run them): skinning of positions (and
+    // for 36d686cd the normals) the EE uploaded as floats, in place; the
+    // entries as 26a933a5's (1, 2, 4 bones).
+    {{0x0960u, 0x0e58u, 0x8912329060d1df1eull}, Decode::Skinned, 4, true, false},
+    {{0x0960u, 0x0f98u, 0x36d686cd420c9469ull}, Decode::Skinned, 4, true, true},
 };
 
 // The outline program's A (header with PRIM 1, lines; calls B, then C) and
@@ -237,7 +244,8 @@ const Program *intern(const Program &shape)
     const std::lock_guard<std::mutex> lock(mutex);
     for (const Program &program : programs)
     {
-        if (program.cull == shape.cull && program.color == shape.color && program.depthBounds == shape.depthBounds && program.bounds == shape.bounds && program.affine == shape.affine && program.white == shape.white &&
+        if (program.cull == shape.cull && program.color == shape.color && program.depthBounds == shape.depthBounds && program.bounds == shape.bounds && program.affine == shape.affine && program.white == shape.white && program.rawFloats == shape.rawFloats &&
+            program.skinNormals == shape.skinNormals &&
             program.decode == shape.decode && program.maxBones == shape.maxBones && program.kind == shape.kind &&
             program.uv == shape.uv)
         {
@@ -264,6 +272,7 @@ const Program *intern(const Program &shape)
                                                                          : "";
     name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : shape.uv == Uv::Ramp ? ", ramp (unverified)" : shape.uv == Uv::Beam ? ", projected UVs (beam)" : shape.uv == Uv::Swell ? ", swell (unverified)" : "";
     name += shape.decode == Decode::Skinned ? ", skinned" : "";
+    name += shape.rawFloats ? " floats (unverified)" : "";
     Program &program = programs.emplace_back(shape);
     program.name = name.c_str();
     return &program;
@@ -399,13 +408,21 @@ void putFloats(std::vector<uint8_t> &packet, float x, float y, float z, float w)
 
 // Vertex k's position as B leaves it: the int16 / 32768 times quad 77, then
 // skinned over `bones` bones (0: not skinned).
-void decodePosition(const VuData &vu, uint32_t top, uint32_t k, uint32_t bones, float position[3])
+void decodePosition(const VuData &vu, uint32_t top, uint32_t k, uint32_t bones, float position[3], bool raw = false)
 {
     const uint32_t positions = top + 2u;
     const Vec4 scale = vu.quad(77);
-    position[0] = itof15(vu.word(positions + k, 0)) * scale.x;
-    position[1] = itof15(vu.word(positions + k, 1)) * scale.y;
-    position[2] = itof15(vu.word(positions + k, 2)) * scale.z;
+    if (raw)
+    {
+        for (uint32_t i = 0; i < 3u; ++i)
+            position[i] = fromBits(static_cast<uint32_t>(vu.word(positions + k, i)));
+    }
+    else
+    {
+        position[0] = itof15(vu.word(positions + k, 0)) * scale.x;
+        position[1] = itof15(vu.word(positions + k, 1)) * scale.y;
+        position[2] = itof15(vu.word(positions + k, 2)) * scale.z;
+    }
     if (bones != 0u)
     {
         skin(vu, positions + vu.half(top + 1u, 2) + k * 2u, bones, position);
@@ -441,13 +458,21 @@ void skinNormal(const VuData &vu, uint32_t weights, uint32_t bones, float normal
 
 // Vertex k's normal as B leaves it: the int16 (at TOP+2 plus TOP.w) / 32768
 // times quad 78, then skinned.
-void decodeNormal(const VuData &vu, uint32_t top, uint32_t k, uint32_t bones, float normal[3])
+void decodeNormal(const VuData &vu, uint32_t top, uint32_t k, uint32_t bones, float normal[3], bool raw = false)
 {
     const uint32_t normals = top + 2u + vu.half(top, 3);
     const Vec4 scale = vu.quad(78);
-    normal[0] = itof15(vu.word(normals + k, 0)) * scale.x;
-    normal[1] = itof15(vu.word(normals + k, 1)) * scale.y;
-    normal[2] = itof15(vu.word(normals + k, 2)) * scale.z;
+    if (raw)
+    {
+        for (uint32_t i = 0; i < 3u; ++i)
+            normal[i] = fromBits(static_cast<uint32_t>(vu.word(normals + k, i)));
+    }
+    else
+    {
+        normal[0] = itof15(vu.word(normals + k, 0)) * scale.x;
+        normal[1] = itof15(vu.word(normals + k, 1)) * scale.y;
+        normal[2] = itof15(vu.word(normals + k, 2)) * scale.z;
+    }
     if (bones != 0u)
     {
         skinNormal(vu, top + 2u + vu.half(top + 1u, 2) + k * 2u, bones, normal);
@@ -854,7 +879,7 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
     {
         GSNativeMesh::Vertex &v = chunk.mesh.vertices[k];
         float position[3];
-        decodePosition(vu, top, k, bones, position);
+        decodePosition(vu, top, k, bones, position, program.rawFloats);
         if (program.uv == Uv::Wave)
         {
             wave.xy(position[0], position[1]);
@@ -862,14 +887,14 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
         if (program.uv == Uv::Swell)
         {
             float normal[3];
-            decodeNormal(vu, top, k, bones, normal);
+            decodeNormal(vu, top, k, program.skinNormals ? bones : 0u, normal, program.rawFloats);
             swell.push(position, normal);
         }
         v.x = position[0];
         v.y = position[1];
         v.z = position[2];
-        v.u = itof15(vu.word(uvs + k, 0)) * uvScale.x;
-        v.v = itof15(vu.word(uvs + k, 1)) * uvScale.y;
+        v.u = program.rawFloats ? fromBits(static_cast<uint32_t>(vu.word(uvs + k, 0))) : itof15(vu.word(uvs + k, 0)) * uvScale.x;
+        v.v = program.rawFloats ? fromBits(static_cast<uint32_t>(vu.word(uvs + k, 1))) : itof15(vu.word(uvs + k, 1)) * uvScale.y;
         v.r = perVertex ? colorBase.x * itof15(vu.word(colors + k, 0)) * 256.0f : colorBase.x;
         v.g = perVertex ? colorBase.y * itof15(vu.word(colors + k, 1)) * 256.0f : colorBase.y;
         v.b = perVertex ? colorBase.z * itof15(vu.word(colors + k, 2)) * 256.0f : colorBase.z;
@@ -881,7 +906,7 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
         if (normals)
         {
             float normal[3];
-            decodeNormal(vu, top, k, bones, normal);
+            decodeNormal(vu, top, k, program.skinNormals ? bones : 0u, normal, program.rawFloats);
             if (lit)
             {
                 const Vec4 c = lights.shade(normal);
@@ -1644,7 +1669,7 @@ const Program *identify(const uint8_t *code, uint32_t startPC)
         if (matches(code, own.a))
         {
             const DecodePiece *decode = present(code, kDecodes, &DecodePiece::b);
-            if (!decode || !matches(code, own.c))
+            if (!decode || decode->raw || !matches(code, own.c))
             {
                 return nullptr;
             }
@@ -1687,7 +1712,7 @@ const Program *identify(const uint8_t *code, uint32_t startPC)
         return nullptr;
     }
     Program shape{nullptr,          finish->cull,     color->color, finish->depthBounds,
-                  decode->decode,   decode->maxBones, Kind::Strip,  uv->uv, finish->bounds, finish->affine, finish->white};
+                  decode->decode,   decode->maxBones, Kind::Strip,  uv->uv, finish->bounds, finish->affine, finish->white, decode->raw, decode->skinNormals};
     return intern(shape);
 }
 

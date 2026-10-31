@@ -108,6 +108,9 @@ struct Program
     bool affine = false;
     // The color is (128, 128, 128) with the vertex's alpha (the beam's D, 1bd1b5c0).
     bool white = false;
+    // B only skins floats the EE uploaded (positions, normals and UVs are not int16); normals too when skinNormals.
+    bool rawFloats = false;
+    bool skinNormals = true;
 };
 
 // Whether buildMesh can make the program's chunks a GSNativeMesh; if not,

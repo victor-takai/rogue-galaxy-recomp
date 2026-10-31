@@ -349,6 +349,8 @@ struct Options
     // patched with pieces from raw images, data quads set, and the reference
     // the interpreter's run of the result instead of the recorded kicks.
     bool synth = false;
+    // --synth-floats: each chunk's int16 positions, normals and UVs turned into the floats B would have made.
+    bool floats = false;
     struct CodePatch
     {
         std::string file;
@@ -408,6 +410,11 @@ bool parse(int argc, char **argv, Options &options)
             options.patches.push_back({value.substr(0, a),
                                        static_cast<uint32_t>(std::strtoul(value.c_str() + a + 1, nullptr, 16)),
                                        static_cast<uint32_t>(std::strtoul(value.c_str() + b + 1, nullptr, 16))});
+            options.synth = true;
+        }
+        else if (arg == "--synth-floats")
+        {
+            options.floats = true;
             options.synth = true;
         }
         else if (arg == "--synth-quad" && hasValue)
@@ -549,6 +556,40 @@ int main(int argc, char **argv)
         for (const Options::QuadPoke &poke : options.pokes)
             if (!options.filtered || run.programHash == options.programHash)
                 std::memcpy(run.data.data() + poke.quad * 16u, poke.value, 16u);
+    if (options.floats)
+    {
+        for (Run &run : recording.runs)
+        {
+            if (!(run.header.flags & replay::kRunResume) || (options.filtered && run.programHash != options.programHash))
+                continue;
+            auto word = [&](uint32_t q, uint32_t lane) -> int32_t {
+                int32_t v;
+                std::memcpy(&v, run.data.data() + (q & 1023u) * 16u + lane * 4u, 4u);
+                return v;
+            };
+            auto put = [&](uint32_t q, uint32_t lane, float f) {
+                std::memcpy(run.data.data() + (q & 1023u) * 16u + lane * 4u, &f, 4u);
+            };
+            const uint32_t top = run.header.top;
+            const uint32_t count = static_cast<uint32_t>(word(top, 1)) & 0xFFFFu;
+            const uint32_t positions = top + 2u;
+            const uint32_t normals = positions + (static_cast<uint32_t>(word(top, 3)) & 0xFFFFu);
+            const uint32_t uvs = positions + (static_cast<uint32_t>(word(top + 1u, 0)) & 0xFFFFu);
+            float scale[3][4];
+            for (int q = 0; q < 3; ++q)
+                std::memcpy(scale[q], run.data.data() + (77u + q) * 16u, 16u);
+            for (uint32_t k = 0; k < count; ++k)
+            {
+                for (uint32_t i = 0; i < 3u; ++i)
+                {
+                    put(positions + k, i, static_cast<float>(word(positions + k, i)) / 32768.0f * scale[0][i]);
+                    put(normals + k, i, static_cast<float>(word(normals + k, i)) / 32768.0f * scale[1][i]);
+                }
+                for (uint32_t i = 0; i < 2u; ++i)
+                    put(uvs + k, i, static_cast<float>(word(uvs + k, i)) / 32768.0f * scale[2][i]);
+            }
+        }
+    }
     std::unique_ptr<Vu1Engine> synthReference;
     if (options.synth)
         synthReference = std::make_unique<Vu1Engine>(false);
