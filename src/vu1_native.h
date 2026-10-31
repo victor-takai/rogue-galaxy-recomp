@@ -48,6 +48,7 @@ enum class Color : uint8_t
     Material,  // the material color alone
     Lit,       // four directional lights on the normal, and an ambient
     LitVertex, // that, times the vertex's int16 color / 32768 * 256
+    LitPoint,  // Lit, and four point lights from quads 44-51 (127ca0b4; from the code only)
 };
 
 // What the F piece does to the UVs.

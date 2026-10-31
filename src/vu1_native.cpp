@@ -176,6 +176,9 @@ constexpr ColorPiece kColors[] = {
     // 91f542d0's lighting times the vertex colors (87.y & 0x100: a loop of
     // its own, not read).
     {{0x10e0u, 0x14a0u, 0x2460e5281034f152ull}, Color::LitVertex},
+    // UNVERIFIED (no recording holds it; the oracle's synthetic check agrees
+    // with the interpreter): 91f542d0 and four point lights.
+    {{0x10e0u, 0x1720u, 0x127ca0b4834b2363ull}, Color::LitPoint},
 };
 
 // The D pieces. (a786efabfa469ada is also the name of its compiled routine,
@@ -237,6 +240,7 @@ const Program *intern(const Program &shape)
     name += shape.color == Color::Material && shape.kind == Kind::Strip ? ", one color"
             : shape.color == Color::Lit                                  ? ", lit"
             : shape.color == Color::LitVertex                            ? ", lit vertex colors"
+            : shape.color == Color::LitPoint                             ? ", lit with point lights (unverified)"
                                                                          : "";
     name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : shape.uv == Uv::Ramp ? ", ramp (unverified)" : "";
     name += shape.decode == Decode::Skinned ? ", skinned" : "";
@@ -601,6 +605,63 @@ struct Reflection
 // A chunk read out of VU1 data memory: the FOGCOL packet, the first quads of
 // the program's output (GIF header, PRIM, PRMODE, the vertex tag) and the
 // strip as a mesh.
+// The point lights of the lit-with-points C (127ca0b4), added to the
+// directional sum: four lights, their positions quads 44, 46, 48, 50 (w: the
+// falloff), their colors quads 45, 47, 49, 51 times the material (quad 82).
+// For each: d = light - W, W the vertex through quads 60-63; the normal
+// through quads 64-66; f = max(max(d.N, 0) / |d| - max(d.N, 0) * w, 0), the
+// colors summed in light order, then added to the directional sum. (The code
+// reads each light's 1 / |d| from Q or P as it completes, so the light's own;
+// the interpreter gives the first two vertices of a chunk, whose code runs
+// ahead of the loop, the next light's in two lanes: a difference of a few
+// levels on those two vertices, not reproduced here. Checked against the
+// interpreter with the oracle's synthetic mode, all other vertices.)
+struct PointLights
+{
+    Vec4 col[4], rot[3], position[4];
+    float color[4][3];
+
+    explicit PointLights(const VuData &vu)
+    {
+        for (uint32_t i = 0; i < 4u; ++i)
+            col[i] = vu.quad(60u + i);
+        for (uint32_t i = 0; i < 3u; ++i)
+            rot[i] = vu.quad(64u + i);
+        const Vec4 material = vu.quad(82);
+        for (uint32_t i = 0; i < 4u; ++i)
+        {
+            position[i] = vu.quad(44u + i * 2u);
+            const Vec4 c = vu.quad(45u + i * 2u);
+            color[i][0] = c.x * material.x;
+            color[i][1] = c.y * material.y;
+            color[i][2] = c.z * material.z;
+        }
+    }
+
+    void add(const float p[3], const float n[3], float rgb[3]) const
+    {
+        const float w[3] = {((col[0].x * p[0] + col[1].x * p[1]) + col[2].x * p[2]) + col[3].x * 1.0f,
+                            ((col[0].y * p[0] + col[1].y * p[1]) + col[2].y * p[2]) + col[3].y * 1.0f,
+                            ((col[0].z * p[0] + col[1].z * p[1]) + col[2].z * p[2]) + col[3].z * 1.0f};
+        const float nx = (rot[0].x * n[0] + rot[1].x * n[1]) + rot[2].x * n[2];
+        const float ny = (rot[0].y * n[0] + rot[1].y * n[1]) + rot[2].y * n[2];
+        const float nz = (rot[0].z * n[0] + rot[1].z * n[1]) + rot[2].z * n[2];
+        float sum[3] = {};
+        for (uint32_t i = 0; i < 4u; ++i)
+        {
+            const float dx = position[i].x - w[0], dy = position[i].y - w[1], dz = position[i].z - w[2];
+            const float dot = std::fmax((dx * nx + dy * ny) + dz * nz, 0.0f);
+            const float root = std::sqrt(std::fabs((dx * dx + dy * dy) + (dz * dz) * 1.0f));
+            const float inverse = root != 0.0f ? 1.0f / root : std::numeric_limits<float>::max();
+            const float f = std::fmax(dot * inverse - dot * position[i].w, 0.0f);
+            for (int k = 0; k < 3; ++k)
+                sum[k] = i == 0u ? color[i][k] * f : sum[k] + color[i][k] * f;
+        }
+        for (int k = 0; k < 3; ++k)
+            rgb[k] = rgb[k] + sum[k];
+    }
+};
+
 struct Chunk
 {
     std::vector<uint8_t> fog;
@@ -680,9 +741,10 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
     }
     const bool perVertex = program.color == Color::PerVertex;
     const uint32_t bones = program.decode == Decode::Skinned ? bonesOf(program, vu, top) : 0u;
-    const bool lit = program.color == Color::Lit || program.color == Color::LitVertex;
+    const bool lit = program.color == Color::Lit || program.color == Color::LitVertex || program.color == Color::LitPoint;
     const bool normals = lit || program.uv == Uv::SphereMap || program.uv == Uv::Reflect || program.uv == Uv::Ramp;
     const Lights lights(vu);
+    const PointLights points(vu);
     const SphereMap sphere(vu);
     const Wave wave(vu);
     const Reflection reflection(vu);
@@ -717,6 +779,14 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
                 v.g = c.y;
                 v.b = c.z;
                 v.a = c.w;
+                if (program.color == Color::LitPoint)
+                {
+                    float rgb[3] = {c.x, c.y, c.z};
+                    points.add(position, normal, rgb);
+                    v.r = rgb[0];
+                    v.g = rgb[1];
+                    v.b = rgb[2];
+                }
                 if (program.color == Color::LitVertex)
                 {
                     v.r = c.x * (itof15(vu.word(colors + k, 0)) * 256.0f);
@@ -1507,6 +1577,7 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
             color = candidate.color == Color::PerVertex   ? "C:vertex colors"
                     : candidate.color == Color::Lit       ? "C:lit"
                     : candidate.color == Color::LitVertex ? "C:lit vertex colors"
+                    : candidate.color == Color::LitPoint ? "C:lit, point lights"
                                                           : "C:one color";
         }
     }
