@@ -286,6 +286,18 @@ afterwards (`tools/vu1/census.py --recording build/harvest/*.vu1r`)
 ticks it off. These are guesses, the likeliest first, from what the
 pieces sit beside in the table:
 
+> **Tried 2026-10-31 (late save, the checklist's first pass):** Insectron,
+> battles with finishers and a revive, a boss, water and a waterfall, lava,
+> the planet select and several warps. 35 new programs, all known pieces in
+> new combinations (strips of every lighting and culling kind, shadow
+> volumes, overlay sprites, particles); `check` compared about 250k object
+> setup and 250k skinned-outline chunks and found none different. None of
+> the 16 unseen pieces ran (A 8855d9e7, 964be3bc, cf7a85a5; B 36d686cd,
+> 857fbbc2, 89123290; C 127ca0b4, e3bca52a; D 2feaa9a1, 312d076b; E
+> 56d6683a, ab37fe79, c9e1cecc; F 0594a063, a04c11ce, ad209cd3). Not yet
+> tried: story scenes on the engine, the first-person view, the camera
+> against a wall or the water, a status ailment, an item used in battle.
+
 - [ ] **Insectron** (row 9, F ad209cd3: a reflection map; the
       Insectron arena's floors use it, per RGDecomp's port branch,
       `docs/NATIVE-RENDER.md` "Kind 0x43F100").
