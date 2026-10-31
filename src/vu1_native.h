@@ -25,8 +25,8 @@
 // wave, reflection map, ramp, the beam's), and the programs whose pieces
 // draw by themselves (Kind): the outlines, the shadow volumes, the overlay
 // sprites, the object setup, the particles and the projected texture. The
-// pieces no recording holds (the ramp F, the point-light Cs, the depth-only
-// affine D) are written from the code and checked against the interpreter
+// pieces no recording holds (the ramp and swell Fs, the point-light Cs, the
+// depth-only affine D, the float-skinning Bs, the untextured float-color D) are written from the code and checked against the interpreter
 // only (docs/VU1-NATIVE.md, "Pieces written from the code alone"); their
 // program names say "unverified". Not done, so left to the VU1 chunk by
 // chunk: clipping (slot E) where the GPU does not clip, the paths no

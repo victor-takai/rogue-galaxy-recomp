@@ -52,7 +52,9 @@ the `--program` filtered, `--synth-quad N:x,y,z,w` sets a data quad in each
 of its runs, and the reference becomes the interpreter's run of the result
 instead of the recorded kicks. With `--candidate native` that checks a
 native piece against the VU1 on real vertices without a scene that runs it.
-`tools/vu1/ssa.py` runs the code symbolically (named temporaries) to read
+`--synth-floats` turns each chunk's int16 positions, normals and UVs into the
+floats B would have made (`--synth-float-colors`: the colors too), for pieces
+that take floats. `tools/vu1/ssa.py` runs the code symbolically (named temporaries) to read
 what a pipelined piece computes.
 
 ## The first recording (2026-10-28)
