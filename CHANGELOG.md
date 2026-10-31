@@ -21,9 +21,11 @@
 - Texture packs: above 1x, the 2D art (icons, window pieces, menu
   pictures) can be drawn from larger versions in packs under
   `textures\packs` (folders or zips of PNG or DDS files), each with a switch
-  in the menu (Game > Texture packs). The game ships none; the format is in
+  in the menu (F1 > Textures). The game ships none; the format is in
   docs/TEXTURE_PACKS.md, and `textures\RogueGalaxy-collect.bat` collects
   what a pack can replace from your own play.
+  A pack made for PCSX2 (`TEX0HASH-CLUTHASH-BITS.dds`) works too and replaces
+  scenery and character textures.
 - Save anywhere: in the field, R1 + Triangle opens the transporter's menu
   (Game > Save anywhere, off by default). Such a save loads at the area's
   transporter.

@@ -766,7 +766,8 @@ struct SdlGpuBackend::Impl {
         GsRegion largerArea;
         if (last.textured && regionPack) {
             uint32_t scale = 0u;
-            larger = largerRegion(batch, *color, false, false, scale, largerArea);
+            bool nearest = false; // a texture's own, so merging by texture keeps it
+            larger = largerRegion(batch, *color, false, false, scale, nearest, largerArea);
             if (larger != last.larger)
                 return false;
             if (larger) {
@@ -897,7 +898,7 @@ struct SdlGpuBackend::Impl {
     // per GS texel; null when it has none, has not made it yet, or the
     // target is not upscaled.
     SDL_GPUTexture *largerRegion(const GSPrimitiveBatch &batch, const GsSurface &target, bool border,
-                                 bool shadow, uint32_t &scale, GsRegion &region) {
+                                 bool shadow, uint32_t &scale, bool &nearest, GsRegion &region) {
         if (!regionPack || target.scale <= 1u || !frameTarget(target) ||
             !gsIsIndexedPsm(batch.state.context.tex0.psm) ||
             !regionPackEnabled.load(std::memory_order_relaxed) || !spriteTexelRect(batch, region))
@@ -919,7 +920,7 @@ struct SdlGpuBackend::Impl {
             sampled = region;
         std::string error;
         SDL_GPUTexture *larger =
-            textures->replacement(batch.state, region, sampled, target.scale, border, shadow, bold, scale, error);
+            textures->replacement(batch.state, region, sampled, target.scale, border, shadow, bold, scale, nearest, error);
         if (!error.empty())
             setError(std::move(error));
         return larger;
@@ -2307,6 +2308,10 @@ struct SdlGpuBackend::Impl {
         // Drawn from the host's larger texture, at this many texels per GS
         // texel (Rogue Galaxy: added; setRegionReplacements).
         SDL_GPUTexture *largerTexture = nullptr;
+        bool largerNearest = false;
+        // A whole texture the host has a larger version of, and its factor.
+        uint32_t wholeScale = 0u;
+        bool wholeNearest = false;
         uint32_t largerScale = 0u;
         GsRegion largerArea;
         if (state.prim.tme) {
@@ -2470,10 +2475,20 @@ struct SdlGpuBackend::Impl {
                 plainReach = reach;
                 plainBounded = bounded;
                 if (texture && regionPack) {
-                    largerTexture =
-                        largerRegion(batch, *color, borderRequest, shadowRequest, largerScale, largerArea);
+                    largerTexture = largerRegion(batch, *color, borderRequest, shadowRequest, largerScale,
+                                                 largerNearest, largerArea);
                     if (largerTexture)
                         texture = largerTexture;
+                }
+                if (texture && regionPack && !largerTexture && state.prim.tme) {
+                    std::string wholeError;
+                    if (SDL_GPUTexture *whole =
+                            textures->wholeReplacement(state, wholeScale, wholeNearest, wholeError)) {
+                        texture = whole;
+                        ++stats.regionsReplaced;
+                    } else {
+                        wholeScale = 0u;
+                    }
                 }
             }
             // A border's or a shadow's quad is drawn from its version alone;
@@ -2490,10 +2505,14 @@ struct SdlGpuBackend::Impl {
                     control |= kFragFlagTcc;
                 // The host's larger version is filtered across its own
                 // texels, as an upscaled target is (Rogue Galaxy: added).
-                if (state.linearFilter || largerTexture)
+                // Unless the host asked for its texels as they are (a pack of
+                // pixel art: kRegionNearest).
+                if (largerTexture ? !largerNearest : wholeScale ? !wholeNearest : state.linearFilter)
                     control |= kFragFlagLinear;
                 if (largerTexture)
                     textureScale = static_cast<float>(largerScale);
+                else if (wholeScale)
+                    textureScale = static_cast<float>(wholeScale);
                 // A sprite's UVs can span a texel more than its pixels (DQ8's
                 // font: 23 texels over 22 pixels), so the GS never reaches the
                 // last one. Sampling between native pixels would, and pull in
@@ -2502,7 +2521,7 @@ struct SdlGpuBackend::Impl {
                 // copies of reinterpreted pixels. Filtering between native
                 // pixels would blend neighbouring halfwords, so they sample
                 // on the native grid too, bilinear or not.
-                if (state.prim.fst && color->scale > 1u && !largerTexture &&
+                if (state.prim.fst && color->scale > 1u && !largerTexture && !wholeScale &&
                     (!state.linearFilter || color->psm == GS_PSM_CT16 || color->psm == GS_PSM_CT16S))
                     control |= kFragFlagNativeGrid |
                                (std::min<uint32_t>(color->scale, 15u) << kFragTargetScaleShift);

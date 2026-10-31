@@ -688,6 +688,14 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
                                         "textures\\hd first.",
                                     pack.enabled});
         }
+        // They have a page of their own in the menu (F1 > Textures).
+        for (dq8::ui::GameOption &option : host.gameOptions)
+        {
+            if (option.key.rfind("texture_pack", 0) == 0)
+            {
+                option.page = "textures";
+            }
+        }
     }
     host.gameSections = {
         {"sixty_fps", "Camera and view"},

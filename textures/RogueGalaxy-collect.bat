@@ -10,4 +10,4 @@ rem The repository's folder, above this one.
 for %%I in ("%~dp0..") do set "ROOT=%%~fI"
 if not exist "%~dp0collected" mkdir "%~dp0collected"
 set "RG_TEXTURE_DUMP=%~dp0collected"
-call "%ROOT%\RogueGalaxy.bat" %*
+call "%ROOT%\debug\RogueGalaxy.bat" %*

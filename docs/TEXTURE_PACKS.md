@@ -8,7 +8,7 @@ share. Faces, portraits and painted icons look best as the game draws them;
 packs are for the pieces a pack's author wants to redraw.
 
 Packs are read above 1x (an internal scale of 2x or more). The menu's
-"Texture packs" section on the game's page has one switch for all of them
+Textures page (F1 > Settings > Textures) has one switch for all of them
 and one for each pack found, which take effect at once. The letters of the
 text are not a pack's: "Sharp letters" draws them (`src/sharp_letters.cpp`),
 and the pack is asked about everything else.
@@ -50,6 +50,7 @@ An optional `pack.json` beside them:
   "format": 1,
   "name": "My pack",
   "alpha": "png",
+  "filter": "linear",
   "enabled": true,
   "aliases": { "0123456789ABCDEF_FEDCBA9876543210_24x24": "icons/sword.png" },
   "ignore": ["0123456789ABCDEF_any_24x24"]
@@ -65,16 +66,41 @@ An optional `pack.json` beside them:
   turns it on).
 - `aliases`: a region's name for any PNG inside the pack's folder (no `..`,
   no absolute path), instead of naming the file after the region.
+- `filter`: `"linear"` (the default) draws the pack's pictures filtered
+  across their own texels; `"nearest"` draws them as they are, for pixel art
+  made at a whole multiple of the original (a 4x nearest copy of a region then
+  looks exactly as the game draws it, only finer).
 - `ignore`: regions left as the game draws them, whatever the packs before
   this one gave.
 
 A picture is read on a thread of its own the first time its region shows;
 the game draws the original until it is ready.
 
+## Packs made for PCSX2
+
+A folder of PCSX2's replacement files, `TEX0HASH-CLUTHASH-BITS.dds` (or
+`.png`), works as it is: point `RG_TEXTURE_PACK` at it, or put it in
+`textures\packs`. Such a picture replaces a whole texture, not a region, and
+so reaches what the region pictures do not: the scenery, the characters' skin
+and the 3D art in general. The game names a texture as PCSX2 does, by the XXH3-64
+hash of the GS blocks it covers (8-bit and 4-bit textures only so far), and
+draws the pack's picture, which is 2 to 8 times larger, in its place. The
+palette's hash in the name is not used yet: one picture answers for the
+texels whatever palette they are drawn with. The alpha is read as the console's
+(0x80 opaque), as a PCSX2 pack keeps it.
+
+`RG_TEXTURE_DUMP_WHOLE=DIR` writes each such texture the game builds, whole
+and in colour, as `TEX0HASH-CLUTHASH-BITS.pam` (RGBA, alpha as the GS's),
+to make a pack for the textures the game really uses. The two textures that
+differ only by palette get a file each. The disc does not give the list
+beforehand: the game builds most of its 8-bit textures in memory from several
+pieces, so only what the game draws names them.
+
+xxHash (`xxhash.h`, in `thirdparty/dq8-gfx`) is Yann Collet's, BSD 2-Clause.
+
 ## Not yet
 
-A filter choice (the pictures are drawn bilinear), and changing the order of
-the packs from the menu. Movies and render targets are never collected.
+Changing the order of the packs from the menu; the palette's hash for a PCSX2 picture; 4-bit-high textures; keeping a PCSX2 picture compressed on the GPU. Movies and render targets are never collected.
 
 ## Checking the readers
 

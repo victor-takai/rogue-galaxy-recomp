@@ -85,6 +85,8 @@ struct Entry
     std::shared_ptr<zip::Archive> zip;
     // The file's alpha is the GS's already (0x80 opaque), not a PNG's 0 to 255.
     bool rawAlpha = false;
+    // Drawn from its own texels, not filtered across them (pack.json's "filter").
+    bool nearest = false;
 };
 
 struct Pack
@@ -112,6 +114,7 @@ struct Image
 {
     uint32_t width = 0u, height = 0u;
     std::vector<uint8_t> rgba;
+    bool nearest = false;
 };
 struct Pending
 {
@@ -150,6 +153,25 @@ bool parseRegionName(const std::string &name, uint64_t &key, bool &wildcard)
         return false;
     }
     key = regionKey(texels, clut, width, height);
+    return true;
+}
+
+// A whole texture as PCSX2 names it, "TEX0HASH-CLUTHASH-BITS" (BITS: the
+// format in its low 6 bits, then log2 of the width and of the height in 4 bits
+// each), no extension. The palette's hash is not used: one picture answers for
+// the texels with any palette.
+constexpr uint64_t kWholeClut = 0x57484f4c45ull;
+
+bool parseWholeName(const std::string &name, uint64_t &key)
+{
+    unsigned long long texels = 0u, clut = 0u;
+    unsigned bits = 0u;
+    char tail = 0;
+    if (std::sscanf(name.c_str(), "%16llx-%16llx-%8x%c", &texels, &clut, &bits, &tail) != 3 || name.size() != 42u)
+    {
+        return false;
+    }
+    key = regionKey(texels, kWholeClut, 1u << ((bits >> 6u) & 15u), 1u << ((bits >> 10u) & 15u));
     return true;
 }
 
@@ -253,6 +275,7 @@ bool loadPack(const Source &source, const std::string &id, Pack &pack)
     pack.id = id;
     pack.name = id;
     bool rawAlpha = false;
+    bool nearest = false;
     rg::json::Value index;
     if (std::vector<uint8_t> text; source.read("pack.json", text))
     {
@@ -283,6 +306,19 @@ bool loadPack(const Source &source, const std::string &id, Pack &pack)
         {
             rawAlpha = true;
         }
+        if (const auto *filter = index.find("filter");
+            filter && filter->type == rg::json::Value::Type::String)
+        {
+            if (filter->string == "nearest")
+            {
+                nearest = true;
+            }
+            else if (filter->string != "linear")
+            {
+                std::fprintf(stderr, "[rg] texture pack %s: filter \"%s\" is neither \"linear\" nor \"nearest\"\n",
+                             id.c_str(), filter->string.c_str());
+            }
+        }
     }
     auto add = [&](const std::string &region, const std::string &relative) {
         uint64_t key = 0u;
@@ -292,7 +328,9 @@ bool loadPack(const Source &source, const std::string &id, Pack &pack)
             std::fprintf(stderr, "[rg] texture pack %s: %s is no region's name\n", id.c_str(), region.c_str());
             return;
         }
-        (wildcard ? pack.wildcard : pack.exact)[key] = source.entry(relative, rawAlpha);
+        Entry made = source.entry(relative, rawAlpha);
+        made.nearest = nearest;
+        (wildcard ? pack.wildcard : pack.exact)[key] = std::move(made);
         ++pack.regions;
     };
     for (const std::string &file : source.pictures())
@@ -303,6 +341,14 @@ bool loadPack(const Source &source, const std::string &id, Pack &pack)
         if (parseRegionName(stem, key, wildcard))
         {
             add(stem, file);
+        }
+        else if (parseWholeName(stem, key))
+        {
+            // A PCSX2 pack keeps the console's alpha (0x80 opaque).
+            Entry made = source.entry(file, true);
+            made.nearest = nearest;
+            pack.exact[key] = std::move(made);
+            ++pack.regions;
         }
     }
     if (const auto *aliases = index.find("aliases"); aliases && aliases->type == rg::json::Value::Type::Object)
@@ -565,6 +611,7 @@ void reader()
             std::fprintf(stderr, "[rg] larger 2D art: cannot read %s\n", job.entry.path.c_str());
             image = Image{};
         }
+        image.nearest = job.entry.nearest;
         std::lock_guard<std::mutex> lock(g_mutex);
         // Not for a pack that has been switched since.
         if (job.generation == g_generation)
@@ -618,7 +665,9 @@ void collect(const dq8::gfx::RegionRequest &request)
         return;
     }
     Dump dump{std::move(name), request.width, request.height, {}};
-    dump.rgba.assign(request.rgba, request.rgba + size_t(request.width) * request.height * 4u);
+    // The whole region: another draw of it may show the texels this one does not.
+    const uint8_t *whole = request.full ? request.full : request.rgba;
+    dump.rgba.assign(whole, whole + size_t(request.width) * request.height * 4u);
     g_dumpQueue.push_back(std::move(dump));
     g_dumpWake.notify_one();
 }
@@ -633,6 +682,43 @@ bool wanted(uint64_t clut)
 
 int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &height, std::vector<uint8_t> &rgba)
 {
+    if (request.whole)
+    {
+        if (!g_enabled.load(std::memory_order_relaxed))
+        {
+            return dq8::gfx::kRegionNone;
+        }
+        // Looked up as a region of that name, with no palette.
+        dq8::gfx::RegionRequest named = request;
+        named.clut = kWholeClut;
+        const uint64_t key = regionKey(named.texels, named.clut, named.width, named.height);
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const auto found = g_merged->exact.find(key);
+        if (found == g_merged->exact.end())
+        {
+            return dq8::gfx::kRegionNone;
+        }
+        if (const auto ready = g_ready.find(key); ready != g_ready.end())
+        {
+            Image image = std::move(ready->second);
+            g_ready.erase(ready);
+            g_asked.erase(key);
+            if (image.rgba.empty())
+            {
+                return dq8::gfx::kRegionNone;
+            }
+            width = image.width;
+            height = image.height;
+            rgba = std::move(image.rgba);
+            return image.nearest ? dq8::gfx::kRegionReady | dq8::gfx::kRegionNearest : dq8::gfx::kRegionReady;
+        }
+        if (g_asked.insert(key).second)
+        {
+            g_queue.push_back(Pending{key, g_generation, found->second});
+            g_wake.notify_one();
+        }
+        return dq8::gfx::kRegionPending;
+    }
     if (rg::letters::wantsRegion(request.clut))
     {
         return rg::letters::lookupRegion(request, width, height, rgba);
@@ -665,7 +751,7 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
         width = image.width;
         height = image.height;
         rgba = std::move(image.rgba);
-        return dq8::gfx::kRegionReady;
+        return image.nearest ? dq8::gfx::kRegionReady | dq8::gfx::kRegionNearest : dq8::gfx::kRegionReady;
     }
     if (g_asked.insert(key).second)
     {

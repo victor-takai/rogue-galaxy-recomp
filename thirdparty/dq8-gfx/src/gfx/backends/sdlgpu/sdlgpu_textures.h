@@ -171,7 +171,12 @@ public:
     // descender's end, which traced and bordered stuck out below.
     SDL_GPUTexture *replacement(const GSDrawState &state, const GsRegion &region, const GsRegion &sampled,
                                 uint32_t wantedScale, bool border, bool shadow, bool bold, uint32_t &scale,
-                                std::string &error);
+                                bool &nearest, std::string &error);
+    // A larger version of the whole texture `acquire` last gave for `state`,
+    // by the hash PCSX2 names it with (a pack made for PCSX2), drawn from at
+    // `scale` times the texels. Null while the host is still reading it, or
+    // when it has none (Rogue Galaxy: added).
+    SDL_GPUTexture *wholeReplacement(const GSDrawState &state, uint32_t &scale, bool &nearest, std::string &error);
 
 private:
     struct Entry {
@@ -210,6 +215,10 @@ private:
         // over several of a write's pages is visited once (Rogue Galaxy:
         // added).
         uint64_t invalidated = 0u;
+        // wholeReplacement(): PCSX2's hash of the texture, valid while
+        // `identity.texels` is what it was computed for.
+        uint64_t pcsx2 = 0u;
+        uint64_t pcsx2For = 0u;
     };
 
     std::function<void(SDL_GPUTexture *)> m_beforeRewrite;
@@ -301,9 +310,11 @@ private:
         uint32_t scale = 0u;
         uint64_t bytes = 0u;
         uint64_t used = 0u;
+        bool nearest = false;
     };
     std::unordered_map<uint64_t, Larger> m_larger;
     std::unordered_set<uint64_t> m_largerMissing;
+    std::vector<uint8_t> m_regionFull;
     std::atomic<uint64_t> m_regionGeneration{0u};
     uint64_t m_regionGenerationSeen = 0u;
     uint64_t m_largerBytes = 0u;
@@ -313,6 +324,13 @@ private:
     bool m_lastPaletteWanted = false;
     bool m_lastPaletteValid = false;
     void releaseLarger();
+    // Lets go of the larger versions when the host changed what it answers.
+    void syncRegionGeneration();
+    // Uploads the host's picture (m_regionPixels, width x height) and keeps it
+    // under `id`; null with `error` set if the GPU refuses it.
+    SDL_GPUTexture *storeLarger(uint64_t id, uint32_t factor, bool nearest, uint32_t width, uint32_t height,
+                                std::string &error);
+    std::vector<uint8_t> m_wholeBlocks;
     // Expand scratch: raw texels for one row (indices for indexed PSMs, whole
     // words when the indices ride inside a 32-bit layout), and the palette
     // resolved to final RGBA so the texel loop is one lookup per pixel.
