@@ -55,6 +55,7 @@ enum class Uv : uint8_t
 {
     Plain,     // nothing, unless quad 88.xy scrolls them (declined)
     SphereMap, // replaced by the normal in view space, as (n.xy + 1) / 2
+    Reflect,   // replaced by the view vector reflected in the normal, as (r.x + 1) / 2 and (r.z + 1) / 2 (ad209cd3)
     Wave,      // the UVs stay; each position turned in x and y about (0, quad 84.x) by an angle growing with y (9df36d6a)
 };
 

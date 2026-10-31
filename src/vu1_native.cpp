@@ -31,7 +31,7 @@
 //   F 0x39d0 nothing unless quad 88.xy is set (scrolling UVs), or a
 //            sphere map from the normals, or the wave (9df36d6a): the
 //            positions turned in x and y about (0, quad 84.x), by an angle
-//            growing with y;
+//            growing with y, or a reflection map (ad209cd3);
 //   C 0x10e0 the vertex colors: the int16 color / 32768 * 256 times
 //            quad 82 * quad 42 + quad 83 * 128 (82.w scaled by 81.w), or
 //            that color alone, or lights on the normal;
@@ -97,7 +97,8 @@ constexpr const char *kCommonNames[] = {"A"};
 
 // The F pieces (A calls F after B, before C): d3f6f631 scrolls the UVs by
 // quad 88.xy (declined when set), 150031ee replaces them by a sphere map,
-// 9df36d6a bends the positions (below, the wave).
+// 9df36d6a bends the positions (below, the wave), ad209cd3 replaces the UVs
+// by a reflection map.
 struct UvPiece
 {
     Piece f;
@@ -107,6 +108,7 @@ constexpr UvPiece kUvs[] = {
     {{0x39d0u, 0x3a68u, 0xd3f6f6312a13ff1cull}, Uv::Plain},
     {{0x39d0u, 0x3b70u, 0x150031ee1534d185ull}, Uv::SphereMap},
     {{0x39d0u, 0x3b98u, 0x9df36d6a55fdb496ull}, Uv::Wave},
+    {{0x39d0u, 0x3d10u, 0xad209cd3feea3c5dull}, Uv::Reflect},
 };
 
 // The B pieces. A calls B at 0x960, or with quad 76.z set at 0x960 plus
@@ -228,7 +230,7 @@ const Program *intern(const Program &shape)
             : shape.color == Color::Lit                                  ? ", lit"
             : shape.color == Color::LitVertex                            ? ", lit vertex colors"
                                                                          : "";
-    name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : "";
+    name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : "";
     name += shape.decode == Decode::Skinned ? ", skinned" : "";
     Program &program = programs.emplace_back(shape);
     program.name = name.c_str();
@@ -531,6 +533,43 @@ struct Wave
     }
 };
 
+// The reflection F (ad209cd3): per vertex, W = the position through the
+// object matrix (quads 60-63, a column each), V = (W - quad 28) times ERLENG
+// (1 / its length), N = the normal through quads 64-66 (rotation only), r =
+// V - N * 2 (V.N); the UV is ((r.x + 1) / 2, (r.z + 1) / 2). Sums run in the
+// VU's order (the accumulator adds one product at a time).
+struct Reflection
+{
+    Vec4 col[4], rot[3], eye;
+
+    explicit Reflection(const VuData &vu)
+    {
+        for (uint32_t i = 0; i < 4u; ++i)
+            col[i] = vu.quad(60u + i);
+        for (uint32_t i = 0; i < 3u; ++i)
+            rot[i] = vu.quad(64u + i);
+        eye = vu.quad(28);
+    }
+
+    void uv(const float p[3], const float n[3], float &u, float &v) const
+    {
+        const float w[3] = {((col[0].x * p[0] + col[1].x * p[1]) + col[2].x * p[2]) + col[3].x * 1.0f,
+                            ((col[0].y * p[0] + col[1].y * p[1]) + col[2].y * p[2]) + col[3].y * 1.0f,
+                            ((col[0].z * p[0] + col[1].z * p[1]) + col[2].z * p[2]) + col[3].z * 1.0f};
+        const float d[3] = {w[0] - eye.x, w[1] - eye.y, w[2] - eye.z};
+        const float length = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        const float inverse = length != 0.0f ? 1.0f / length : length;
+        const float vx = d[0] * inverse, vy = d[1] * inverse, vz = d[2] * inverse;
+        const float nx = (rot[0].x * n[0] + rot[1].x * n[1]) + rot[2].x * n[2];
+        const float ny = (rot[0].y * n[0] + rot[1].y * n[1]) + rot[2].y * n[2];
+        const float nz = (rot[0].z * n[0] + rot[1].z * n[1]) + rot[2].z * n[2];
+        const float dot = (vx * nx + vy * ny) + vz * nz;
+        const float twice = dot + dot;
+        u = ((vx - nx * twice) + 1.0f) * 0.5f;
+        v = ((vz - nz * twice) + 1.0f) * 0.5f;
+    }
+};
+
 // A chunk read out of VU1 data memory: the FOGCOL packet, the first quads of
 // the program's output (GIF header, PRIM, PRMODE, the vertex tag) and the
 // strip as a mesh.
@@ -614,10 +653,11 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
     const bool perVertex = program.color == Color::PerVertex;
     const uint32_t bones = program.decode == Decode::Skinned ? bonesOf(program, vu, top) : 0u;
     const bool lit = program.color == Color::Lit || program.color == Color::LitVertex;
-    const bool normals = lit || program.uv == Uv::SphereMap;
+    const bool normals = lit || program.uv == Uv::SphereMap || program.uv == Uv::Reflect;
     const Lights lights(vu);
     const SphereMap sphere(vu);
     const Wave wave(vu);
+    const Reflection reflection(vu);
     chunk.mesh.vertices.resize(count);
     for (uint32_t k = 0; k < count; ++k)
     {
@@ -659,6 +699,10 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
             if (program.uv == Uv::SphereMap)
             {
                 sphere.uv(normal, v.u, v.v);
+            }
+            if (program.uv == Uv::Reflect)
+            {
+                reflection.uv(position, normal, v.u, v.v);
             }
         }
     }
@@ -1421,7 +1465,7 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
            : decode->decode == Decode::Skinned ? "B:skinned "
                                                : "B:plain ";
     const UvPiece *uv = present(code, kUvs, &UvPiece::f);
-    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : uv->uv == Uv::Wave ? "F:wave " : "F:scroll ";
+    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : uv->uv == Uv::Wave ? "F:wave " : uv->uv == Uv::Reflect ? "F:reflection " : "F:scroll ";
     const char *color = "C:?";
     for (const ColorPiece &candidate : kColors)
     {
@@ -1497,6 +1541,10 @@ const char *declineChunk(const Program &program, const uint8_t *data, uint32_t t
     const uint32_t flags = vu.half(87, 1);
     if ((flags & 0x100u) && (program.color == Color::PerVertex || program.color == Color::LitVertex))
         return "quad 87.y & 0x100 (C's other loop)";
+    // The reflection's loop reads three vertices before it first looks at the
+    // count.
+    if (program.uv == Uv::Reflect && vu.half(top, 1) < 3u)
+        return "reflection over fewer than three vertices (slot F)";
     if (program.uv == Uv::Plain && (vu.quad(88).x != 0.0f || vu.quad(88).y != 0.0f))
         return "scrolling UVs (slot F)";
     return nullptr;
