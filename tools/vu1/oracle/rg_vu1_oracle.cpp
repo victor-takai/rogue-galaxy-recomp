@@ -351,6 +351,7 @@ struct Options
     bool synth = false;
     // --synth-floats: each chunk's int16 positions, normals and UVs turned into the floats B would have made.
     bool floats = false;
+    bool floatColors = false; // --synth-float-colors: the colors section as floats (int16 / 32768 * 256)
     struct CodePatch
     {
         std::string file;
@@ -410,6 +411,12 @@ bool parse(int argc, char **argv, Options &options)
             options.patches.push_back({value.substr(0, a),
                                        static_cast<uint32_t>(std::strtoul(value.c_str() + a + 1, nullptr, 16)),
                                        static_cast<uint32_t>(std::strtoul(value.c_str() + b + 1, nullptr, 16))});
+            options.synth = true;
+        }
+        else if (arg == "--synth-float-colors")
+        {
+            options.floatColors = true;
+            options.floats = true;
             options.synth = true;
         }
         else if (arg == "--synth-floats")
@@ -575,6 +582,7 @@ int main(int argc, char **argv)
             const uint32_t positions = top + 2u;
             const uint32_t normals = positions + (static_cast<uint32_t>(word(top, 3)) & 0xFFFFu);
             const uint32_t uvs = positions + (static_cast<uint32_t>(word(top + 1u, 0)) & 0xFFFFu);
+            const uint32_t colors = positions + (static_cast<uint32_t>(word(top + 1u, 1)) & 0xFFFFu);
             float scale[3][4];
             for (int q = 0; q < 3; ++q)
                 std::memcpy(scale[q], run.data.data() + (77u + q) * 16u, 16u);
@@ -585,6 +593,9 @@ int main(int argc, char **argv)
                     put(positions + k, i, static_cast<float>(word(positions + k, i)) / 32768.0f * scale[0][i]);
                     put(normals + k, i, static_cast<float>(word(normals + k, i)) / 32768.0f * scale[1][i]);
                 }
+                if (options.floatColors)
+                    for (uint32_t i = 0; i < 4u; ++i)
+                        put(colors + k, i, static_cast<float>(word(colors + k, i)) / 32768.0f * 256.0f);
                 for (uint32_t i = 0; i < 2u; ++i)
                     put(uvs + k, i, static_cast<float>(word(uvs + k, i)) / 32768.0f * scale[2][i]);
             }

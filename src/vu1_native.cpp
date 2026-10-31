@@ -212,6 +212,7 @@ struct Finish
     bool depthBounds;
     bool bounds = true; // false: the depth is scaled but 98 and 99 are left alone
     bool affine = false; // ST kept as it is, Q written as 1
+    bool rawColor = false; // the colors are floats read from the C section, no ST written
     bool white = false;  // the color is (128, 128, 128) and the vertex's alpha
 };
 constexpr Finish kFinishes[] = {
@@ -229,9 +230,13 @@ constexpr Finish kFinishes[] = {
     // band and the scaled depth as 634107b0, without the bounds, and ST not
     // multiplied by Q (the GS sees Q = 1: the texture is not perspective-correct).
     {{0x1900u, 0x1be0u, 0x2feaa9a15b81d8baull}, Cull::GuardBand, true, false, true},
+    // UNVERIFIED: a786efab's guard band and backfaces, but the colors are floats
+    // read from the colors section (103.w) and no ST is written (an untextured
+    // draw); strips (lists are declined as they are there).
+    {{0x1900u, 0x2250u, 0x312d076bfbf37fb2ull}, Cull::GuardBandAndBackface, false, true, false, true},
     // The beam's D, recorded: that, with the color (128, 128, 128) and the
     // vertex's alpha, clamped to quad 39.
-    {{0x1900u, 0x1be0u, 0x1bd1b5c0cd88b246ull}, Cull::GuardBand, true, false, true, true},
+    {{0x1900u, 0x1be0u, 0x1bd1b5c0cd88b246ull}, Cull::GuardBand, true, false, true, false, true},
 };
 
 // The program of these pieces, made once and kept: its name says what each
@@ -244,7 +249,7 @@ const Program *intern(const Program &shape)
     const std::lock_guard<std::mutex> lock(mutex);
     for (const Program &program : programs)
     {
-        if (program.cull == shape.cull && program.color == shape.color && program.depthBounds == shape.depthBounds && program.bounds == shape.bounds && program.affine == shape.affine && program.white == shape.white && program.rawFloats == shape.rawFloats &&
+        if (program.cull == shape.cull && program.color == shape.color && program.depthBounds == shape.depthBounds && program.bounds == shape.bounds && program.affine == shape.affine && program.rawColor == shape.rawColor && program.white == shape.white && program.rawFloats == shape.rawFloats &&
             program.skinNormals == shape.skinNormals &&
             program.decode == shape.decode && program.maxBones == shape.maxBones && program.kind == shape.kind &&
             program.uv == shape.uv)
@@ -272,6 +277,7 @@ const Program *intern(const Program &shape)
                                                                          : "";
     name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : shape.uv == Uv::Ramp ? ", ramp (unverified)" : shape.uv == Uv::Beam ? ", projected UVs (beam)" : shape.uv == Uv::Swell ? ", swell (unverified)" : "";
     name += shape.decode == Decode::Skinned ? ", skinned" : "";
+    name += shape.rawColor ? ", float colors, untextured (unverified)" : "";
     name += shape.rawFloats ? " floats (unverified)" : "";
     Program &program = programs.emplace_back(shape);
     program.name = name.c_str();
@@ -899,6 +905,13 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
         v.g = perVertex ? colorBase.y * itof15(vu.word(colors + k, 1)) * 256.0f : colorBase.y;
         v.b = perVertex ? colorBase.z * itof15(vu.word(colors + k, 2)) * 256.0f : colorBase.z;
         v.a = perVertex ? colorBase.w * itof15(vu.word(colors + k, 3)) * 256.0f : colorBase.w;
+        if (program.rawColor)
+        {
+            v.r = fromBits(static_cast<uint32_t>(vu.word(colors + k, 0)));
+            v.g = fromBits(static_cast<uint32_t>(vu.word(colors + k, 1)));
+            v.b = fromBits(static_cast<uint32_t>(vu.word(colors + k, 2)));
+            v.a = fromBits(static_cast<uint32_t>(vu.word(colors + k, 3)));
+        }
         if (program.uv == Uv::Beam)
             beam.uv(position, v.u, v.v);
         if (program.white)
@@ -1712,7 +1725,8 @@ const Program *identify(const uint8_t *code, uint32_t startPC)
         return nullptr;
     }
     Program shape{nullptr,          finish->cull,     color->color, finish->depthBounds,
-                  decode->decode,   decode->maxBones, Kind::Strip,  uv->uv, finish->bounds, finish->affine, finish->white, decode->raw, decode->skinNormals};
+                  decode->decode,   decode->maxBones, Kind::Strip,  uv->uv, finish->bounds, finish->affine, finish->white, decode->raw, decode->skinNormals,
+                  finish->rawColor};
     return intern(shape);
 }
 
@@ -1756,7 +1770,8 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
     {
         if (matches(code, candidate.d))
         {
-            finish = candidate.white ? "D:guard band, depth, white"
+            finish = candidate.rawColor ? "D:guard band and backfaces, float colors"
+                     : candidate.white ? "D:guard band, depth, white"
                      : !candidate.bounds ? "D:guard band, depth"
                      : candidate.depthBounds && candidate.cull == Cull::GuardBandAndBackface
                          ? "D:guard band and backfaces, depth and bounds"
@@ -1992,7 +2007,9 @@ void buildChunk(const Program &program, const uint8_t *data, uint32_t top,
     for (uint32_t k = 0; k < count; ++k)
     {
         const GSNativeMeshPoint &p = points[k] = gsNativeMeshPoint(mesh.header, mesh.vertices[k]);
-        if (program.affine)
+        if (program.rawColor)
+            putFloats(packet, 0.0f, 0.0f, 1.0f, 0.0f);
+        else if (program.affine)
             putFloats(packet, mesh.vertices[k].u, mesh.vertices[k].v, 1.0f, 0.0f);
         else
             putFloats(packet, p.s, p.t, p.q, 0.0f);

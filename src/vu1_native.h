@@ -111,13 +111,15 @@ struct Program
     // B only skins floats the EE uploaded (positions, normals and UVs are not int16); normals too when skinNormals.
     bool rawFloats = false;
     bool skinNormals = true;
+    // D reads the colors as floats from the colors section and writes no ST (312d076b).
+    bool rawColor = false;
 };
 
 // Whether buildMesh can make the program's chunks a GSNativeMesh; if not,
 // the GPU path sends buildChunk's packets.
 inline bool hasMesh(const Program &program)
 {
-    return program.kind == Kind::Strip && !program.affine;
+    return program.kind == Kind::Strip && !program.affine && !program.rawColor;
 }
 
 // Whether the program draws in its MSCAL (the overlay sprites) rather than
