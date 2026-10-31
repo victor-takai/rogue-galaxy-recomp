@@ -120,6 +120,8 @@ constexpr UvPiece kUvs[] = {
     {{0x39d0u, 0x3ab0u, 0x0594a06392e0fbb3ull}, Uv::Ramp},
     // The beam's: recorded (a780f947d3b7787a, 31 vertices).
     {{0x39d0u, 0x3c08u, 0xb1d2924548c74d41ull}, Uv::Beam},
+    // UNVERIFIED (nothing in the game was seen to run it): the positions pushed out along the normals.
+    {{0x39d0u, 0x3c48u, 0xa04c11ce76242bb6ull}, Uv::Swell},
 };
 
 // The B pieces. A calls B at 0x960, or with quad 76.z set at 0x960 plus
@@ -260,7 +262,7 @@ const Program *intern(const Program &shape)
             : shape.color == Color::LitPoint                             ? ", lit with point lights (unverified)"
             : shape.color == Color::LitPointVertex                       ? ", lit with point lights, vertex colors (unverified)"
                                                                          : "";
-    name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : shape.uv == Uv::Ramp ? ", ramp (unverified)" : shape.uv == Uv::Beam ? ", projected UVs (beam)" : "";
+    name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : shape.uv == Uv::Ramp ? ", ramp (unverified)" : shape.uv == Uv::Beam ? ", projected UVs (beam)" : shape.uv == Uv::Swell ? ", swell (unverified)" : "";
     name += shape.decode == Decode::Skinned ? ", skinned" : "";
     Program &program = programs.emplace_back(shape);
     program.name = name.c_str();
@@ -589,6 +591,47 @@ struct Beam
     }
 };
 
+// The swell F (a04c11ce, UNVERIFIED: nothing was seen to run it): each position
+// pushed out along its normal, by (normal * q1) * w * s, w the vertex's clip
+// w (quads 68-71, w lanes), q1 = quad 84.x / D, D the sum of quad 12-15's x
+// lanes times quad 8, and s = clamp((quad 84.y - w) / quad 84.y, 0.2, 1). It
+// also writes colors (max(82.rgb * 128, 1), 82.w * 81.w * 128 * s); the C that
+// follows (one color) writes over them.
+struct Swell
+{
+    float q, far;
+    float lane[4];
+
+    explicit Swell(const VuData &vu)
+    {
+        for (uint32_t i = 0; i < 4u; ++i)
+            lane[i] = vu.quad(68u + i).w;
+        const Vec4 r8 = vu.quad(8);
+        const float d = ((vu.quad(12).x * r8.x + vu.quad(13).x * r8.y) + vu.quad(14).x * r8.z) + vu.quad(15).x * r8.w;
+        const Vec4 range = vu.quad(84);
+        q = divide(range.x, d);
+        far = range.y;
+        inverseFar = divide(1.0f, range.y);
+    }
+    float inverseFar;
+
+    static float divide(float a, float b)
+    {
+        if (b != 0.0f)
+            return a / b;
+        return std::signbit(a) != std::signbit(b) ? -std::numeric_limits<float>::max()
+                                                  : std::numeric_limits<float>::max();
+    }
+
+    void push(float p[3], const float n[3]) const
+    {
+        const float depth = ((lane[0] * p[0] + lane[1] * p[1]) + lane[2] * p[2]) + lane[3] * 1.0f;
+        const float scale = std::fmin(std::fmax((far - depth) * inverseFar, 0.2f), 1.0f);
+        for (int i = 0; i < 3; ++i)
+            p[i] = p[i] + ((n[i] * q) * depth) * scale;
+    }
+};
+
 // The wave F (9df36d6a): B's decoded positions (quad 103.x, a vertex each,
 // in place) turned in x and y about (0, a), a = quad 84.x, by t = q *
 // max(y - a, 0), q = quad 900.z / (quad 84.y - a): with c = 1 - t * t / 2 and
@@ -796,7 +839,8 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
     const uint32_t bones = program.decode == Decode::Skinned ? bonesOf(program, vu, top) : 0u;
     const bool lit = program.color == Color::Lit || program.color == Color::LitVertex || program.color == Color::LitPoint ||
                       program.color == Color::LitPointVertex;
-    const bool normals = lit || program.uv == Uv::SphereMap || program.uv == Uv::Reflect || program.uv == Uv::Ramp;
+    const bool normals = lit || program.uv == Uv::SphereMap || program.uv == Uv::Reflect || program.uv == Uv::Ramp ||
+                         program.uv == Uv::Swell;
     const Lights lights(vu);
     const PointLights points(vu);
     const SphereMap sphere(vu);
@@ -804,6 +848,7 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
     const Reflection reflection(vu);
     const Ramp ramp(vu);
     const Beam beam(vu);
+    const Swell swell(vu);
     chunk.mesh.vertices.resize(count);
     for (uint32_t k = 0; k < count; ++k)
     {
@@ -813,6 +858,12 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
         if (program.uv == Uv::Wave)
         {
             wave.xy(position[0], position[1]);
+        }
+        if (program.uv == Uv::Swell)
+        {
+            float normal[3];
+            decodeNormal(vu, top, k, bones, normal);
+            swell.push(position, normal);
         }
         v.x = position[0];
         v.y = position[1];
@@ -1627,6 +1678,8 @@ const Program *identify(const uint8_t *code, uint32_t startPC)
     {
         return nullptr;
     }
+    if (uv->uv == Uv::Swell && color->color != Color::Material)
+        return nullptr;
     // The beam's pieces go together (its F and D read and write what the
     // others do not).
     if (beam != (uv->uv == Uv::Beam) || beam != finish->white)
@@ -1659,7 +1712,7 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
            : decode->decode == Decode::Skinned ? "B:skinned "
                                                : "B:plain ";
     const UvPiece *uv = present(code, kUvs, &UvPiece::f);
-    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : uv->uv == Uv::Wave ? "F:wave " : uv->uv == Uv::Reflect ? "F:reflection " : uv->uv == Uv::Ramp ? "F:ramp " : uv->uv == Uv::Beam ? "F:beam " : "F:scroll ";
+    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : uv->uv == Uv::Wave ? "F:wave " : uv->uv == Uv::Reflect ? "F:reflection " : uv->uv == Uv::Ramp ? "F:ramp " : uv->uv == Uv::Beam ? "F:beam " : uv->uv == Uv::Swell ? "F:swell " : "F:scroll ";
     const char *color = "C:?";
     for (const ColorPiece &candidate : kColors)
     {
@@ -1743,6 +1796,8 @@ const char *declineChunk(const Program &program, const uint8_t *data, uint32_t t
     // count.
     if (program.uv == Uv::Reflect && vu.half(top, 1) < 3u)
         return "reflection over fewer than three vertices (slot F)";
+    if (program.uv == Uv::Swell && vu.half(top, 1) < 2u)
+        return "swell over fewer than two vertices (slot F)";
     if (program.uv == Uv::Beam && vu.half(top, 1) < 4u)
         return "beam over fewer than four vertices (slot F)";
     if (program.uv == Uv::Plain && (vu.quad(88).x != 0.0f || vu.quad(88).y != 0.0f))
