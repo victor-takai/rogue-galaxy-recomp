@@ -109,6 +109,8 @@ constexpr UvPiece kUvs[] = {
     {{0x39d0u, 0x3b70u, 0x150031ee1534d185ull}, Uv::SphereMap},
     {{0x39d0u, 0x3b98u, 0x9df36d6a55fdb496ull}, Uv::Wave},
     {{0x39d0u, 0x3d10u, 0xad209cd3feea3c5dull}, Uv::Reflect},
+    // UNVERIFIED: no recording holds this piece; read from the executable's code only.
+    {{0x39d0u, 0x3ab0u, 0x0594a06392e0fbb3ull}, Uv::Ramp},
 };
 
 // The B pieces. A calls B at 0x960, or with quad 76.z set at 0x960 plus
@@ -183,6 +185,8 @@ struct Finish
     Piece d;
     Cull cull;
     bool depthBounds;
+    bool bounds = true; // false: the depth is scaled but 98 and 99 are left alone
+    bool affine = false; // ST kept as it is, Q written as 1
 };
 constexpr Finish kFinishes[] = {
     {{0x1900u, 0x20c8u, 0xa786efabfa469adaull}, Cull::GuardBandAndBackface, false},
@@ -195,6 +199,10 @@ constexpr Finish kFinishes[] = {
     // The guard band and backfaces, and that depth and bounds; triangle
     // lists have a path of their own (declined).
     {{0x1900u, 0x21e0u, 0x93cfd2f5a1056991ull}, Cull::GuardBandAndBackface, true},
+    // UNVERIFIED (no recording holds it; read from the code only): the guard
+    // band and the scaled depth as 634107b0, without the bounds, and ST not
+    // multiplied by Q (the GS sees Q = 1: the texture is not perspective-correct).
+    {{0x1900u, 0x1be0u, 0x2feaa9a15b81d8baull}, Cull::GuardBand, true, false, true},
 };
 
 // The program of these pieces, made once and kept: its name says what each
@@ -207,7 +215,7 @@ const Program *intern(const Program &shape)
     const std::lock_guard<std::mutex> lock(mutex);
     for (const Program &program : programs)
     {
-        if (program.cull == shape.cull && program.color == shape.color && program.depthBounds == shape.depthBounds &&
+        if (program.cull == shape.cull && program.color == shape.color && program.depthBounds == shape.depthBounds && program.bounds == shape.bounds && program.affine == shape.affine &&
             program.decode == shape.decode && program.maxBones == shape.maxBones && program.kind == shape.kind &&
             program.uv == shape.uv)
         {
@@ -225,12 +233,12 @@ const Program *intern(const Program &shape)
             : shape.cull == Cull::GuardBandAndBackface ? ", guard band and backfaces"
             : shape.cull == Cull::GuardBand            ? ", guard band"
                                                        : "";
-    name += shape.depthBounds ? ", depth and bounds" : "";
+    name += shape.depthBounds ? (shape.bounds ? ", depth and bounds" : ", depth, affine texture (unverified)") : "";
     name += shape.color == Color::Material && shape.kind == Kind::Strip ? ", one color"
             : shape.color == Color::Lit                                  ? ", lit"
             : shape.color == Color::LitVertex                            ? ", lit vertex colors"
                                                                          : "";
-    name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : "";
+    name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : shape.uv == Uv::Ramp ? ", ramp (unverified)" : "";
     name += shape.decode == Decode::Skinned ? ", skinned" : "";
     Program &program = programs.emplace_back(shape);
     program.name = name.c_str();
@@ -504,6 +512,26 @@ float vuSin(float x)
     return x * polynomial;
 }
 
+// The ramp F (0594a063, UNVERIFIED: no recording holds it): u = (n . c + 1) /
+// 2 with c = (quad 100.x, 101.x, 102.x), v = 0; the sum in the VU's order.
+struct Ramp
+{
+    float c[3];
+
+    explicit Ramp(const VuData &vu)
+    {
+        c[0] = vu.quad(100).x;
+        c[1] = vu.quad(101).x;
+        c[2] = vu.quad(102).x;
+    }
+
+    void uv(const float n[3], float &u, float &v) const
+    {
+        u = ((c[0] * n[0] + c[1] * n[1]) + c[2] * n[2] + 1.0f) * 0.5f;
+        v = 0.0f;
+    }
+};
+
 // The wave F (9df36d6a): B's decoded positions (quad 103.x, a vertex each,
 // in place) turned in x and y about (0, a), a = quad 84.x, by t = q *
 // max(y - a, 0), q = quad 900.z / (quad 84.y - a): with c = 1 - t * t / 2 and
@@ -653,11 +681,12 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
     const bool perVertex = program.color == Color::PerVertex;
     const uint32_t bones = program.decode == Decode::Skinned ? bonesOf(program, vu, top) : 0u;
     const bool lit = program.color == Color::Lit || program.color == Color::LitVertex;
-    const bool normals = lit || program.uv == Uv::SphereMap || program.uv == Uv::Reflect;
+    const bool normals = lit || program.uv == Uv::SphereMap || program.uv == Uv::Reflect || program.uv == Uv::Ramp;
     const Lights lights(vu);
     const SphereMap sphere(vu);
     const Wave wave(vu);
     const Reflection reflection(vu);
+    const Ramp ramp(vu);
     chunk.mesh.vertices.resize(count);
     for (uint32_t k = 0; k < count; ++k)
     {
@@ -703,6 +732,10 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
             if (program.uv == Uv::Reflect)
             {
                 reflection.uv(position, normal, v.u, v.v);
+            }
+            if (program.uv == Uv::Ramp)
+            {
+                ramp.uv(normal, v.u, v.v);
             }
         }
     }
@@ -1440,7 +1473,7 @@ const Program *identify(const uint8_t *code, uint32_t startPC)
         return nullptr;
     }
     Program shape{nullptr,          finish->cull,     color->color, finish->depthBounds,
-                  decode->decode,   decode->maxBones, Kind::Strip,  uv->uv};
+                  decode->decode,   decode->maxBones, Kind::Strip,  uv->uv, finish->bounds, finish->affine};
     return intern(shape);
 }
 
@@ -1465,7 +1498,7 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
            : decode->decode == Decode::Skinned ? "B:skinned "
                                                : "B:plain ";
     const UvPiece *uv = present(code, kUvs, &UvPiece::f);
-    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : uv->uv == Uv::Wave ? "F:wave " : uv->uv == Uv::Reflect ? "F:reflection " : "F:scroll ";
+    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : uv->uv == Uv::Wave ? "F:wave " : uv->uv == Uv::Reflect ? "F:reflection " : uv->uv == Uv::Ramp ? "F:ramp " : "F:scroll ";
     const char *color = "C:?";
     for (const ColorPiece &candidate : kColors)
     {
@@ -1482,7 +1515,8 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
     {
         if (matches(code, candidate.d))
         {
-            finish = candidate.depthBounds && candidate.cull == Cull::GuardBandAndBackface
+            finish = !candidate.bounds ? "D:guard band, depth"
+                     : candidate.depthBounds && candidate.cull == Cull::GuardBandAndBackface
                          ? "D:guard band and backfaces, depth and bounds"
                      : candidate.depthBounds && candidate.cull == Cull::GuardBand ? "D:guard band, depth and bounds"
                      : candidate.depthBounds                        ? "D:depth and bounds"
@@ -1598,7 +1632,7 @@ void applyMemoryEffects(const Program &program, uint8_t *data, uint32_t top)
         std::memcpy(data + 1023u * 16u, &word, sizeof(word));
         return;
     }
-    if (!program.depthBounds)
+    if (!program.depthBounds || !program.bounds)
     {
         return;
     }
@@ -1634,7 +1668,7 @@ bool memoryEffectsMatch(const Program &program, const uint8_t *before, uint32_t 
         const VuRounding rounding;
         return outlineLoopWord(VuData(before), top) == static_cast<uint32_t>(VuData(after).word(1023, 0));
     }
-    if (!program.depthBounds)
+    if (!program.depthBounds || !program.bounds)
     {
         return true;
     }
@@ -1712,7 +1746,10 @@ void buildChunk(const Program &program, const uint8_t *data, uint32_t top,
     for (uint32_t k = 0; k < count; ++k)
     {
         const GSNativeMeshPoint &p = points[k] = gsNativeMeshPoint(mesh.header, mesh.vertices[k]);
-        putFloats(packet, p.s, p.t, p.q, 0.0f);
+        if (program.affine)
+            putFloats(packet, mesh.vertices[k].u, mesh.vertices[k].v, 1.0f, 0.0f);
+        else
+            putFloats(packet, p.s, p.t, p.q, 0.0f);
         putWords(packet, static_cast<uint32_t>(p.rgba[0]), static_cast<uint32_t>(p.rgba[1]),
                  static_cast<uint32_t>(p.rgba[2]), static_cast<uint32_t>(p.rgba[3]));
         putWords(packet, static_cast<uint32_t>(p.x16), static_cast<uint32_t>(p.y16), static_cast<uint32_t>(p.z16),

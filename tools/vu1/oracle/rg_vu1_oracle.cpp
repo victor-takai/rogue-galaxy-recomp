@@ -345,6 +345,22 @@ struct Options
     const char *coverage = nullptr;
     bool time = false;
     bool inventory = false;
+    // Synthetic checks for pieces no recording holds (--synth): the code
+    // patched with pieces from raw images, data quads set, and the reference
+    // the interpreter's run of the result instead of the recorded kicks.
+    bool synth = false;
+    struct CodePatch
+    {
+        std::string file;
+        uint32_t start, end;
+    };
+    std::vector<CodePatch> patches;
+    struct QuadPoke
+    {
+        uint32_t quad;
+        float value[4];
+    };
+    std::vector<QuadPoke> pokes;
     Tolerance tolerance;
 };
 
@@ -379,6 +395,36 @@ bool parse(int argc, char **argv, Options &options)
         {
             const std::string value = argv[++i];
             options.show = value == "diff" ? kShowFirstDifferences : std::strtoll(value.c_str(), nullptr, 0);
+        }
+        else if (arg == "--synth")
+            options.synth = true;
+        else if (arg == "--synth-code" && hasValue)
+        {
+            // FILE:START:END, bytes in hex, FILE a 16 KiB image (tools/vu1/piece.py).
+            const std::string value = argv[++i];
+            const size_t b = value.rfind(':'), a = b == std::string::npos ? b : value.rfind(':', b - 1);
+            if (a == std::string::npos || b == std::string::npos)
+                return false;
+            options.patches.push_back({value.substr(0, a),
+                                       static_cast<uint32_t>(std::strtoul(value.c_str() + a + 1, nullptr, 16)),
+                                       static_cast<uint32_t>(std::strtoul(value.c_str() + b + 1, nullptr, 16))});
+            options.synth = true;
+        }
+        else if (arg == "--synth-quad" && hasValue)
+        {
+            // N:x,y,z,w (floats): quad N of every run's data memory.
+            const std::string value = argv[++i];
+            Options::QuadPoke poke{static_cast<uint32_t>(std::strtoul(value.c_str(), nullptr, 0)), {0, 0, 0, 0}};
+            const char *at = std::strchr(value.c_str(), ':');
+            for (int k = 0; at && k < 4; ++k)
+            {
+                poke.value[k] = std::strtof(at + 1, nullptr);
+                at = std::strchr(at + 1, ',');
+                if (!at && k < 3)
+                    break;
+            }
+            options.pokes.push_back(poke);
+            options.synth = true;
         }
         else if (arg == "--time")
             options.time = true;
@@ -485,6 +531,27 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+    for (const Options::CodePatch &patch : options.patches)
+    {
+        std::vector<uint8_t> image(PS2_VU1_CODE_SIZE);
+        std::FILE *f = std::fopen(patch.file.c_str(), "rb");
+        if (!f || std::fread(image.data(), 1, image.size(), f) != image.size())
+        {
+            std::fprintf(stderr, "cannot read the image %s\n", patch.file.c_str());
+            return 2;
+        }
+        std::fclose(f);
+        for (auto &[hash, code] : recording.codes)
+            if (!options.filtered || hash == options.programHash)
+                std::memcpy(code.data() + patch.start, image.data() + patch.start, patch.end - patch.start);
+    }
+    for (Run &run : recording.runs)
+        for (const Options::QuadPoke &poke : options.pokes)
+            if (!options.filtered || run.programHash == options.programHash)
+                std::memcpy(run.data.data() + poke.quad * 16u, poke.value, 16u);
+    std::unique_ptr<Vu1Engine> synthReference;
+    if (options.synth)
+        synthReference = std::make_unique<Vu1Engine>(false);
     uint32_t resumes = 0u;
     uint64_t kicks = 0u;
     for (const Run &run : recording.runs)
@@ -544,12 +611,15 @@ int main(int argc, char **argv)
                 }
                 stepper->setCoverage(wanted ? &hits : nullptr, &path);
             }
+            std::vector<GifEvent> synthEvents;
+            if (synthReference)
+                synthReference->run(recording, run, synthEvents);
             candidate->run(recording, run, events);
             if (!wanted || !candidate->accepts(run))
             {
                 continue;
             }
-            const std::vector<GifEvent> reference = eventsOf(run.kicks);
+            const std::vector<GifEvent> reference = synthReference ? synthEvents : eventsOf(run.kicks);
             const Comparison comparison = compare(reference, events, options.tolerance);
             ProgramResult &result = programs[{run.programHash, run.programPC}];
             ++result.runs;

@@ -56,6 +56,7 @@ enum class Uv : uint8_t
     Plain,     // nothing, unless quad 88.xy scrolls them (declined)
     SphereMap, // replaced by the normal in view space, as (n.xy + 1) / 2
     Reflect,   // replaced by the view vector reflected in the normal, as (r.x + 1) / 2 and (r.z + 1) / 2 (ad209cd3)
+    Ramp,      // the UVs replaced by ((normal . quads 100-102.x) + 1) / 2, 0 (0594a063; from the code only)
     Wave,      // the UVs stay; each position turned in x and y about (0, quad 84.x) by an angle growing with y (9df36d6a)
 };
 
@@ -93,13 +94,17 @@ struct Program
     uint8_t maxBones = 0;
     Kind kind = Kind::Strip;
     Uv uv = Uv::Plain;
+    // With depthBounds: the D piece keeps the bounds in quads 98 and 99 (false: only the depth).
+    bool bounds = true;
+    // The D piece leaves ST as the UV and writes Q = 1 (2feaa9a1); the GPU mesh cannot say so.
+    bool affine = false;
 };
 
 // Whether buildMesh can make the program's chunks a GSNativeMesh; if not,
 // the GPU path sends buildChunk's packets.
 inline bool hasMesh(const Program &program)
 {
-    return program.kind == Kind::Strip;
+    return program.kind == Kind::Strip && !program.affine;
 }
 
 // Whether the program draws in its MSCAL (the overlay sprites) rather than
