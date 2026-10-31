@@ -179,6 +179,10 @@ constexpr ColorPiece kColors[] = {
     // UNVERIFIED (no recording holds it; the oracle's synthetic check agrees
     // with the interpreter): 91f542d0 and four point lights.
     {{0x10e0u, 0x1720u, 0x127ca0b4834b2363ull}, Color::LitPoint},
+    // UNVERIFIED likewise: that, with each vertex's int16 color c (/ 32768 *
+    // 256): max(lit * c, -(lit + c * 128)), or with 87.y & 0x100 the signs
+    // swapped: max(-(lit * c), lit + c * 128).
+    {{0x10e0u, 0x1848u, 0xe3bca52a27b10195ull}, Color::LitPointVertex},
 };
 
 // The D pieces. (a786efabfa469ada is also the name of its compiled routine,
@@ -241,6 +245,7 @@ const Program *intern(const Program &shape)
             : shape.color == Color::Lit                                  ? ", lit"
             : shape.color == Color::LitVertex                            ? ", lit vertex colors"
             : shape.color == Color::LitPoint                             ? ", lit with point lights (unverified)"
+            : shape.color == Color::LitPointVertex                       ? ", lit with point lights, vertex colors (unverified)"
                                                                          : "";
     name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : shape.uv == Uv::Ramp ? ", ramp (unverified)" : "";
     name += shape.decode == Decode::Skinned ? ", skinned" : "";
@@ -741,7 +746,8 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
     }
     const bool perVertex = program.color == Color::PerVertex;
     const uint32_t bones = program.decode == Decode::Skinned ? bonesOf(program, vu, top) : 0u;
-    const bool lit = program.color == Color::Lit || program.color == Color::LitVertex || program.color == Color::LitPoint;
+    const bool lit = program.color == Color::Lit || program.color == Color::LitVertex || program.color == Color::LitPoint ||
+                      program.color == Color::LitPointVertex;
     const bool normals = lit || program.uv == Uv::SphereMap || program.uv == Uv::Reflect || program.uv == Uv::Ramp;
     const Lights lights(vu);
     const PointLights points(vu);
@@ -779,13 +785,28 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
                 v.g = c.y;
                 v.b = c.z;
                 v.a = c.w;
-                if (program.color == Color::LitPoint)
+                if (program.color == Color::LitPoint || program.color == Color::LitPointVertex)
                 {
                     float rgb[3] = {c.x, c.y, c.z};
                     points.add(position, normal, rgb);
                     v.r = rgb[0];
                     v.g = rgb[1];
                     v.b = rgb[2];
+                }
+                if (program.color == Color::LitPointVertex)
+                {
+                    const float sign = (vu.half(87, 1) & 0x100u) ? -1.0f : 1.0f;
+                    const float lit[3] = {v.r, v.g, v.b};
+                    float out[3];
+                    for (uint32_t i = 0; i < 3u; ++i)
+                    {
+                        const float cv = itof15(vu.word(colors + k, i)) * 256.0f;
+                        out[i] = std::fmax((lit[i] * cv) * sign, (lit[i] + cv * 128.0f) * -sign);
+                    }
+                    v.r = out[0];
+                    v.g = out[1];
+                    v.b = out[2];
+                    v.a = c.w * (itof15(vu.word(colors + k, 3)) * 256.0f);
                 }
                 if (program.color == Color::LitVertex)
                 {
@@ -1578,6 +1599,7 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
                     : candidate.color == Color::Lit       ? "C:lit"
                     : candidate.color == Color::LitVertex ? "C:lit vertex colors"
                     : candidate.color == Color::LitPoint ? "C:lit, point lights"
+                    : candidate.color == Color::LitPointVertex ? "C:lit, point lights, vertex colors"
                                                           : "C:one color";
         }
     }

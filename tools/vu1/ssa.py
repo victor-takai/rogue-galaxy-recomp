@@ -25,7 +25,7 @@ def listing(code, lo, hi):
                          capture_output=True, text=True, cwd=O).stdout
     pairs = {}
     for l in out.splitlines():
-        m = re.match(r'([0-9a-f]+)\s+\d*\s*(I)?\s*(.*?)\s*\|\s*(.*)$', l)
+        m = re.match(r'([0-9a-f]+)\s+\d*\s*(I(?=\s))?\s*(.*?)\s*\|\s*(.*)$', l)
         if m: pairs[int(m.group(1), 16)] = (m.group(3).strip(), m.group(4).strip())
     return pairs
 class S:
@@ -75,13 +75,16 @@ def run(pairs, order, st):
                 acc_new = (mask, val)
             else:
                 wr.append((int(fd[2:]), mask, val))
+        elif re.match(r'ITOF(\d+)\.(\w+)\s+vf(\d+),\s*vf(\d+)$', up):
+            k, mask, fd, fs = re.match(r'ITOF(\d+)\.(\w+)\s+vf(\d+),\s*vf(\d+)$', up).groups()
+            wr.append((int(fd), mask, ['itof%s(%s)' % (k, v) for v in st.vf[int(fs)]]))
         elif up != 'NOP' and not up.startswith('FTOI') and not up.startswith('CLIP'):
             print('UP?', up)
         if acc_new:
             mask, val = acc_new
             for c in mask: st.acc[C.index(c)] = mk(val[C.index(c)])
         # lower
-        if lo == 'NOP' or lo.startswith(('JR', 'IBNE', 'IBEQ', 'WAIT')): pass
+        if lo == 'NOP' or lo.startswith(('JR', 'IBNE', 'IBEQ', 'WAIT', 'IAND')): pass
         elif lo.startswith('LQI'):
             m = re.match(r'LQI\.(\w+)\s+vf(\d+),\s*\(vi(\d+)\+\+\)', lo); mask, fd, vi = m.groups()
             base = st.vi[int(vi)]
