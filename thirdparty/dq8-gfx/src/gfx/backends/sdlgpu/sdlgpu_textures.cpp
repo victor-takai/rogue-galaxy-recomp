@@ -494,8 +494,16 @@ SDL_GPUTexture *GsTextureCache::wholeReplacement(const GSDrawState &state, uint3
         entry.pcsx2 = XXH3_64bits(m_wholeBlocks.data(), m_wholeBlocks.size());
         entry.pcsx2For = entry.identity.texels;
     }
+    if (!entry.pcsx2ClutValid || entry.pcsx2ClutFor != entry.identity.clut) {
+        // The palette as PCSX2 hashes it: its 16 or 256 entries as 32-bit words.
+        buildPalette(key);
+        entry.pcsx2Clut = XXH3_64bits(m_clutRgba.data(), m_clutRgba.size() * sizeof(uint32_t));
+        entry.pcsx2ClutFor = entry.identity.clut;
+        entry.pcsx2ClutValid = true;
+    }
     uint64_t id = kHashSeed;
-    for (const uint64_t value : {entry.pcsx2, uint64_t(0x57484f4c45ull), uint64_t(key.width) << 32u | key.height}) {
+    for (const uint64_t value : {entry.pcsx2, entry.pcsx2Clut, uint64_t(0x57484f4c45ull),
+                                 uint64_t(key.width) << 32u | key.height}) {
         id ^= value;
         id *= 1099511628211ull;
     }
@@ -510,6 +518,7 @@ SDL_GPUTexture *GsTextureCache::wholeReplacement(const GSDrawState &state, uint3
     RegionRequest request;
     request.whole = true;
     request.texels = entry.pcsx2;
+    request.clut = entry.pcsx2Clut;
     request.width = key.width;
     request.height = key.height;
     uint32_t width = 0u, height = 0u;
@@ -1234,10 +1243,13 @@ bool GsTextureCache::build(const GsTextureKey &key, Entry &entry, std::string &e
                     ++n;
                 return n;
             };
+            // The palette as PCSX2 hashes it: its 16 or 256 entries as 32-bit words.
+            buildPalette(key);
+            const uint64_t clutHash = XXH3_64bits(m_clutRgba.data(), m_clutRgba.size() * sizeof(uint32_t));
             char name[512];
             std::snprintf(name, sizeof name, "%s/%016llx-%016llx-%08x.pam", dump.directory,
                           static_cast<unsigned long long>(hash),
-                          static_cast<unsigned long long>(entry.identity.clut),
+                          static_cast<unsigned long long>(clutHash),
                           key.psm | (log2(width) << 6u) | (log2(height) << 10u));
             if (std::FILE *file = std::fopen(name, "wb")) {
                 std::fprintf(file, "P7\nWIDTH %u\nHEIGHT %u\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n",

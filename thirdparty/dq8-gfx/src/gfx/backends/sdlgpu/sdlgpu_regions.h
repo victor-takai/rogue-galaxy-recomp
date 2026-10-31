@@ -43,8 +43,9 @@ struct RegionRequest {
     // draw their letters at 0xFF, their black copies at 0x80).
     bool bold = false;
     // A whole texture, not a region (3D art, a pack made for PCSX2): `texels`
-    // is the hash PCSX2 names it by (XXH3-64 of its GS blocks), `clut` is zero,
-    // `width` and `height` are the texture's size, and no pixels are given.
+    // is the hash PCSX2 names it by (XXH3-64 of its GS blocks), `clut` the
+    // hash of its palette as PCSX2 makes it, `width` and `height` are the
+    // texture's size, and no pixels are given.
     bool whole = false;
 };
 

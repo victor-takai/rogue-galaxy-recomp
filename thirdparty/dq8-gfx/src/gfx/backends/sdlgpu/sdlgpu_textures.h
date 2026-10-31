@@ -219,6 +219,11 @@ private:
         // `identity.texels` is what it was computed for.
         uint64_t pcsx2 = 0u;
         uint64_t pcsx2For = 0u;
+        // And of its palette, valid while `identity.clut` is what it was
+        // computed for.
+        uint64_t pcsx2Clut = 0u;
+        uint64_t pcsx2ClutFor = 0u;
+        bool pcsx2ClutValid = false;
     };
 
     std::function<void(SDL_GPUTexture *)> m_beforeRewrite;

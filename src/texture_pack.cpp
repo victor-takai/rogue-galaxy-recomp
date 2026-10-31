@@ -158,11 +158,9 @@ bool parseRegionName(const std::string &name, uint64_t &key, bool &wildcard)
 
 // A whole texture as PCSX2 names it, "TEX0HASH-CLUTHASH-BITS" (BITS: the
 // format in its low 6 bits, then log2 of the width and of the height in 4 bits
-// each), no extension. The palette's hash is not used: one picture answers for
-// the texels with any palette.
-constexpr uint64_t kWholeClut = 0x57484f4c45ull;
-
-bool parseWholeName(const std::string &name, uint64_t &key)
+// each), no extension. The picture of the palette's own hash wins; else any one
+// of the texels' (a wildcard).
+bool parseWholeName(const std::string &name, uint64_t &key, uint64_t &anyKey)
 {
     unsigned long long texels = 0u, clut = 0u;
     unsigned bits = 0u;
@@ -171,7 +169,9 @@ bool parseWholeName(const std::string &name, uint64_t &key)
     {
         return false;
     }
-    key = regionKey(texels, kWholeClut, 1u << ((bits >> 6u) & 15u), 1u << ((bits >> 10u) & 15u));
+    const uint32_t width = 1u << ((bits >> 6u) & 15u), height = 1u << ((bits >> 10u) & 15u);
+    key = regionKey(texels, clut, width, height);
+    anyKey = regionKey(texels, 0u, width, height);
     return true;
 }
 
@@ -342,11 +342,12 @@ bool loadPack(const Source &source, const std::string &id, Pack &pack)
         {
             add(stem, file);
         }
-        else if (parseWholeName(stem, key))
+        else if (uint64_t anyKey = 0u; parseWholeName(stem, key, anyKey))
         {
             // A PCSX2 pack keeps the console's alpha (0x80 opaque).
             Entry made = source.entry(file, true);
             made.nearest = nearest;
+            pack.wildcard[anyKey] = made;
             pack.exact[key] = std::move(made);
             ++pack.regions;
         }
@@ -688,13 +689,11 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
         {
             return dq8::gfx::kRegionNone;
         }
-        // Looked up as a region of that name, with no palette.
-        dq8::gfx::RegionRequest named = request;
-        named.clut = kWholeClut;
-        const uint64_t key = regionKey(named.texels, named.clut, named.width, named.height);
+        // The texture's own palette first, else any one of its texels' pictures.
+        const uint64_t key = regionKey(request.texels, request.clut, request.width, request.height);
         std::lock_guard<std::mutex> lock(g_mutex);
-        const auto found = g_merged->exact.find(key);
-        if (found == g_merged->exact.end())
+        const Entry *found = findEntry(*g_merged, request, key);
+        if (!found)
         {
             return dq8::gfx::kRegionNone;
         }
@@ -714,7 +713,7 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
         }
         if (g_asked.insert(key).second)
         {
-            g_queue.push_back(Pending{key, g_generation, found->second});
+            g_queue.push_back(Pending{key, g_generation, *found});
             g_wake.notify_one();
         }
         return dq8::gfx::kRegionPending;

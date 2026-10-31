@@ -85,8 +85,9 @@ so reaches what the region pictures do not: the scenery, the characters' skin
 and the 3D art in general. The game names a texture as PCSX2 does, by the XXH3-64
 hash of the GS blocks it covers (8-bit and 4-bit textures only so far), and
 draws the pack's picture, which is 2 to 8 times larger, in its place. The
-palette's hash in the name is not used yet: one picture answers for the
-texels whatever palette they are drawn with. The alpha is read as the console's
+palette's hash in the name is the hash PCSX2 makes of the palette's 16 or 256
+entries as 32-bit words: the picture of the palette's own hash is drawn, else
+any one of the texels' pictures. The alpha is read as the console's
 (0x80 opaque), as a PCSX2 pack keeps it.
 
 `RG_TEXTURE_DUMP_WHOLE=DIR` writes each such texture the game builds, whole
@@ -100,7 +101,7 @@ xxHash (`xxhash.h`, in `thirdparty/dq8-gfx`) is Yann Collet's, BSD 2-Clause.
 
 ## Not yet
 
-Changing the order of the packs from the menu; the palette's hash for a PCSX2 picture; 4-bit-high textures; keeping a PCSX2 picture compressed on the GPU. Movies and render targets are never collected.
+Changing the order of the packs from the menu; 4-bit-high textures; keeping a PCSX2 picture compressed on the GPU. Movies and render targets are never collected.
 
 ## Checking the readers
 
