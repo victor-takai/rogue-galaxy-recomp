@@ -58,6 +58,7 @@ enum class Uv : uint8_t
     Plain,     // nothing, unless quad 88.xy scrolls them (declined)
     SphereMap, // replaced by the normal in view space, as (n.xy + 1) / 2
     Reflect,   // replaced by the view vector reflected in the normal, as (r.x + 1) / 2 and (r.z + 1) / 2 (ad209cd3)
+    Beam,      // the UVs a projection of the position through quads 72-75 (b1d29245)
     Ramp,      // the UVs replaced by ((normal . quads 100-102.x) + 1) / 2, 0 (0594a063; from the code only)
     Wave,      // the UVs stay; each position turned in x and y about (0, quad 84.x) by an angle growing with y (9df36d6a)
 };
@@ -100,6 +101,8 @@ struct Program
     bool bounds = true;
     // The D piece leaves ST as the UV and writes Q = 1 (2feaa9a1); the GPU mesh cannot say so.
     bool affine = false;
+    // The color is (128, 128, 128) with the vertex's alpha (the beam's D, 1bd1b5c0).
+    bool white = false;
 };
 
 // Whether buildMesh can make the program's chunks a GSNativeMesh; if not,

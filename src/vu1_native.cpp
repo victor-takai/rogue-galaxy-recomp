@@ -95,6 +95,13 @@ constexpr Piece kCommon[] = {
 };
 constexpr const char *kCommonNames[] = {"A"};
 
+// The transporter beam's strips: its own A (c8143ab4: B, F, E, C and D in
+// that order, and no guard band setup for clipping), E a stub that returns
+// (2aa11602: nothing is clipped), F b1d29245 (the UV is a projection of the
+// position) and D 1bd1b5c0 (below).
+constexpr Piece kBeamA = {0x0320u, 0x0530u, 0xc8143ab4bcadef13ull};
+constexpr Piece kBeamE = {0x2620u, 0x2630u, 0x2aa116029d0c7d60ull};
+
 // The F pieces (A calls F after B, before C): d3f6f631 scrolls the UVs by
 // quad 88.xy (declined when set), 150031ee replaces them by a sphere map,
 // 9df36d6a bends the positions (below, the wave), ad209cd3 replaces the UVs
@@ -111,6 +118,8 @@ constexpr UvPiece kUvs[] = {
     {{0x39d0u, 0x3d10u, 0xad209cd3feea3c5dull}, Uv::Reflect},
     // UNVERIFIED: no recording holds this piece; read from the executable's code only.
     {{0x39d0u, 0x3ab0u, 0x0594a06392e0fbb3ull}, Uv::Ramp},
+    // The beam's: recorded (a780f947d3b7787a, 31 vertices).
+    {{0x39d0u, 0x3c08u, 0xb1d2924548c74d41ull}, Uv::Beam},
 };
 
 // The B pieces. A calls B at 0x960, or with quad 76.z set at 0x960 plus
@@ -194,6 +203,7 @@ struct Finish
     bool depthBounds;
     bool bounds = true; // false: the depth is scaled but 98 and 99 are left alone
     bool affine = false; // ST kept as it is, Q written as 1
+    bool white = false;  // the color is (128, 128, 128) and the vertex's alpha
 };
 constexpr Finish kFinishes[] = {
     {{0x1900u, 0x20c8u, 0xa786efabfa469adaull}, Cull::GuardBandAndBackface, false},
@@ -210,6 +220,9 @@ constexpr Finish kFinishes[] = {
     // band and the scaled depth as 634107b0, without the bounds, and ST not
     // multiplied by Q (the GS sees Q = 1: the texture is not perspective-correct).
     {{0x1900u, 0x1be0u, 0x2feaa9a15b81d8baull}, Cull::GuardBand, true, false, true},
+    // The beam's D, recorded: that, with the color (128, 128, 128) and the
+    // vertex's alpha, clamped to quad 39.
+    {{0x1900u, 0x1be0u, 0x1bd1b5c0cd88b246ull}, Cull::GuardBand, true, false, true, true},
 };
 
 // The program of these pieces, made once and kept: its name says what each
@@ -222,7 +235,7 @@ const Program *intern(const Program &shape)
     const std::lock_guard<std::mutex> lock(mutex);
     for (const Program &program : programs)
     {
-        if (program.cull == shape.cull && program.color == shape.color && program.depthBounds == shape.depthBounds && program.bounds == shape.bounds && program.affine == shape.affine &&
+        if (program.cull == shape.cull && program.color == shape.color && program.depthBounds == shape.depthBounds && program.bounds == shape.bounds && program.affine == shape.affine && program.white == shape.white &&
             program.decode == shape.decode && program.maxBones == shape.maxBones && program.kind == shape.kind &&
             program.uv == shape.uv)
         {
@@ -240,14 +253,14 @@ const Program *intern(const Program &shape)
             : shape.cull == Cull::GuardBandAndBackface ? ", guard band and backfaces"
             : shape.cull == Cull::GuardBand            ? ", guard band"
                                                        : "";
-    name += shape.depthBounds ? (shape.bounds ? ", depth and bounds" : ", depth, affine texture (unverified)") : "";
+    name += shape.depthBounds ? (shape.bounds ? ", depth and bounds" : shape.white ? ", depth, affine texture, white" : ", depth, affine texture (unverified)") : "";
     name += shape.color == Color::Material && shape.kind == Kind::Strip ? ", one color"
             : shape.color == Color::Lit                                  ? ", lit"
             : shape.color == Color::LitVertex                            ? ", lit vertex colors"
             : shape.color == Color::LitPoint                             ? ", lit with point lights (unverified)"
             : shape.color == Color::LitPointVertex                       ? ", lit with point lights, vertex colors (unverified)"
                                                                          : "";
-    name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : shape.uv == Uv::Ramp ? ", ramp (unverified)" : "";
+    name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : shape.uv == Uv::Ramp ? ", ramp (unverified)" : shape.uv == Uv::Beam ? ", projected UVs (beam)" : "";
     name += shape.decode == Decode::Skinned ? ", skinned" : "";
     Program &program = programs.emplace_back(shape);
     program.name = name.c_str();
@@ -541,6 +554,41 @@ struct Ramp
     }
 };
 
+// The beam's F (b1d29245; recorded): each position through quads 72-75 (the x,
+// y and w lanes, a column each), divided by w, y negated, taken from the
+// point quad 75 projects (pc, y negated) and scaled by quad 82.z, then moved
+// by pc + (quad 82.xy - 1) * 0.05; the UV is (that + 1) / 2.
+struct Beam
+{
+    Vec4 col[4];
+    float centerX, centerY, shiftX, shiftY, scale;
+
+    explicit Beam(const VuData &vu)
+    {
+        for (uint32_t i = 0; i < 4u; ++i)
+            col[i] = vu.quad(72u + i);
+        const float inverse = gsNativeReciprocal(col[3].w);
+        centerX = col[3].x * inverse;
+        centerY = 0.0f - col[3].y * inverse;
+        const Vec4 material = vu.quad(82);
+        shiftX = centerX + (material.x - 1.0f) * 0.05f;
+        shiftY = centerY + (material.y - 1.0f) * 0.05f;
+        scale = material.z;
+    }
+
+    void uv(const float p[3], float &u, float &v) const
+    {
+        const float x = ((col[0].x * p[0] + col[1].x * p[1]) + col[2].x * p[2]) + col[3].x * 1.0f;
+        const float y = ((col[0].y * p[0] + col[1].y * p[1]) + col[2].y * p[2]) + col[3].y * 1.0f;
+        const float w = ((col[0].w * p[0] + col[1].w * p[1]) + col[2].w * p[2]) + col[3].w * 1.0f;
+        const float inverse = gsNativeReciprocal(w);
+        const float dx = x * inverse - centerX;
+        const float dy = (0.0f - y * inverse) - centerY;
+        u = ((dx * scale + shiftX) + 1.0f) * 0.5f;
+        v = ((dy * scale + shiftY) + 1.0f) * 0.5f;
+    }
+};
+
 // The wave F (9df36d6a): B's decoded positions (quad 103.x, a vertex each,
 // in place) turned in x and y about (0, a), a = quad 84.x, by t = q *
 // max(y - a, 0), q = quad 900.z / (quad 84.y - a): with c = 1 - t * t / 2 and
@@ -755,6 +803,7 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
     const Wave wave(vu);
     const Reflection reflection(vu);
     const Ramp ramp(vu);
+    const Beam beam(vu);
     chunk.mesh.vertices.resize(count);
     for (uint32_t k = 0; k < count; ++k)
     {
@@ -774,6 +823,10 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
         v.g = perVertex ? colorBase.y * itof15(vu.word(colors + k, 1)) * 256.0f : colorBase.y;
         v.b = perVertex ? colorBase.z * itof15(vu.word(colors + k, 2)) * 256.0f : colorBase.z;
         v.a = perVertex ? colorBase.w * itof15(vu.word(colors + k, 3)) * 256.0f : colorBase.w;
+        if (program.uv == Uv::Beam)
+            beam.uv(position, v.u, v.v);
+        if (program.white)
+            v.r = v.g = v.b = 128.0f;
         if (normals)
         {
             float normal[3];
@@ -1548,11 +1601,22 @@ const Program *identify(const uint8_t *code, uint32_t startPC)
             return intern(shape);
         }
     }
-    for (const Piece &piece : kCommon)
+    const bool beam = matches(code, kBeamA);
+    if (beam)
     {
-        if (!matches(code, piece))
+        if (!matches(code, kBeamE))
         {
             return nullptr;
+        }
+    }
+    else
+    {
+        for (const Piece &piece : kCommon)
+        {
+            if (!matches(code, piece))
+            {
+                return nullptr;
+            }
         }
     }
     const DecodePiece *decode = present(code, kDecodes, &DecodePiece::b);
@@ -1563,8 +1627,14 @@ const Program *identify(const uint8_t *code, uint32_t startPC)
     {
         return nullptr;
     }
+    // The beam's pieces go together (its F and D read and write what the
+    // others do not).
+    if (beam != (uv->uv == Uv::Beam) || beam != finish->white)
+    {
+        return nullptr;
+    }
     Program shape{nullptr,          finish->cull,     color->color, finish->depthBounds,
-                  decode->decode,   decode->maxBones, Kind::Strip,  uv->uv, finish->bounds, finish->affine};
+                  decode->decode,   decode->maxBones, Kind::Strip,  uv->uv, finish->bounds, finish->affine, finish->white};
     return intern(shape);
 }
 
@@ -1581,7 +1651,7 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
     std::string out;
     for (size_t i = 0; i < std::size(kCommon); ++i)
     {
-        out += matches(code, kCommon[i]) ? kCommonNames[i] : "-";
+        out += matches(code, kCommon[i]) ? kCommonNames[i] : matches(code, kBeamA) ? "A:beam" : "-";
         out += ' ';
     }
     const DecodePiece *decode = present(code, kDecodes, &DecodePiece::b);
@@ -1589,7 +1659,7 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
            : decode->decode == Decode::Skinned ? "B:skinned "
                                                : "B:plain ";
     const UvPiece *uv = present(code, kUvs, &UvPiece::f);
-    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : uv->uv == Uv::Wave ? "F:wave " : uv->uv == Uv::Reflect ? "F:reflection " : uv->uv == Uv::Ramp ? "F:ramp " : "F:scroll ";
+    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : uv->uv == Uv::Wave ? "F:wave " : uv->uv == Uv::Reflect ? "F:reflection " : uv->uv == Uv::Ramp ? "F:ramp " : uv->uv == Uv::Beam ? "F:beam " : "F:scroll ";
     const char *color = "C:?";
     for (const ColorPiece &candidate : kColors)
     {
@@ -1608,7 +1678,8 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
     {
         if (matches(code, candidate.d))
         {
-            finish = !candidate.bounds ? "D:guard band, depth"
+            finish = candidate.white ? "D:guard band, depth, white"
+                     : !candidate.bounds ? "D:guard band, depth"
                      : candidate.depthBounds && candidate.cull == Cull::GuardBandAndBackface
                          ? "D:guard band and backfaces, depth and bounds"
                      : candidate.depthBounds && candidate.cull == Cull::GuardBand ? "D:guard band, depth and bounds"
@@ -1654,7 +1725,7 @@ const char *declineChunk(const Program &program, const uint8_t *data, uint32_t t
             return "triangle list (C's own path)";
         return vu.half(top, 1) == 0u ? "no vertices" : nullptr;
     }
-    if ((vu.half(81, 0) & 2u) && !clips)
+    if ((vu.half(81, 0) & 2u) && !clips && program.uv != Uv::Beam)
         return "clipping (slot E)";
     // PRIM from the chunk header. Only the backface piece reads it, with a
     // path of its own for triangle lists; the others run lists through
@@ -1672,6 +1743,8 @@ const char *declineChunk(const Program &program, const uint8_t *data, uint32_t t
     // count.
     if (program.uv == Uv::Reflect && vu.half(top, 1) < 3u)
         return "reflection over fewer than three vertices (slot F)";
+    if (program.uv == Uv::Beam && vu.half(top, 1) < 4u)
+        return "beam over fewer than four vertices (slot F)";
     if (program.uv == Uv::Plain && (vu.quad(88).x != 0.0f || vu.quad(88).y != 0.0f))
         return "scrolling UVs (slot F)";
     return nullptr;
