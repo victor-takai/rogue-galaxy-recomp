@@ -29,7 +29,9 @@
 //            mesh scales in quads 77, 78, 79 (the skinning B then sums the
 //            position over the vertex's bones);
 //   F 0x39d0 nothing unless quad 88.xy is set (scrolling UVs), or a
-//            sphere map from the normals;
+//            sphere map from the normals, or the wave (9df36d6a): the
+//            positions turned in x and y about (0, quad 84.x), by an angle
+//            growing with y;
 //   C 0x10e0 the vertex colors: the int16 color / 32768 * 256 times
 //            quad 82 * quad 42 + quad 83 * 128 (82.w scaled by 81.w), or
 //            that color alone, or lights on the normal;
@@ -94,7 +96,8 @@ constexpr Piece kCommon[] = {
 constexpr const char *kCommonNames[] = {"A"};
 
 // The F pieces (A calls F after B, before C): d3f6f631 scrolls the UVs by
-// quad 88.xy (declined when set), 150031ee replaces them by a sphere map.
+// quad 88.xy (declined when set), 150031ee replaces them by a sphere map,
+// 9df36d6a bends the positions (below, the wave).
 struct UvPiece
 {
     Piece f;
@@ -103,6 +106,7 @@ struct UvPiece
 constexpr UvPiece kUvs[] = {
     {{0x39d0u, 0x3a68u, 0xd3f6f6312a13ff1cull}, Uv::Plain},
     {{0x39d0u, 0x3b70u, 0x150031ee1534d185ull}, Uv::SphereMap},
+    {{0x39d0u, 0x3b98u, 0x9df36d6a55fdb496ull}, Uv::Wave},
 };
 
 // The B pieces. A calls B at 0x960, or with quad 76.z set at 0x960 plus
@@ -224,7 +228,7 @@ const Program *intern(const Program &shape)
             : shape.color == Color::Lit                                  ? ", lit"
             : shape.color == Color::LitVertex                            ? ", lit vertex colors"
                                                                          : "";
-    name += shape.uv == Uv::SphereMap ? ", sphere map" : "";
+    name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : "";
     name += shape.decode == Decode::Skinned ? ", skinned" : "";
     Program &program = programs.emplace_back(shape);
     program.name = name.c_str();
@@ -486,6 +490,47 @@ struct SphereMap
     }
 };
 
+// The VU's ESIN: a polynomial in x^2, as the interpreter has it.
+float vuSin(float x)
+{
+    constexpr float c[] = {1.0f, -0.166666567325592f, 0.008333025500178f, -0.000198074136279f,
+                           0.000002601886990f};
+    const float squared = x * x;
+    float polynomial = c[4];
+    for (int i = 3; i >= 0; --i)
+        polynomial = c[i] + squared * polynomial;
+    return x * polynomial;
+}
+
+// The wave F (9df36d6a): B's decoded positions (quad 103.x, a vertex each,
+// in place) turned in x and y about (0, a), a = quad 84.x, by t = q *
+// max(y - a, 0), q = quad 900.z / (quad 84.y - a): with c = 1 - t * t / 2 and
+// s = sin t (ESIN), x' = c x - s (y - a) and y' = c (y - a) + s x + a. The
+// normals stay. The products and sums keep the VU's order.
+struct Wave
+{
+    float a, q;
+
+    explicit Wave(const VuData &vu)
+    {
+        const Vec4 range = vu.quad(84);
+        a = range.x;
+        q = vu.quad(900).z / (range.y - range.x);
+    }
+
+    void xy(float &x, float &y) const
+    {
+        const float d = y - a;
+        const float t = (0.0f + q) * (d > 0.0f ? d : 0.0f);
+        const float s = vuSin(t);
+        const float c = 1.0f - (t * t) * 0.5f;
+        const float nx = (0.0f - s) * d + c * x;
+        const float ny = ((0.0f + c) * d + s * x) + a;
+        x = nx;
+        y = ny;
+    }
+};
+
 // A chunk read out of VU1 data memory: the FOGCOL packet, the first quads of
 // the program's output (GIF header, PRIM, PRMODE, the vertex tag) and the
 // strip as a mesh.
@@ -572,12 +617,17 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
     const bool normals = lit || program.uv == Uv::SphereMap;
     const Lights lights(vu);
     const SphereMap sphere(vu);
+    const Wave wave(vu);
     chunk.mesh.vertices.resize(count);
     for (uint32_t k = 0; k < count; ++k)
     {
         GSNativeMesh::Vertex &v = chunk.mesh.vertices[k];
         float position[3];
         decodePosition(vu, top, k, bones, position);
+        if (program.uv == Uv::Wave)
+        {
+            wave.xy(position[0], position[1]);
+        }
         v.x = position[0];
         v.y = position[1];
         v.z = position[2];
@@ -1371,7 +1421,7 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
            : decode->decode == Decode::Skinned ? "B:skinned "
                                                : "B:plain ";
     const UvPiece *uv = present(code, kUvs, &UvPiece::f);
-    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : "F:scroll ";
+    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : uv->uv == Uv::Wave ? "F:wave " : "F:scroll ";
     const char *color = "C:?";
     for (const ColorPiece &candidate : kColors)
     {
