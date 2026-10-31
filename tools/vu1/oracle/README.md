@@ -44,6 +44,17 @@ vertices, so every recorded run starts from its own recorded data memory.
 and I registers ended differently; the `max` columns are the largest
 differences seen, within the tolerance or not.
 
+## Pieces no recording holds (synthetic mode)
+
+`--synth-code FILE:START:END` copies bytes START..END (hex) of a 16 KiB image
+(`tools/vu1/piece.py` writes one from the executable) over the code image of
+the `--program` filtered, `--synth-quad N:x,y,z,w` sets a data quad in each
+of its runs, and the reference becomes the interpreter's run of the result
+instead of the recorded kicks. With `--candidate native` that checks a
+native piece against the VU1 on real vertices without a scene that runs it.
+`tools/vu1/ssa.py` runs the code symbolically (named temporaries) to read
+what a pipelined piece computes.
+
 ## The first recording (2026-10-28)
 
 Salgin, File 01, lists 2700-2739 at 1x in the 30 fps mode: 67,640 runs

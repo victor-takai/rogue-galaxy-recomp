@@ -19,14 +19,18 @@
 //
 // Done: every program the recordings hold (docs/VU1-NATIVE.md, "Status"):
 // the strip programs, composed from a piece per slot (A; B plain or skinned;
-// C vertex colors, one color, lit, lit vertex colors; D: none, guard band,
-// guard band and backfaces, each with or without the scaled depth and
-// bounds; F scroll or sphere map), and the programs whose pieces draw by
-// themselves (Kind): the outlines, the shadow volumes, the overlay sprites,
-// the object setup, the particles and the projected texture. Not done, so
-// left to the VU1 chunk by chunk: clipping (slot E), in every mode (the
-// GPU's clipping across the eye plane differed on one driver), the paths no
-// recording took, and the pieces no recording reached.
+// C vertex colors, one color, lit, lit vertex colors, those with four point
+// lights; D: none, guard band, guard band and backfaces, each with or
+// without the scaled depth and bounds, and the beam's; F scroll, sphere map,
+// wave, reflection map, ramp, the beam's), and the programs whose pieces
+// draw by themselves (Kind): the outlines, the shadow volumes, the overlay
+// sprites, the object setup, the particles and the projected texture. The
+// pieces no recording holds (the ramp F, the point-light Cs, the depth-only
+// affine D) are written from the code and checked against the interpreter
+// only (docs/VU1-NATIVE.md, "Pieces written from the code alone"); their
+// program names say "unverified". Not done, so left to the VU1 chunk by
+// chunk: clipping (slot E) where the GPU does not clip, the paths no
+// recording took, and the pieces nothing reached.
 //
 // The arithmetic per vertex is the runtime's (gsNativeMeshPoint in
 // runtime/gs/gs_types.h), whichever way a chunk goes out.
@@ -127,8 +131,7 @@ const Program *identify(const uint8_t *code, uint32_t startPC);
 
 // Why the chunk an MSCNT runs (its header at `top`, in quadwords) is left to
 // the VU1, or null when it is done natively. `clips`: what draws it clips
-// triangles itself (the GPU), so slot E's chunks are done too; the VIF1
-// thread passes false in every mode, `gpu` too (src/vif1_thread.cpp).
+// triangles itself (the GPU), so slot E's chunks are done too.
 const char *declineChunk(const Program &program, const uint8_t *data, uint32_t top, bool clips = false);
 
 // Which of the pieces this file knows the code at `startPC` has, slot by
