@@ -1685,6 +1685,8 @@ struct SdlGpuBackend::Impl {
         r.misc[2] = depthScale;
         r.depth[0] = mesh.header.depthScale;
         r.depth[1] = mesh.header.depthMax;
+        if (mesh.header.clips)
+            std::memcpy(r.clipPlanes, mesh.header.clipPlanes, sizeof(r.clipPlanes));
     }
 
     // A native strip through submit(): a stand-in primitive covering the

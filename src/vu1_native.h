@@ -119,7 +119,7 @@ struct Program
 // the GPU path sends buildChunk's packets.
 inline bool hasMesh(const Program &program)
 {
-    return program.kind == Kind::Strip && !program.affine && !program.rawColor;
+    return (program.kind == Kind::Strip && !program.affine && !program.rawColor) || program.kind == Kind::Projector;
 }
 
 // Whether the program draws in its MSCAL (the overlay sprites) rather than

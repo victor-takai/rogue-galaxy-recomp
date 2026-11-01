@@ -852,6 +852,19 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
         h.depthMax = vu.quad(1).y;
     }
     h.triangleList = (prim & 7u) == 3u ? 1u : 0u;
+    // A chunk slot E clips (the beam's E is a stub): E's clip space is
+    // quads 72-75 (the base program's view times its clip matrix, rows as
+    // 68-71's), and the renderer clips the strip at its z = -w and z = w.
+    if ((vu.half(81, 0) & 2u) && program.uv != Uv::Beam)
+    {
+        h.clips = 1u;
+        for (uint32_t row = 0; row < 4u; ++row)
+        {
+            const Vec4 m = vu.quad(72u + row);
+            h.clipPlanes[0][row] = m.z + m.w;
+            h.clipPlanes[1][row] = m.w - m.z;
+        }
+    }
 
     const Vec4 uvScale = vu.quad(79);
     Vec4 material = vu.quad(82);
@@ -1573,6 +1586,55 @@ void buildProjector(const Program &program, const VuData &vu, uint32_t top,
     }
 }
 
+// The projected texture's chunk as a mesh (buildProjector's arithmetic, for
+// the GPU): the UV the position through the projector, divided by its w,
+// per vertex (the shader then interpolates it as ST / Q, as the GS does the
+// program's ST), the color (128, 128, 128, 82.w * 81.w * 128), the guard
+// band and the facing as C tests them; C skips a triangle when cross *
+// winding > 0 with the cross the other way round to D's, which is
+// gsNativeMeshSkips' rule with its own winding.
+void projectorMesh(const Program &program, const VuData &vu, uint32_t top, GSNativeMesh &mesh)
+{
+    Vec4 projector[4], texture[4];
+    for (uint32_t i = 0; i < 4u; ++i)
+    {
+        projector[i] = vu.quad(30u + i);
+    }
+    for (uint32_t i = 0; i < 4u; ++i)
+    {
+        texture[i] = transform(projector, vu.quad(60u + i));
+    }
+    GSNativeMesh::Header &h = mesh.header;
+    h.guardBand = 1u;
+    h.backface = 1u;
+    h.winding = vu.quad(111).z * ((vu.half(87, 1) & 0x1000u) ? -1.0f : 1.0f);
+    h.depthScale = vu.quad(87).z;
+    h.depthMax = vu.quad(1).y;
+    for (float &c : h.colorMax)
+    {
+        c = 255.0f;
+    }
+    const float alpha = static_cast<float>(gsNativeFtoi(vu.quad(82).w * vu.quad(81).w * 128.0f, 1.0f));
+    const uint32_t count = vu.half(top, 1);
+    const uint32_t bones = program.decode == Decode::Skinned ? bonesOf(program, vu, top) : 0u;
+    mesh.vertices.resize(count);
+    for (uint32_t j = 0; j < count; ++j)
+    {
+        float position[3];
+        decodePosition(vu, top, j, bones, position);
+        const Vec4 t = transform(texture, Vec4{position[0], position[1], position[2], 1.0f});
+        const float tq = vuReciprocal(t.w);
+        GSNativeMesh::Vertex &v = mesh.vertices[j];
+        v.x = position[0];
+        v.y = position[1];
+        v.z = position[2];
+        v.u = t.x * tq;
+        v.v = t.y * tq;
+        v.r = v.g = v.b = 128.0f;
+        v.a = alpha;
+    }
+}
+
 // The overlay B (6e42dac6), run by its own MSCAL: screen sprites over the
 // bounds the last depth-and-bounds program left in quads 98 and 99, one
 // pixel wider each way, within the rectangle of quads 140 and 141, in
@@ -1812,7 +1874,7 @@ const char *declineChunk(const Program &program, const uint8_t *data, uint32_t t
         return vu.half(top, 1) == 0u ? "no particles" : nullptr;
     if (program.kind == Kind::Projector)
     {
-        if (vu.half(81, 0) & 2u)
+        if ((vu.half(81, 0) & 2u) && !clips)
             return "clipping (slot E)";
         if ((vu.half(top, 0) & 7u) == 3u)
             return "triangle list (C's own path)";
@@ -2052,6 +2114,10 @@ void buildMesh(const Program &program, const uint8_t *data, uint32_t top,
     const VuRounding rounding;
     Chunk chunk;
     readChunk(program, VuData(data), top, chunk);
+    if (program.kind == Kind::Projector)
+    {
+        projectorMesh(program, VuData(data), top, chunk.mesh);
+    }
     packets.clear();
     packets.push_back(std::move(chunk.fog));
     // PRIM and PRMODE behind the program's GIF tag, made the packet's end.
