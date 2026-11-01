@@ -1,0 +1,120 @@
+diff --git a/include/SDL3/SDL_gpu.h b/include/SDL3/SDL_gpu.h
+index 1e1126ba..9baad366 100644
+--- a/include/SDL3/SDL_gpu.h
++++ b/include/SDL3/SDL_gpu.h
+@@ -1163,7 +1163,9 @@ typedef enum SDL_GPUBlendFactor
+     SDL_GPU_BLENDFACTOR_ONE_MINUS_DST_ALPHA,       /**< 1 - destination alpha */
+     SDL_GPU_BLENDFACTOR_CONSTANT_COLOR,            /**< blend constant */
+     SDL_GPU_BLENDFACTOR_ONE_MINUS_CONSTANT_COLOR,  /**< 1 - blend constant */
+-    SDL_GPU_BLENDFACTOR_SRC_ALPHA_SATURATE         /**< min(source alpha, 1 - destination alpha) */
++    SDL_GPU_BLENDFACTOR_SRC_ALPHA_SATURATE,        /**< min(source alpha, 1 - destination alpha) */
++    SDL_GPU_BLENDFACTOR_SRC1_ALPHA,                /**< the second source's alpha (dual-source blending; dq8-gfx: added) */
++    SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC1_ALPHA       /**< 1 - the second source's alpha (dq8-gfx: added) */
+ } SDL_GPUBlendFactor;
+ 
+ /**
+diff --git a/src/gpu/SDL_sysgpu.h b/src/gpu/SDL_sysgpu.h
+index 55496796..f690298e 100644
+--- a/src/gpu/SDL_sysgpu.h
++++ b/src/gpu/SDL_sysgpu.h
+@@ -148,7 +148,7 @@ typedef struct BlitPipelineCacheEntry
+ #define SDL_GPU_COMPAREOP_MAX_ENUM_VALUE            (SDL_GPU_COMPAREOP_ALWAYS + 1)
+ #define SDL_GPU_STENCILOP_MAX_ENUM_VALUE            (SDL_GPU_STENCILOP_DECREMENT_AND_WRAP + 1)
+ #define SDL_GPU_BLENDOP_MAX_ENUM_VALUE              (SDL_GPU_BLENDOP_MAX + 1)
+-#define SDL_GPU_BLENDFACTOR_MAX_ENUM_VALUE          (SDL_GPU_BLENDFACTOR_SRC_ALPHA_SATURATE + 1)
++#define SDL_GPU_BLENDFACTOR_MAX_ENUM_VALUE          (SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC1_ALPHA + 1)
+ #define SDL_GPU_SWAPCHAINCOMPOSITION_MAX_ENUM_VALUE (SDL_GPU_SWAPCHAINCOMPOSITION_HDR10_ST2084 + 1)
+ #define SDL_GPU_PRESENTMODE_MAX_ENUM_VALUE          (SDL_GPU_PRESENTMODE_MAILBOX + 1)
+ 
+diff --git a/src/gpu/d3d12/SDL_gpu_d3d12.c b/src/gpu/d3d12/SDL_gpu_d3d12.c
+index ab31074c..9b071149 100644
+--- a/src/gpu/d3d12/SDL_gpu_d3d12.c
++++ b/src/gpu/d3d12/SDL_gpu_d3d12.c
+@@ -224,6 +224,8 @@ static D3D12_BLEND SDLToD3D12_BlendFactor[] = {
+     D3D12_BLEND_BLEND_FACTOR,     // CONSTANT_COLOR
+     D3D12_BLEND_INV_BLEND_FACTOR, // ONE_MINUS_CONSTANT_COLOR
+     D3D12_BLEND_SRC_ALPHA_SAT,    // SRC_ALPHA_SATURATE
++    D3D12_BLEND_SRC1_ALPHA,       // SRC1_ALPHA (dq8-gfx: added)
++    D3D12_BLEND_INV_SRC1_ALPHA,   // ONE_MINUS_SRC1_ALPHA
+ };
+ SDL_COMPILE_TIME_ASSERT(SDLToD3D12_BlendFactor, SDL_arraysize(SDLToD3D12_BlendFactor) == SDL_GPU_BLENDFACTOR_MAX_ENUM_VALUE);
+ 
+@@ -242,6 +244,8 @@ static D3D12_BLEND SDLToD3D12_BlendFactorAlpha[] = {
+     D3D12_BLEND_BLEND_FACTOR,     // CONSTANT_COLOR
+     D3D12_BLEND_INV_BLEND_FACTOR, // ONE_MINUS_CONSTANT_COLOR
+     D3D12_BLEND_SRC_ALPHA_SAT,    // SRC_ALPHA_SATURATE
++    D3D12_BLEND_SRC1_ALPHA,       // SRC1_ALPHA (dq8-gfx: added)
++    D3D12_BLEND_INV_SRC1_ALPHA,   // ONE_MINUS_SRC1_ALPHA
+ };
+ SDL_COMPILE_TIME_ASSERT(SDLToD3D12_BlendFactorAlpha, SDL_arraysize(SDLToD3D12_BlendFactorAlpha) == SDL_GPU_BLENDFACTOR_MAX_ENUM_VALUE);
+ 
+diff --git a/src/gpu/metal/SDL_gpu_metal.m b/src/gpu/metal/SDL_gpu_metal.m
+index c93b8a0e..d2db2255 100644
+--- a/src/gpu/metal/SDL_gpu_metal.m
++++ b/src/gpu/metal/SDL_gpu_metal.m
+@@ -285,6 +285,8 @@ static MTLBlendFactor SDLToMetal_BlendFactor[] = {
+     MTLBlendFactorBlendColor,               // CONSTANT_COLOR
+     MTLBlendFactorOneMinusBlendColor,       // ONE_MINUS_CONSTANT_COLOR
+     MTLBlendFactorSourceAlphaSaturated,     // SRC_ALPHA_SATURATE
++    MTLBlendFactorSource1Alpha,             // SRC1_ALPHA (dq8-gfx: added)
++    MTLBlendFactorOneMinusSource1Alpha,     // ONE_MINUS_SRC1_ALPHA
+ };
+ SDL_COMPILE_TIME_ASSERT(SDLToMetal_BlendFactor, SDL_arraysize(SDLToMetal_BlendFactor) == SDL_GPU_BLENDFACTOR_MAX_ENUM_VALUE);
+ 
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan.c b/src/gpu/vulkan/SDL_gpu_vulkan.c
+index cb9fbbd1..bc084765 100644
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -391,7 +391,9 @@ static VkBlendFactor SDLToVK_BlendFactor[] = {
+     VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA,
+     VK_BLEND_FACTOR_CONSTANT_COLOR,
+     VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR,
+-    VK_BLEND_FACTOR_SRC_ALPHA_SATURATE
++    VK_BLEND_FACTOR_SRC_ALPHA_SATURATE,
++    VK_BLEND_FACTOR_SRC1_ALPHA,
++    VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA
+ };
+ SDL_COMPILE_TIME_ASSERT(SDLToVK_BlendFactor, SDL_arraysize(SDLToVK_BlendFactor) == SDL_GPU_BLENDFACTOR_MAX_ENUM_VALUE);
+ 
+@@ -1146,6 +1148,7 @@ struct VulkanRenderer
+     bool supportsPhysicalDeviceProperties2;
+     bool supportsFillModeNonSolid;
+     bool supportsMultiDrawIndirect;
++    bool supportsDualSourceBlend; // dq8-gfx: added
+ 
+     VulkanMemoryAllocator *memoryAllocator;
+     VkPhysicalDeviceMemoryProperties memoryProperties;
+@@ -6274,6 +6277,20 @@ static SDL_GPUGraphicsPipeline *VULKAN_CreateGraphicsPipeline(
+     VkResult vulkanResult;
+     Uint32 i;
+ 
++    // dq8-gfx: added. The second source's factors need the device's dualSrcBlend.
++    for (i = 0; i < createinfo->target_info.num_color_targets; i += 1) {
++        const SDL_GPUColorTargetBlendState *blend = &createinfo->target_info.color_target_descriptions[i].blend_state;
++        const bool second =
++            blend->src_color_blendfactor >= SDL_GPU_BLENDFACTOR_SRC1_ALPHA ||
++            blend->dst_color_blendfactor >= SDL_GPU_BLENDFACTOR_SRC1_ALPHA ||
++            blend->src_alpha_blendfactor >= SDL_GPU_BLENDFACTOR_SRC1_ALPHA ||
++            blend->dst_alpha_blendfactor >= SDL_GPU_BLENDFACTOR_SRC1_ALPHA;
++        if (blend->enable_blend && second && !((VulkanRenderer *)driverData)->supportsDualSourceBlend) {
++            SDL_SetError("Dual-source blending is not supported by this device");
++            return NULL;
++        }
++    }
++
+     VulkanGraphicsPipeline *graphicsPipeline = (VulkanGraphicsPipeline *)SDL_malloc(sizeof(VulkanGraphicsPipeline));
+     VkGraphicsPipelineCreateInfo vkPipelineCreateInfo;
+ 
+@@ -11571,6 +11588,12 @@ static Uint8 VULKAN_INTERNAL_CreateLogicalDevice(
+         renderer->supportsMultiDrawIndirect = true;
+     }
+ 
++    // dq8-gfx: added, for SDL_GPU_BLENDFACTOR_SRC1_ALPHA.
++    if (haveDeviceFeatures.dualSrcBlend) {
++        desiredDeviceFeatures.dualSrcBlend = VK_TRUE;
++        renderer->supportsDualSourceBlend = true;
++    }
++
+     // creating the logical device
+ 
+     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;

@@ -152,6 +152,15 @@ public:
 
     void setScale(uint32_t scale);
     uint32_t scale() const { return m_scale; }
+    // Effect buffers (Rogue Galaxy: added): colour surfaces at these bases,
+    // at most 256 pixels wide, are made at no more than `scale` (0: the
+    // scene's). Blurred to begin with, they look the same, and their passes
+    // cost the square of the scale. Pages they share with surfaces at the
+    // scene's scale go between them as nearest blits.
+    void setEffectBuffers(std::vector<uint32_t> bases, uint32_t scale) {
+        m_effectBases = std::move(bases);
+        m_effectScale = scale;
+    }
 
     void reset();
 
@@ -305,6 +314,8 @@ private:
     SdlGpuDevice &m_device;
     GsVram &m_vram;
     uint32_t m_scale = 1u;
+    std::vector<uint32_t> m_effectBases;
+    uint32_t m_effectScale = 0u;
     std::vector<std::unique_ptr<GsSurface>> m_surfaces;
     std::vector<uint8_t> m_staging;
     // Per 256-byte block: the words local memory holds current since the

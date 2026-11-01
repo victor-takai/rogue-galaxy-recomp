@@ -1,0 +1,97 @@
+diff --git a/ps2xRuntime/include/runtime/gs/gs_types.h b/ps2xRuntime/include/runtime/gs/gs_types.h
+--- a/ps2xRuntime/include/runtime/gs/gs_types.h
++++ b/ps2xRuntime/include/runtime/gs/gs_types.h
+@@ -3,7 +3,9 @@
+ #include <cstddef>
+ #include <array>
+ #include <cstdint>
++#include <cstring>
+ #include <limits>
++#include <mutex>
+ #include <vector>
+ 
+ enum GSPrimType : uint8_t
+@@ -256,6 +258,64 @@
+ // game names a VU1 program here, src/vif1_thread.cpp); the threaded backend
+ // stamps each batch with it. Profiling only; 0 is "none" (Rogue Galaxy: added).
+ inline thread_local uint32_t t_sourceTag = 0;
++
++// The camera a VU1 program ran under: the matrices the game keeps in VU1
++// data memory (quads 4-7 the viewport transform, 8-11 the projection, 24-27
++// the view), as row-vector 4x4 floats. The submitting thread registers one
++// and names it by id; batches carry the id and the renderer looks it up,
++// for motion vectors (Rogue Galaxy: added).
++struct SceneCamera
++{
++    float viewport[16];
++    float projection[16];
++    float view[16];
++};
++inline thread_local uint32_t t_sourceCamera = 0;
++
++class CameraRegistry
++{
++public:
++    static constexpr uint32_t kSlots = 4096u;
++
++    // The id of `camera`, 0 is none. The same camera as the last registered
++    // keeps its id. The newest kSlots stay readable.
++    static uint32_t add(const SceneCamera &camera)
++    {
++        Storage &s = storage();
++        std::lock_guard lock(s.mutex);
++        if (s.last != 0u && std::memcmp(&s.slots[s.last % kSlots], &camera, sizeof(camera)) == 0)
++        {
++            return s.last;
++        }
++        s.slots[++s.last % kSlots] = camera;
++        return s.last;
++    }
++
++    static bool get(uint32_t id, SceneCamera &out)
++    {
++        Storage &s = storage();
++        std::lock_guard lock(s.mutex);
++        if (id == 0u || id > s.last || s.last - id >= kSlots)
++        {
++            return false;
++        }
++        out = s.slots[id % kSlots];
++        return true;
++    }
++
++private:
++    struct Storage
++    {
++        std::mutex mutex;
++        SceneCamera slots[kSlots];
++        uint32_t last = 0u;
++    };
++    static Storage &storage()
++    {
++        static Storage instance;
++        return instance;
++    }
++};
+ } // namespace ps2_gs_detail
+ 
+ struct GSPrimitiveBatch
+@@ -264,6 +324,7 @@
+     uint8_t vertexCount = 0;
+     GSDrawState state{};
+     uint32_t sourceTag = 0; // ps2_gs_detail::t_sourceTag when it was submitted
++    uint32_t sourceCamera = 0; // ps2_gs_detail::t_sourceCamera, likewise
+ };
+ 
+ struct GSTransferCommand
+diff --git a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+--- a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+@@ -416,6 +416,7 @@
+ {
+     Impl::Command command{Impl::Op::Submit, batch};
+     std::get<GSPrimitiveBatch>(command.data).sourceTag = ps2_gs_detail::t_sourceTag;
++    std::get<GSPrimitiveBatch>(command.data).sourceCamera = ps2_gs_detail::t_sourceCamera;
+     m_impl->enqueue(std::move(command));
+ }
+ void GSThreadedBackend::BeginTransfer(const GSTransferCommand &command)

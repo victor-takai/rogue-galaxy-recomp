@@ -2,16 +2,14 @@
 
 ## Unreleased
 
+- Undub: the Japanese voices and movies from your own Japanese Director's Cut disc
+  (Settings > Language). Run `Install-Undub.bat` first and pick the disc image. The
+  text stays English.
 - With an Xbox controller, the game's text shows its buttons (A, B, X, Y,
   LB, RB, LT, RT) instead of the PlayStation's (Game > Controller's
   buttons, on by default).
 - The game says when a newer version is out, and the menu's About window
   links to it (Game > Check for new versions, on by default).
-- Above 1x, the letters of the dialogue, menus and story are traced into
-  smooth outlines and drawn at the internal resolution, with a round black
-  border or a solid shadow, instead of enlarged as blocks; the Xbox
-  buttons in the text and the ® are drawn sharp too (Game > Sharp
-  letters, on by default).
 - A 3D program the game uses later in Salgin is compiled: it ran on the
   slow path every frame, and the walk there was choppy.
 - The field's minimap and compass can be made smaller (Game > Minimap
@@ -26,9 +24,18 @@
   what a pack can replace from your own play.
   A pack made for PCSX2 (`TEX0HASH-CLUTHASH-BITS.dds`) works too and replaces
   scenery and character textures.
-- Save anywhere: in the field, R1 + Triangle opens the transporter's menu
-  (Game > Save anywhere, off by default). Such a save loads at the area's
-  transporter.
+- The free camera no longer lets a button pressed to move it reach a scene
+  waiting for one, and gives the controller back at once when turned off.
+- Full bag to storage: an item found when the bag is full goes to the
+  transporter's item storage instead of the overflow, or of being lost
+  (Game > Full bag to storage).
+- Item limit 99: every item that stacks can be carried up to 99 in the bag
+  (Game > Item limit 99).
+- A seventh bag page: 280 items instead of 240 (Game > Seventh bag page,
+  from the next start). Saves made with it still load without it.
+- The free camera no longer leaves the game stuck at the battle's "escape?"
+  question (a hit can push the leader out of the battle's area while the
+  camera flies): the question turns it off, and it can be answered.
 
 ## 0.1.0 (pre-release)
 

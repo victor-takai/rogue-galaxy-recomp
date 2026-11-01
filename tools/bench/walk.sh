@@ -35,7 +35,7 @@
 #                prints the 6 intervals before the marker and the 8 after.
 #                Read the [gfx] draws per second (55-75k in a battle) or
 #                tools/bench/battlefps.py NAME..., the frame rate over the
-#                intervals with 55k draws or more (the comparable number).
+#                intervals with 40k draws or more (the comparable number).
 #   GATE=1       the boss gate bench: the player's File 03 saved beside it
 #                (build/run/mc0-gate), loaded and left standing; prints
 #                tools/bench/gatefps.py (fps, VIF1 ms a frame) and profiles

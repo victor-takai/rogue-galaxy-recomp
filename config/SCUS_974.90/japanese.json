@@ -1,0 +1,9 @@
+{
+  "comment": "Identifies the Japanese Director's Cut (SCPS-17013), the only Japanese release whose voices line up with the US game. Its voice archives and movies are extracted into disc/JA by `python setup.py extract-japanese`. Sizes and sha256 are of the two voice indexes.",
+  "boot": "SCPS_170.13",
+  "indexes": {
+    "DATA0_1.HD6": "6c15e7baa6248655fda244b6ad5cb74e8c51f1188f53525df46153be9448815f",
+    "DATA1_1.HD6": "3ee133c7de5c83a01417947b04071a20aa98d1580041b6ca83efb218d9709c27"
+  },
+  "voice_files": ["DATA0_1.HD6", "DATA0_1.DAT", "DATA1_1.HD6", "DATA1_1.DAT"]
+}

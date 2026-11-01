@@ -52,6 +52,11 @@ layout(set = 3, binding = 0) uniform FragmentParams {
 } params;
 
 layout(location = 0) out vec4 outColor;
+#ifdef DQ8_DUAL_SOURCE
+// The source-alpha blend's factor, A/128, for SDL_GPU_BLENDFACTOR_SRC1_ALPHA;
+// outColor keeps the exact alpha the GS stores (Rogue Galaxy: added).
+layout(location = 0, index = 1) out vec4 outFactor;
+#endif
 
 const uint FLAG_TME = 1u << 0u;
 const uint FLAG_FST = 1u << 1u;
@@ -112,6 +117,24 @@ float clampedSubTexel(uint mode, int texel, int wrapped, float subTexel) {
 // plane separate. Negative when unused.
 vec2 g_plane = vec2(-1.0);
 
+// A live target's texel as its view's format reads it: CT24 and CT16 take
+// their alpha from TEXA (params.misc.z: 1 CT24, 2 CT16).
+vec4 convertTexel(vec4 color) {
+    const uint format = uint(params.misc.z);
+    if (format != 0u) {
+        uvec4 raw = uvec4(round(color * 255.0));
+        const uint texa = uint(params.misc.w);
+        const bool alphaBit = format == 2u && raw.a >= 128u;
+        if (format == 2u)
+            raw.rgb = (raw.rgb >> 3u) << 3u;
+        const bool transparent = !alphaBit && (texa & 65536u) != 0u &&
+                                 all(equal(raw.rgb, uvec3(0u)));
+        raw.a = transparent ? 0u : alphaBit ? ((texa >> 8u) & 255u) : (texa & 255u);
+        color = vec4(raw) / 255.0;
+    }
+    return color;
+}
+
 vec4 fetchTexelAt(ivec2 texel, vec2 subTexel) {
     const ivec2 size = ivec2(params.textureSize.xy);
     const uint wrapU = params.control.w & 3u;
@@ -132,20 +155,7 @@ vec4 fetchTexelAt(ivec2 texel, vec2 subTexel) {
     // GS's last sample may reach a texel beyond the target, which the CPU
     // side does not pad when the GS itself never reads it.
     const ivec2 bound = min(size * scale, textureSize(gsTexture, 0)) - 1;
-    vec4 color = texelFetch(gsTexture, clamp(physical, ivec2(0), bound), 0);
-    const uint format = uint(params.misc.z);
-    if (format != 0u) {
-        uvec4 raw = uvec4(round(color * 255.0));
-        const uint texa = uint(params.misc.w);
-        const bool alphaBit = format == 2u && raw.a >= 128u;
-        if (format == 2u)
-            raw.rgb = (raw.rgb >> 3u) << 3u;
-        const bool transparent = !alphaBit && (texa & 65536u) != 0u &&
-                                 all(equal(raw.rgb, uvec3(0u)));
-        raw.a = transparent ? 0u : alphaBit ? ((texa >> 8u) & 255u) : (texa & 255u);
-        color = vec4(raw) / 255.0;
-    }
-    return color;
+    return convertTexel(texelFetch(gsTexture, clamp(physical, ivec2(0), bound), 0));
 }
 
 vec4 fetchTexel(ivec2 texel) {
@@ -205,13 +215,43 @@ vec4 sampleTexture() {
         const vec2 physical = texel * float(sourceScale) - 0.5;
         const ivec2 first = ivec2(floor(physical));
         const vec2 weight = physical - vec2(first);
+        // A target clamped in both axes, all four taps inside the clamp
+        // (Rogue Galaxy: added): each tap's physical texel is itself,
+        // as the general path below works out the long way, so the taps are
+        // read directly. Textured draws were a few times an untextured one's
+        // cost a pixel at 8x, most of it this arithmetic.
+        const uint wrapU = params.control.w & 3u;
+        const uint wrapV = (params.control.w >> 2u) & 3u;
+        if ((wrapU == WRAP_CLAMP || wrapU == WRAP_REGION_CLAMP) &&
+            (wrapV == WRAP_CLAMP || wrapV == WRAP_REGION_CLAMP)) {
+            const ivec2 size = ivec2(params.textureSize.xy);
+            const ivec4 region = ivec4(params.region);
+            const ivec2 low = clamp(ivec2(wrapU == WRAP_CLAMP ? 0 : region.x, wrapV == WRAP_CLAMP ? 0 : region.z),
+                                    ivec2(0), size - 1);
+            const ivec2 high = clamp(ivec2(wrapU == WRAP_CLAMP ? size.x - 1 : region.y,
+                                           wrapV == WRAP_CLAMP ? size.y - 1 : region.w),
+                                     ivec2(0), size - 1);
+            if (all(greaterThanEqual(first, low * sourceScale)) &&
+                all(lessThan(first + 1, (high + 1) * sourceScale))) {
+                const ivec2 bound = min(size * sourceScale, textureSize(gsTexture, 0)) - 1;
+                const vec4 c00 = convertTexel(texelFetch(gsTexture, clamp(first, ivec2(0), bound), 0));
+                const vec4 c10 = convertTexel(texelFetch(gsTexture, clamp(first + ivec2(1, 0), ivec2(0), bound), 0));
+                const vec4 c01 = convertTexel(texelFetch(gsTexture, clamp(first + ivec2(0, 1), ivec2(0), bound), 0));
+                const vec4 c11 = convertTexel(texelFetch(gsTexture, clamp(first + ivec2(1, 1), ivec2(0), bound), 0));
+                return mix(mix(c00, c10, weight.x), mix(c01, c11, weight.x), weight.y);
+            }
+        }
+        const float inverse = 1.0 / float(sourceScale);
         vec4 taps[4];
         for (int i = 0; i < 4; ++i) {
             const ivec2 p = first + ivec2(i & 1, i >> 1);
-            // Integer floor division: exact at odd scales (a float divide by
-            // 3 can land below a whole number), and texels left of zero wrap
-            // like the GS's.
-            const ivec2 gsTexel = (p - (sourceScale - 1) * ivec2(lessThan(p, ivec2(0)))) / sourceScale;
+            // floor(p / scale), texels left of zero included, as the GS
+            // wraps them. A float divide by 3 can land just below a whole
+            // number; (p + 0.5) / scale is never within 0.5 / scale of one,
+            // far past the float's error, so its floor is exact without the
+            // integer divides, which were most of a textured draw's cost at
+            // 8x (Rogue Galaxy: changed).
+            const ivec2 gsTexel = ivec2(floor((vec2(p) + 0.5) * inverse));
             const vec2 sub = (vec2(p - gsTexel * sourceScale) + 0.5) / float(sourceScale);
             taps[i] = fetchTexelAt(gsTexel, sub);
         }
@@ -229,6 +269,26 @@ vec4 sampleTexture() {
         base = floor(base * 16.0 + 0.002) / 16.0;
     const vec2 fraction = fract(base);
     const ivec2 corner = ivec2(floor(base));
+    // A texture at its own size (the cache's, not an upscaled target):
+    // each axis wraps its two texels once, rather than each of the four
+    // taps wrapping both (Rogue Galaxy: added); the same texels as
+    // fetchTexel's.
+    if (int(params.misc.y) <= 1) {
+        const ivec2 size = ivec2(params.textureSize.xy);
+        const ivec4 region = ivec4(params.region);
+        const uint wrapU = params.control.w & 3u;
+        const uint wrapV = (params.control.w >> 2u) & 3u;
+        const ivec2 bound = min(size, textureSize(gsTexture, 0)) - 1;
+        const int x0 = clamp(clamp(wrapAxis(corner.x, wrapU, size.x, region.x, region.y), 0, size.x - 1), 0, bound.x);
+        const int x1 = clamp(clamp(wrapAxis(corner.x + 1, wrapU, size.x, region.x, region.y), 0, size.x - 1), 0, bound.x);
+        const int y0 = clamp(clamp(wrapAxis(corner.y, wrapV, size.y, region.z, region.w), 0, size.y - 1), 0, bound.y);
+        const int y1 = clamp(clamp(wrapAxis(corner.y + 1, wrapV, size.y, region.z, region.w), 0, size.y - 1), 0, bound.y);
+        const vec4 d00 = convertTexel(texelFetch(gsTexture, ivec2(x0, y0), 0));
+        const vec4 d10 = convertTexel(texelFetch(gsTexture, ivec2(x1, y0), 0));
+        const vec4 d01 = convertTexel(texelFetch(gsTexture, ivec2(x0, y1), 0));
+        const vec4 d11 = convertTexel(texelFetch(gsTexture, ivec2(x1, y1), 0));
+        return mix(mix(d00, d10, fraction.x), mix(d01, d11, fraction.x), fraction.y);
+    }
     const vec4 c00 = fetchTexel(corner);
     const vec4 c10 = fetchTexel(corner + ivec2(1, 0));
     const vec4 c01 = fetchTexel(corner + ivec2(0, 1));
@@ -352,13 +412,20 @@ void main() {
 #if defined(DQ8_FRAMEBUFFER_FETCH) || defined(DQ8_DESTINATION_COPY)
     outColor = blendPixel(color);
 #else
+#ifdef DQ8_DUAL_SOURCE
+    outColor = color;
+    outFactor = vec4(min(color.a * params.misc.x, 1.0));
+    bool exactAlpha = true;
+#else
     outColor = vec4(color.rgb, min(color.a * params.misc.x, 1.0));
+    bool exactAlpha = params.misc.x == 1.0;
+#endif
     // FBA: the stored alpha gets its top bit (CT24 stores none). Rogue
     // Galaxy: added; it draws a weapon with alpha 0 and FBA into a layer,
     // then copies only the layer's pixels whose alpha is set. Only an exact
     // alpha is the stored one: a scaled one is a blend factor, and that
     // draw's alpha replay stores it.
-    if ((params.blend.w & 8u) != 0u && (params.blend.w >> 8u) != 1u && params.misc.x == 1.0)
+    if ((params.blend.w & 8u) != 0u && (params.blend.w >> 8u) != 1u && exactAlpha)
         outColor.a = float(uint(round(outColor.a * 255.0)) | 128u) / 255.0;
 #endif
 }

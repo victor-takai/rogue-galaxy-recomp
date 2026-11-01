@@ -72,7 +72,7 @@ endfunction()
 # generated header, which <target> can then #include. Embedding rather than
 # loading at runtime keeps a backend a single self-contained object.
 function(dq8_add_shader TARGET)
-    cmake_parse_arguments(ARG "FRAMEBUFFER_FETCH;DESTINATION_COPY;MSL_DECORATION_BINDING" "SOURCE;STAGE;SYMBOL" ""
+    cmake_parse_arguments(ARG "FRAMEBUFFER_FETCH;DESTINATION_COPY;DUAL_SOURCE;MSL_DECORATION_BINDING" "SOURCE;STAGE;SYMBOL" ""
                           ${ARGN})
     if(NOT ARG_SOURCE OR NOT ARG_STAGE OR NOT ARG_SYMBOL)
         message(FATAL_ERROR "dq8_add_shader: SOURCE, STAGE and SYMBOL are required")
@@ -103,6 +103,11 @@ function(dq8_add_shader TARGET)
     if(ARG_DESTINATION_COPY)
         string(APPEND STEM ".dstcopy")
         list(APPEND SHADER_DEFINES -DDQ8_DESTINATION_COPY=1)
+    endif()
+    # The blend factor as a second output (Rogue Galaxy: added).
+    if(ARG_DUAL_SOURCE)
+        string(APPEND STEM ".dual")
+        list(APPEND SHADER_DEFINES -DDQ8_DUAL_SOURCE=1)
     endif()
     set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
     set(SPIRV "${GENERATED_DIR}/${STEM}.spv")

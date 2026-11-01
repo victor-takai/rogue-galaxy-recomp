@@ -68,6 +68,26 @@ struct GsVertexUniforms {
     float adjust[4] = {0.0f, 0.0f, 1.0f, 0.0f};
 };
 
+// gs_native.vert's (Rogue Galaxy: added): GsVertexUniforms' two, then where
+// the draw's meshes start in the storage buffer of GsNativeMeshRecords.
+struct GsNativeVertexUniforms {
+    GsVertexUniforms base;
+    float meshes[4] = {}; // x: the submission's records before this flush's
+};
+
+// A native strip's transform (GSNativeMesh), one per mesh in a storage
+// buffer, so the meshes of one draw state share a draw (Rogue Galaxy: added).
+// Each vertex names its record.
+struct GsNativeMeshRecord {
+    float matrix[4][4] = {};
+    float fog[4] = {};
+    float colorMax[4] = {};
+    float misc[4] = {}; // XYOFFSET x and y in pixels, 1 / the depth maximum
+    float depth[4] = {1.0f, 3.402823466e38f, 0.0f, 0.0f}; // the projected z's scale and cap
+};
+
+static_assert(sizeof(GsNativeMeshRecord) == 128u, "record layout must match gs_native.vert");
+
 struct GsFragmentUniforms {
     uint32_t control[4] = {0u, 0u, 0u, 0u};
     float fog[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -111,6 +131,13 @@ struct GsPipelineKey {
     // The draw shader that reads the destination from a snapshot bound as a
     // second texture, with the blend done in the shader (Rogue Galaxy: added).
     uint8_t destinationCopy = 0u;
+    // Native strips (Rogue Galaxy: added): gs_native.vert, as an indexed
+    // triangle list, and the SDL_GPUCullMode their backfaces need.
+    uint8_t nativeMesh = 0u;
+    uint8_t cullMode = 0u;
+    // A source-alpha blend whose factor comes from the shader's second
+    // output, the alpha written exact in the same pass (Rogue Galaxy: added).
+    uint8_t dualSource = 0u;
 
     bool operator==(const GsPipelineKey &other) const = default;
 };
@@ -193,7 +220,9 @@ public:
     // draws into it and submits it, so what was recorded first runs first,
     // as with immediate submissions; a readback or a present submits it
     // first. Only the GS worker thread records into it.
-    SDL_GPUCommandBuffer *pendingCommands(std::string &error);
+    // what (Rogue Galaxy: added): with gpuTimes(), the label the GPU time
+    // of the work recorded next is logged under.
+    SDL_GPUCommandBuffer *pendingCommands(std::string &error, const char *what = nullptr);
     bool hasPending() const { return m_pending != nullptr; }
     // Submits what is pending, if anything, with a fence `completedSerial`
     // reports on.
@@ -228,12 +257,24 @@ public:
     // Pipelines with GsPipelineKey::destinationCopy can be made (Rogue
     // Galaxy: added).
     bool destinationCopy() const { return m_destinationShader != nullptr; }
+    // Whether pipelines with dualSource can be made (Rogue Galaxy: added).
+    bool dualSourceBlend() const { return m_dualSourceBlend; }
+    // DQ8_GFX_GPU_TIMES=1 (Rogue Galaxy: added): the backend labels its GPU
+    // work, and the patched SDL logs the GPU's time by label ("[gputime]").
+    bool gpuTimes() const { return m_gpuTimes; }
 
 private:
     SDL_GPUDevice *m_device = nullptr;
     SDL_GPUShader *m_vertexShader = nullptr;
+    SDL_GPUShader *m_nativeVertexShader = nullptr;
     SDL_GPUShader *m_fragmentShader = nullptr;
     SDL_GPUShader *m_destinationShader = nullptr;
+    SDL_GPUShader *m_dualSourceShader = nullptr;
+    bool m_dualSourceBlend = false;
+    const bool m_gpuTimes = [] {
+        const char *value = std::getenv("DQ8_GFX_GPU_TIMES");
+        return value && *value && *value != '0';
+    }();
     SDL_GPUSampler *m_sampler = nullptr;
     SDL_GPUTextureFormat m_depthFormat = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
     bool m_framebufferFetch = false;

@@ -9,9 +9,7 @@ packs are for the pieces a pack's author wants to redraw.
 
 Packs are read above 1x (an internal scale of 2x or more). The menu's
 Textures page (F1 > Settings > Textures) has one switch for all of them
-and one for each pack found, which take effect at once. The letters of the
-text are not a pack's: "Sharp letters" draws them (`src/sharp_letters.cpp`),
-and the pack is asked about everything else.
+and one for each pack found, which take effect at once.
 
 ## Where packs go
 
@@ -29,9 +27,9 @@ and the pack is asked about everything else.
 that appears on the screen once into `textures\collected`. A region is the
 rectangle a sprite draws from a texture (a window piece, an icon, a label),
 named by its content: `TEXELS_CLUT_WxH.png`, the texels' hash, the palette's
-hash (both 16 hex digits) and the size in texels. The font's glyphs are not
-collected. The PNG's alpha is doubled (the console's 0x80 is opaque, written
-as 255).
+hash (both 16 hex digits) and the size in texels. The font's glyphs are
+regions too, one a glyph. The PNG's alpha is doubled (the console's 0x80 is
+opaque, written as 255).
 
 ## A pack's files
 

@@ -2,7 +2,9 @@
 
 #include "gs_draw.frag.spv.h"
 #include "gs_draw.frag.dstcopy.spv.h"
+#include "gs_draw.frag.dual.spv.h"
 #include "gs_draw.vert.spv.h"
+#include "gs_native.vert.spv.h"
 #include "gs_index8.frag.spv.h"
 #include "gs_local_copy.frag.spv.h"
 #include "gs_reinterpret.frag.spv.h"
@@ -11,6 +13,7 @@
 #include "gs_draw.frag.msl.h"
 #include "gs_draw.frag.fetch.msl.h"
 #include "gs_draw.vert.msl.h"
+#include "gs_native.vert.msl.h"
 #include "gs_index8.frag.msl.h"
 #include "gs_local_copy.frag.msl.h"
 #include "gs_reinterpret.frag.msl.h"
@@ -165,7 +168,8 @@ size_t GsPipelineKeyHash::operator()(const GsPipelineKey &key) const {
         (static_cast<uint64_t>(key.sourceFactor) << 40u) |
         (static_cast<uint64_t>(key.destinationFactor) << 48u) |
         (static_cast<uint64_t>(key.blendOperation) << 56u));
-    mix(key.destinationCopy);
+    mix(key.destinationCopy | (static_cast<uint64_t>(key.nativeMesh) << 8u) |
+        (static_cast<uint64_t>(key.cullMode) << 16u) | (static_cast<uint64_t>(key.dualSource) << 24u));
     return static_cast<size_t>(hash);
 }
 
@@ -216,6 +220,23 @@ bool SdlGpuDevice::create(std::string &error) {
         destroy();
         return false;
     }
+    // The native strips' (Rogue Galaxy: added), with the same bindings and
+    // their records' storage buffer.
+    vertexInfo.num_storage_buffers = 1u;
+    vertexInfo.code = reinterpret_cast<const uint8_t *>(kGsNativeVertSpirv);
+    vertexInfo.code_size = sizeof(kGsNativeVertSpirv);
+#ifdef DQ8_GFX_HAS_MSL
+    if (metal) {
+        vertexInfo.code = reinterpret_cast<const uint8_t *>(kGsNativeVertSpirvMsl);
+        vertexInfo.code_size = sizeof(kGsNativeVertSpirvMsl);
+    }
+#endif
+    m_nativeVertexShader = SDL_CreateGPUShader(m_device, &vertexInfo);
+    if (!m_nativeVertexShader) {
+        error = std::string("SDL_CreateGPUShader(native vertex): ") + SDL_GetError();
+        destroy();
+        return false;
+    }
 
     SDL_GPUShaderCreateInfo fragmentInfo{};
     fragmentInfo.code = reinterpret_cast<const uint8_t *>(kGsDrawFragSpirv);
@@ -260,6 +281,34 @@ bool SdlGpuDevice::create(std::string &error) {
         m_destinationShader = SDL_CreateGPUShader(m_device, &destinationInfo);
         if (!m_destinationShader)
             std::fprintf(stderr, "[gfx] no destination-copy shader: %s\n", SDL_GetError());
+    }
+
+    // Dual-source blending (Rogue Galaxy: added): SPIR-V only, and only
+    // where a pipeline using it can be made (the device's dualSrcBlend); the
+    // draws fall back to an alpha replay otherwise, or with
+    // DQ8_GFX_NO_DUAL_SOURCE=1.
+    const char *noDualSource = std::getenv("DQ8_GFX_NO_DUAL_SOURCE");
+    if (!m_framebufferFetch && fragmentInfo.format == SDL_GPU_SHADERFORMAT_SPIRV &&
+        !(noDualSource && *noDualSource && *noDualSource != '0')) {
+        SDL_GPUShaderCreateInfo dualInfo = fragmentInfo;
+        dualInfo.code = reinterpret_cast<const uint8_t *>(kGsDrawDualFragSpirv);
+        dualInfo.code_size = sizeof(kGsDrawDualFragSpirv);
+        m_dualSourceShader = SDL_CreateGPUShader(m_device, &dualInfo);
+        if (m_dualSourceShader) {
+            GsPipelineKey probe{};
+            probe.colorFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            probe.blendEnabled = 1u;
+            probe.sourceFactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+            probe.destinationFactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+            probe.blendOperation = SDL_GPU_BLENDOP_ADD;
+            probe.dualSource = 1u;
+            m_dualSourceBlend = true;
+            std::string probeError;
+            if (!pipeline(probe, probeError)) {
+                m_dualSourceBlend = false;
+                std::fprintf(stderr, "[gfx] no dual-source blending: %s\n", probeError.c_str());
+            }
+        }
     }
 
     SDL_GPUSamplerCreateInfo samplerInfo{};
@@ -318,8 +367,15 @@ void SdlGpuDevice::destroy() {
     if (m_destinationShader)
         SDL_ReleaseGPUShader(m_device, m_destinationShader);
     m_destinationShader = nullptr;
+    if (m_dualSourceShader)
+        SDL_ReleaseGPUShader(m_device, m_dualSourceShader);
+    m_dualSourceShader = nullptr;
+    m_dualSourceBlend = false;
     if (m_vertexShader)
         SDL_ReleaseGPUShader(m_device, m_vertexShader);
+    if (m_nativeVertexShader)
+        SDL_ReleaseGPUShader(m_device, m_nativeVertexShader);
+    m_nativeVertexShader = nullptr;
     m_sampler = nullptr;
     m_fragmentShader = nullptr;
     m_vertexShader = nullptr;
@@ -337,7 +393,7 @@ std::string SdlGpuDevice::driverName() const {
 bool SdlGpuDevice::reinterpretColor(SDL_GPUTexture *source, SDL_GPUTexture *destination,
                                     uint32_t width, uint32_t height, bool destination16, uint32_t scale,
                                     std::string &error) {
-    SDL_GPUCommandBuffer *commands = pendingCommands(error);
+    SDL_GPUCommandBuffer *commands = pendingCommands(error, "reinterpret (format view)");
     if (!commands)
         return false;
     if (!recordReinterpret(commands, source, destination, width, height, destination16, scale, nullptr, error)) {
@@ -518,7 +574,7 @@ bool SdlGpuDevice::localCopy(SDL_GPUTexture *source, SDL_GPUTexture *destination
     std::memcpy(mapped, mapping.data(), mapping.size() * sizeof(uint32_t));
     SDL_UnmapGPUTransferBuffer(m_device, m_localCopyUpload);
 
-    SDL_GPUCommandBuffer *commands = pendingCommands(error);
+    SDL_GPUCommandBuffer *commands = pendingCommands(error, "local copy");
     if (!commands)
         return false;
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(commands);
@@ -790,7 +846,7 @@ bool SdlGpuDevice::expandIndexed8(SDL_GPUTexture *target, const uint32_t *palett
     std::memcpy(mapped, palette, 256u * 4u);
     SDL_UnmapGPUTransferBuffer(m_device, m_index8Upload);
 
-    SDL_GPUCommandBuffer *commands = pendingCommands(error);
+    SDL_GPUCommandBuffer *commands = pendingCommands(error, "expand indexed texture");
     if (!commands)
         return false;
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(commands);
@@ -852,6 +908,16 @@ SDL_GPUGraphicsPipeline *SdlGpuDevice::pipeline(const GsPipelineKey &key, std::s
     blend.enable_blend = key.blendEnabled != 0u;
     blend.src_color_blendfactor = static_cast<SDL_GPUBlendFactor>(key.sourceFactor);
     blend.dst_color_blendfactor = static_cast<SDL_GPUBlendFactor>(key.destinationFactor);
+    // The source alpha a dual-source draw blends by is its second output's.
+    if (key.dualSource) {
+        auto second = [](SDL_GPUBlendFactor factor) {
+            return factor == SDL_GPU_BLENDFACTOR_SRC_ALPHA             ? SDL_GPU_BLENDFACTOR_SRC1_ALPHA
+                   : factor == SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA ? SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC1_ALPHA
+                                                                       : factor;
+        };
+        blend.src_color_blendfactor = second(blend.src_color_blendfactor);
+        blend.dst_color_blendfactor = second(blend.dst_color_blendfactor);
+    }
     blend.color_blend_op = static_cast<SDL_GPUBlendOp>(key.blendOperation);
     // GS ALPHA blends RGB only; the source alpha is stored unchanged.
     blend.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
@@ -865,16 +931,20 @@ SDL_GPUGraphicsPipeline *SdlGpuDevice::pipeline(const GsPipelineKey &key, std::s
     colorTarget.blend_state = blend;
 
     SDL_GPUGraphicsPipelineCreateInfo info{};
-    info.vertex_shader = m_vertexShader;
-    info.fragment_shader = key.destinationCopy ? m_destinationShader : m_fragmentShader;
+    info.vertex_shader = key.nativeMesh ? m_nativeVertexShader : m_vertexShader;
+    info.fragment_shader = key.destinationCopy ? m_destinationShader
+                           : key.dualSource            ? m_dualSourceShader
+                                                       : m_fragmentShader;
     info.vertex_input_state.vertex_buffer_descriptions = &bufferDescription;
     info.vertex_input_state.num_vertex_buffers = 1u;
     info.vertex_input_state.vertex_attributes = kAttributes.data();
     info.vertex_input_state.num_vertex_attributes =
         static_cast<uint32_t>(kAttributes.size());
+    // Native strips (Rogue Galaxy: added) come as indexed triangle lists, and
+    // cull the backfaces their program skipped.
     info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
     // The GS has no backface culling; every primitive it is given is drawn.
-    info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+    info.rasterizer_state.cull_mode = static_cast<SDL_GPUCullMode>(key.cullMode);
     info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
     info.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
     info.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
@@ -968,12 +1038,16 @@ bool SdlGpuDevice::downloadTexture(SDL_GPUTexture *texture, uint32_t width, uint
     return true;
 }
 
-SDL_GPUCommandBuffer *SdlGpuDevice::pendingCommands(std::string &error) {
+SDL_GPUCommandBuffer *SdlGpuDevice::pendingCommands(std::string &error, const char *what) {
     if (!m_pending) {
         m_pending = SDL_AcquireGPUCommandBuffer(m_device);
         if (!m_pending)
             error = std::string("SDL_AcquireGPUCommandBuffer(pending): ") + SDL_GetError();
+        else if (m_gpuTimes)
+            SDL_InsertGPUDebugLabel(m_pending, "other");
     }
+    if (m_pending && m_gpuTimes && what)
+        SDL_InsertGPUDebugLabel(m_pending, what);
     return m_pending;
 }
 

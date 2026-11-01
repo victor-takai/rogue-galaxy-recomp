@@ -92,7 +92,6 @@ constexpr Row kSwitches[] = {
     {"instant_loading_recap", "Quick Loading Recap", Kind::Switch, ""},
     {"instant_text", "Instant Text", Kind::Switch, ""},
     {"map_chests", "Chests on Map", Kind::Switch, ""},
-    {"save_anywhere", "Save Anywhere R1+Tri", Kind::Switch, ""},
     {"faster_camera", "Faster Camera", Kind::Switch, ""},
     {"free_camera", "Free Camera", Kind::Switch, ""},
     {"dev_tools", "Developer Tools", Kind::Switch, ""},
@@ -114,7 +113,9 @@ constexpr Row kNumbers[] = {
 constexpr Row kScenes[] = {
     {"fast_transporter", "Fast Transporters", Kind::Switch, ""},
     {"fast_revelation", "Fast Revelation", Kind::Switch, ""},
-    {"sharp_letters", "Sharp Letters", Kind::Switch, ""},
+    {"full_bag_to_storage", "Full Bag to Storage", Kind::Switch, ""},
+    {"stack_limit_99", "Item Limit 99", Kind::Switch, ""},
+    {"bigger_bag", "Bag Page 7 (Next Start)", Kind::Switch, ""},
     {"sides", "Borders", Kind::Number, "", kSidesNames},
     {"minimap_size", "Minimap Size", Kind::Number, "%"},
     {"compass_size", "Compass Size", Kind::Number, "%"},

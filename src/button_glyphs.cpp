@@ -7,7 +7,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
-#include <mutex>
 #include <vector>
 
 #include "button_art.h"
@@ -70,11 +69,6 @@ constexpr int kLoadingHeight = 64;
 // FNV-1a of the cross's 400 indices as loaded, row by row: drawn over only
 // when it is that one.
 constexpr uint64_t kLoadingCrossHash = 0x7B28227F944320B0ull;
-// What the larger version takes (loadingPalette, loadingCrossCell), for the
-// renderer's thread and sharp_letters.cpp's.
-std::atomic<uint64_t> g_loadingPalette{0u};
-std::mutex g_loadingMutex;
-std::vector<uint8_t> g_loadingCrossCell;
 
 PS2Runtime::RecompiledFunction g_loadOriginal = nullptr;
 PS2Runtime::RecompiledFunction g_getTexOriginal = nullptr;
@@ -487,7 +481,6 @@ bool loadingPicture(uint8_t *rdram, uint32_t archive, Picture &out)
 // the button bound to Cross shows.
 void drawLoadingCross(uint8_t *rdram, uint32_t archive)
 {
-    g_loadingPalette.store(0u, std::memory_order_relaxed);
     const Glyph glyph = glyphAt(g_wanted.load(std::memory_order_relaxed), 0);
     Picture pic;
     if (!faceGlyph(glyph) || !loadingPicture(rdram, archive, pic))
@@ -550,45 +543,6 @@ void drawLoadingCross(uint8_t *rdram, uint32_t archive)
     const Bitmap letter = art::faceLetter(glyph);
     stamp(cell, letter, art::faceLetterX(letter) - 1, art::kFaceLetterY - 1, colour, nearest(pic, art::kLetterEdge));
     put();
-    // For the larger version: the special characters' Cross cell with the
-    // same button (the face the text's buttons are drawn from), and the
-    // palette it goes with.
-    Picture gaiji;
-    if (!g_loaded || !picture(rdram, gaiji))
-    {
-        return;
-    }
-    if (const uint32_t wanted = g_wanted.load(std::memory_order_relaxed); wanted != g_applied)
-    {
-        apply(rdram, wanted);
-    }
-    std::vector<uint8_t> crossCell(size_t(kFaceSize) * kFaceSize * 4u);
-    for (int y = 0; y < kFaceSize; ++y)
-    {
-        for (int x = 0; x < kFaceSize; ++x)
-        {
-            const uint8_t index = gaiji.pixels[swizzled(kCircle.x + x, kCircle.y + y)];
-            std::memcpy(&crossCell[(size_t(y) * kFaceSize + x) * 4u], gaiji.clut + clutEntry(index) * 4, 4);
-        }
-    }
-    const auto step = [](uint64_t hash, uint64_t value) {
-        for (int byte = 0; byte < 8; ++byte)
-        {
-            hash = (hash ^ ((value >> (byte * 8)) & 0xFFu)) * 1099511628211ull;
-        }
-        return hash;
-    };
-    // PSMCT32 and CSM1 are both 0.
-    uint64_t palette = step(step(1469598103934665603ull, 0u), 0u);
-    for (int index = 0; index < 256; ++index)
-    {
-        uint32_t entry = 0u;
-        std::memcpy(&entry, pic.clut + clutEntry(index) * 4, 4);
-        palette = step(palette, entry);
-    }
-    std::lock_guard<std::mutex> lock(g_loadingMutex);
-    g_loadingCrossCell = std::move(crossCell);
-    g_loadingPalette.store(palette, std::memory_order_relaxed);
 }
 
 void nameTableRegisterImArchive(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -629,17 +583,6 @@ void setGlyphs(const Glyphs &glyphs)
     {
         g_wanted.store(pack(glyphs), std::memory_order_relaxed);
     }
-}
-
-uint64_t loadingPalette()
-{
-    return g_loadingPalette.load(std::memory_order_relaxed);
-}
-
-std::vector<uint8_t> loadingCrossCell()
-{
-    std::lock_guard<std::mutex> lock(g_loadingMutex);
-    return g_loadingCrossCell;
 }
 
 } // namespace rg::buttons

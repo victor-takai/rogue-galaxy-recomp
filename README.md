@@ -18,6 +18,27 @@ disc image; nothing of the game is distributed.
   encounter rate, experience, money, item drops, shop prices and more
   ([all of them](docs/OPTIONS.md))
 
+## What to expect
+
+This is an early pre-release (0.1.0). The whole game is recompiled and
+plays, but:
+
+- **It has not been played from start to finish.** Most of the testing
+  covers the early game; later chapters, the Factory and Insectron have not
+  been checked, and something may break further in.
+- **It has been tested on one PC** (Windows 11, an NVIDIA RTX 4070 Ti, an
+  Intel i7-10700K). Other graphics cards, AMD and Intel ones above all, and
+  slower PCs may behave differently.
+- **Expect bugs**: graphics glitches, slowdowns, maybe a freeze. Save often,
+  in more than one slot, and copy your memory card (`disc\mc0`) now and
+  then.
+- **Only the USA disc** (SCUS-97490) works.
+
+Found a problem? Open an [issue](../../issues) with what you were doing and
+the game's log, `build\last-run.log` (for the install, `install.log`). Each
+start replaces the log; the one before is `build\last-run.prev.log`. Each
+release's known issues are in the [CHANGELOG](CHANGELOG.md).
+
 ## Install (Windows)
 
 You need Windows 10 or 11 (64-bit), about 16 GB free, an internet connection
@@ -37,6 +58,14 @@ If it stops, `install.log` says why; running `Install.bat` again continues
 where it stopped. If an antivirus removes the compiler, restore it and run
 it again. To uninstall, delete the folder (your saves are in `disc\mc0`).
 
+### Undub (optional)
+
+To play with the Japanese voices and movies, you also need your own image of
+the Japanese Director's Cut (SCPS-17013). After `Install.bat`, double-click
+`Install-Undub.bat` and choose that image (or drop it onto the file). It copies
+the voices and movies, about 3 GB, into the folder. Then turn the undub on in
+the game: F1 > Settings > Language.
+
 ## Controls
 
 The game window takes a keyboard or a gamepad (PlayStation layout).
@@ -45,7 +74,7 @@ The game window takes a keyboard or a gamepad (PlayStation layout).
 |---|---|
 | Left stick | W A S D |
 | D-pad | Arrow keys |
-| ✕ / ○ / □ / △ | X or Space / C or Esc / Z / V |
+| ✕ / ○ / ▢ / △ | X or Space / C or Esc / Z / V |
 | L1 / R1 / L2 / R2 | Q / E / Left Shift / Right Shift |
 | Start / Select | Enter / Tab |
 | Right stick | I J K L |
@@ -57,6 +86,41 @@ game's own Settings screen (System > Settings, L1 and R1 to turn the page).
 See [docs/OPTIONS.md](docs/OPTIONS.md) for each one.
 
 <p align="center"><img src="docs/images/menu-game.jpg" width="70%" alt="The F1 menu's Game page"></p>
+
+## Roadmap
+
+**Done, in 0.1.0**
+
+- The whole game recompiled into native Windows code, built on your PC by
+  the installer from your own disc image
+- 60 fps, with the parts of the game that count frames (jumps, enemies,
+  cutscenes, menus, the clock) fixed to keep their speed
+- Widescreen up to 32:9, following the window's shape
+- Internal resolution up to 8x
+- The F1 menu: display, sound, keyboard and controller remapping, and the
+  game options, also on the game's own Settings screen
+- Fixes for the freezes, falls through the floor and graphics errors found
+  so far
+
+**In progress**
+
+- Xbox buttons in the game's text
+- New options (weapon growth, minimap and compass size) and a notice when a
+  new version is out
+- Fixes: the free camera getting the game stuck, a choppy walk in the later
+  parts of Salgin
+- Improving performance: the heaviest battles and some bosses still drop
+  below 60 fps
+- A native Linux build, for Linux PCs and the Steam Deck (the Windows build
+  through Proton is prepared but untested:
+  [BUILDING.md](docs/BUILDING.md#steam-deck-untested))
+- The European release's languages and the Japanese voices, read from your
+  own disc of that version (being studied)
+
+**Planned**
+
+- Turning the camera with the mouse
+- Faster Factory scenes, as with the transporters
 
 ## More
 

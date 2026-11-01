@@ -376,6 +376,53 @@ Five more fix results:
   a pack of upscaled pictures (the `texture-pack` branch), from which
   the frame-target test and the clamp come.
 
+Native strips (Rogue Galaxy: added). `SdlGpuBackend::SubmitNativeMesh`
+takes a `GSNativeMesh` (a strip a VU1 program would have drawn, as its
+inputs; patch 0021) through `submit()` as a stand-in primitive covering the
+scissor and sampling the whole texture, with the strip's alpha, so the
+target, texture, flush and page decisions are those of any primitive there;
+where the stand-in's vertices would go, the strip's go instead, in
+`GsGpuVertex` slots read another way (`appendNative`), drawn by
+`shaders/gs_native.vert`: the program's transform, its 12.4 and whole-Z
+fixed point, fog and color clamp, then the same outputs as `gs_draw.vert`,
+with the position homogeneous so the GPU clips where the program dropped
+triangles at its guard band or clipped them in software. The strip goes as
+an indexed triangle list, in the order the GPU's strip would draw it, and
+its transform (matrix, fog, color cap, depth) as a `GsNativeMeshRecord` in a
+storage buffer that each vertex names (its `t`), so consecutive meshes of
+one state share a draw call like any primitives. Backfaces are culled by the
+pipeline (`GsPipelineKey::cullMode`); the triangles alternate winding as the
+program's sign does, and a mesh whose sign starts negative has each
+triangle turned over, so all cull the same face. A draw that reads its
+target per primitive (a snapshot, feedback, a destination read) gets the
+triangles expanded on the CPU instead. The stats line counts `native
+strips`, and the draws they took. Salgin, 1x: 57 of 229,376 pixels differ
+by more than 8 levels from the VU1's frame.
+
+Effect buffers at a lower scale (Rogue Galaxy: added). Rogue Galaxy blurs
+in two 192x192 buffers, 0x2C40 (a zoom streak: twenty passes a frame, each
+adding a zoomed copy of the buffer to itself) and 0x3800 (a glow: six); at
+8x each is 1536x1536, larger than the PS2's frame. `DQ8_GFX_EFFECT_SCALE=N`
+(2 unless set; 0 for the scene's scale) makes colour surfaces at
+`DQ8_GFX_EFFECT_BASES` (hex, `2c40,3800` unless set), at most 256 pixels
+wide, at scale N (`GsTargetCache::setEffectBuffers`). They share pages with
+surfaces at the scene's scale (0x2C40 lies inside the per-object buffer at
+0x2A00), so pages move between scales GPU-side: `importColorPages` and a
+feedback snapshot's padding blit them (nearest) where the scales differ,
+instead of resolving to local memory. Field walk at 3x, against the
+scene's scale: 2,426 of 229,376 pixels differ, 16 by more than 8 levels.
+
+GPU time by label (Rogue Galaxy: added). `DQ8_GFX_GPU_TIMES=1` labels the
+backend's GPU work (each batch by target, 2D or 3D, mesh, feedback,
+textured, blended, covering half its target; the snapshot copies; the draw
+data upload; the present; everything else as "other") with
+`SDL_InsertGPUDebugLabel`, and SDL, patched (`cmake/patches/sdl3-gpu-
+timestamps.patch`, Vulkan only), writes a GPU timestamp at each label. When
+a command buffer is done the time from each label to the next is added to
+that label's total; every two seconds `[gputime]` lines give each label's
+GPU milliseconds and count per second, heaviest first. The timestamps cost
+about a tenth of the frame at 8x; off, nothing changes.
+
 The target trace numbers the batches from each present (`[target] batch N`),
 as a frame log numbers them. `DQ8_GFX_HIDDEN_WINDOW=1` creates the window
 hidden and never raises it, for scripted runs that should leave the desktop

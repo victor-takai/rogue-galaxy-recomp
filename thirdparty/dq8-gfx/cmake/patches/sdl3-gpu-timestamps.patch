@@ -1,0 +1,244 @@
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan.c b/src/gpu/vulkan/SDL_gpu_vulkan.c
+index bc084765..3d94bbb6 100644
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -975,6 +975,13 @@ typedef struct VulkanCommandPool VulkanCommandPool;
+ 
+ typedef struct VulkanRenderer VulkanRenderer;
+ 
++// dq8-gfx: added. DQ8_GFX_GPU_TIMES=1: each debug label also writes a GPU
++// timestamp; when its command buffer is done, the time from it to the next
++// one is added to the label's total, and every two seconds the totals are
++// logged, heaviest first.
++#define DQ8_TIMESTAMP_QUERIES 4096
++#define DQ8_TIMESTAMP_LABEL   48
++
+ typedef struct VulkanCommandBuffer
+ {
+     CommandBufferCommonHeader common;
+@@ -1112,6 +1119,11 @@ typedef struct VulkanCommandBuffer
+ 
+     bool swapchainRequested;
+     bool isDefrag; // Whether this CB was created for defragging
++
++    // dq8-gfx: added, for DQ8_GFX_GPU_TIMES.
++    VkQueryPool dq8QueryPool;
++    Uint32 dq8QueryCount;
++    char (*dq8Labels)[DQ8_TIMESTAMP_LABEL];
+ } VulkanCommandBuffer;
+ 
+ struct VulkanCommandPool
+@@ -3132,6 +3144,10 @@ static void VULKAN_INTERNAL_DestroyCommandPool(
+         SDL_free(commandBuffer->usedComputePipelines);
+         SDL_free(commandBuffer->usedFramebuffers);
+         SDL_free(commandBuffer->usedUniformBuffers);
++        if (commandBuffer->dq8QueryPool) {
++            renderer->vkDestroyQueryPool(renderer->logicalDevice, commandBuffer->dq8QueryPool, NULL);
++        }
++        SDL_free(commandBuffer->dq8Labels);
+ 
+         SDL_free(commandBuffer);
+     }
+@@ -4873,6 +4889,130 @@ static Uint32 VULKAN_INTERNAL_CreateSwapchain(
+ 
+ // Command Buffers
+ 
++// dq8-gfx: added, DQ8_GFX_GPU_TIMES (see DQ8_TIMESTAMP_QUERIES).
++typedef struct Dq8TimestampTotal
++{
++    char label[DQ8_TIMESTAMP_LABEL];
++    Uint64 ticks;
++    Uint32 count;
++} Dq8TimestampTotal;
++static Dq8TimestampTotal dq8TimestampTotals[1024];
++static Uint32 dq8TimestampTotalCount;
++static Uint64 dq8TimestampSince;
++static SDL_SpinLock dq8TimestampLock;
++static int dq8TimestampsOn = -1;
++
++static bool DQ8_TimestampsEnabled(void)
++{
++    if (dq8TimestampsOn < 0) {
++        const char *value = SDL_getenv("DQ8_GFX_GPU_TIMES");
++        dq8TimestampsOn = (value && *value && *value != '0') ? 1 : 0;
++    }
++    return dq8TimestampsOn == 1;
++}
++
++static void DQ8_WriteTimestamp(VulkanRenderer *renderer, VulkanCommandBuffer *commandBuffer, const char *label)
++{
++    if (!commandBuffer->dq8QueryPool || commandBuffer->dq8QueryCount >= DQ8_TIMESTAMP_QUERIES) {
++        return;
++    }
++    renderer->vkCmdWriteTimestamp(commandBuffer->commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
++                                  commandBuffer->dq8QueryPool, commandBuffer->dq8QueryCount);
++    SDL_strlcpy(commandBuffer->dq8Labels[commandBuffer->dq8QueryCount], label, DQ8_TIMESTAMP_LABEL);
++    commandBuffer->dq8QueryCount += 1;
++}
++
++static void DQ8_BeginTimestamps(VulkanRenderer *renderer, VulkanCommandBuffer *commandBuffer)
++{
++    if (!DQ8_TimestampsEnabled()) {
++        return;
++    }
++    if (!commandBuffer->dq8QueryPool) {
++        VkQueryPoolCreateInfo info;
++        SDL_zero(info);
++        info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
++        info.queryType = VK_QUERY_TYPE_TIMESTAMP;
++        info.queryCount = DQ8_TIMESTAMP_QUERIES;
++        if (renderer->vkCreateQueryPool(renderer->logicalDevice, &info, NULL, &commandBuffer->dq8QueryPool) != VK_SUCCESS) {
++            commandBuffer->dq8QueryPool = VK_NULL_HANDLE;
++            return;
++        }
++        commandBuffer->dq8Labels = SDL_malloc(DQ8_TIMESTAMP_QUERIES * DQ8_TIMESTAMP_LABEL);
++    }
++    renderer->vkCmdResetQueryPool(commandBuffer->commandBuffer, commandBuffer->dq8QueryPool, 0, DQ8_TIMESTAMP_QUERIES);
++    commandBuffer->dq8QueryCount = 0;
++    DQ8_WriteTimestamp(renderer, commandBuffer, "(command buffer start)");
++}
++
++static void DQ8_CollectTimestamps(VulkanRenderer *renderer, VulkanCommandBuffer *commandBuffer)
++{
++    Uint32 count = commandBuffer->dq8QueryCount;
++    Uint64 *values;
++    commandBuffer->dq8QueryCount = 0;
++    if (!commandBuffer->dq8QueryPool || count < 2) {
++        return;
++    }
++    values = (Uint64 *)SDL_malloc(sizeof(Uint64) * count);
++    if (values && renderer->vkGetQueryPoolResults(renderer->logicalDevice, commandBuffer->dq8QueryPool, 0, count,
++                                                  sizeof(Uint64) * count, values, sizeof(Uint64),
++                                                  VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
++        const double period = renderer->physicalDeviceProperties.properties.limits.timestampPeriod;
++        Uint64 now;
++        Uint32 i, j;
++        SDL_LockSpinlock(&dq8TimestampLock);
++        for (i = 0; i + 1 < count; i += 1) {
++            const char *label = commandBuffer->dq8Labels[i];
++            Dq8TimestampTotal *total = NULL;
++            for (j = 0; j < dq8TimestampTotalCount; j += 1) {
++                if (SDL_strcmp(dq8TimestampTotals[j].label, label) == 0) {
++                    total = &dq8TimestampTotals[j];
++                    break;
++                }
++            }
++            if (!total && dq8TimestampTotalCount < SDL_arraysize(dq8TimestampTotals)) {
++                total = &dq8TimestampTotals[dq8TimestampTotalCount++];
++                SDL_strlcpy(total->label, label, DQ8_TIMESTAMP_LABEL);
++                total->ticks = 0;
++                total->count = 0;
++            }
++            if (total) {
++                total->ticks += values[i + 1] > values[i] ? values[i + 1] - values[i] : 0;
++                total->count += 1;
++            }
++        }
++        now = SDL_GetTicksNS();
++        if (dq8TimestampSince == 0) {
++            dq8TimestampSince = now;
++        } else if (now - dq8TimestampSince >= SDL_NS_PER_SECOND * 2) {
++            const double seconds = (double)(now - dq8TimestampSince) / SDL_NS_PER_SECOND;
++            double sum = 0.0;
++            for (i = 0; i < dq8TimestampTotalCount; i += 1) {
++                sum += dq8TimestampTotals[i].ticks * period / 1e6;
++            }
++            SDL_Log("[gputime] %.1f ms of GPU per second over %.1f s, by label (ms per second, times per second):",
++                    sum / seconds, seconds);
++            for (i = 0; i < dq8TimestampTotalCount && i < 40; i += 1) {
++                Uint32 heaviest = i;
++                Dq8TimestampTotal swap;
++                for (j = i + 1; j < dq8TimestampTotalCount; j += 1) {
++                    if (dq8TimestampTotals[j].ticks > dq8TimestampTotals[heaviest].ticks) {
++                        heaviest = j;
++                    }
++                }
++                swap = dq8TimestampTotals[i];
++                dq8TimestampTotals[i] = dq8TimestampTotals[heaviest];
++                dq8TimestampTotals[heaviest] = swap;
++                SDL_Log("[gputime] %8.2f %8.1f  %s", dq8TimestampTotals[i].ticks * period / 1e6 / seconds,
++                        dq8TimestampTotals[i].count / seconds, dq8TimestampTotals[i].label);
++            }
++            dq8TimestampTotalCount = 0;
++            dq8TimestampSince = now;
++        }
++        SDL_UnlockSpinlock(&dq8TimestampLock);
++    }
++    SDL_free(values);
++}
++
+ static bool VULKAN_INTERNAL_BeginCommandBuffer(
+     VulkanRenderer *renderer,
+     VulkanCommandBuffer *commandBuffer)
+@@ -4892,6 +5032,8 @@ static bool VULKAN_INTERNAL_BeginCommandBuffer(
+ 
+     CHECK_VULKAN_ERROR_AND_RETURN(result, vkBeginCommandBuffer, false);
+ 
++    DQ8_BeginTimestamps(renderer, commandBuffer); // dq8-gfx: added
++
+     return true;
+ }
+ 
+@@ -4899,7 +5041,9 @@ static bool VULKAN_INTERNAL_EndCommandBuffer(
+     VulkanRenderer *renderer,
+     VulkanCommandBuffer *commandBuffer)
+ {
+-    VkResult result = renderer->vkEndCommandBuffer(
++    VkResult result;
++    DQ8_WriteTimestamp(renderer, commandBuffer, "(command buffer end)"); // dq8-gfx: added
++    result = renderer->vkEndCommandBuffer(
+         commandBuffer->commandBuffer);
+ 
+     CHECK_VULKAN_ERROR_AND_RETURN(result, vkEndCommandBuffer, false);
+@@ -5616,6 +5760,8 @@ static void VULKAN_InsertDebugLabel(
+     VulkanRenderer *renderer = vulkanCommandBuffer->renderer;
+     VkDebugUtilsLabelEXT labelInfo;
+ 
++    DQ8_WriteTimestamp(renderer, vulkanCommandBuffer, text); // dq8-gfx: added
++
+     if (renderer->supportsDebugUtils) {
+         SDL_zero(labelInfo);
+         labelInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+@@ -9350,6 +9496,11 @@ static bool VULKAN_INTERNAL_AllocateCommandBuffer(
+ 
+     commandBuffer->inFlightFence = VK_NULL_HANDLE;
+ 
++    // dq8-gfx: added, DQ8_GFX_GPU_TIMES.
++    commandBuffer->dq8QueryPool = VK_NULL_HANDLE;
++    commandBuffer->dq8QueryCount = 0;
++    commandBuffer->dq8Labels = NULL;
++
+     // Presentation tracking
+ 
+     commandBuffer->presentDataCapacity = 1;
+@@ -10367,6 +10518,13 @@ static void VULKAN_INTERNAL_CleanCommandBuffer(
+     VulkanCommandBuffer *commandBuffer,
+     bool cancel)
+ {
++    // dq8-gfx: added, DQ8_GFX_GPU_TIMES.
++    if (cancel) {
++        commandBuffer->dq8QueryCount = 0;
++    } else {
++        DQ8_CollectTimestamps(renderer, commandBuffer);
++    }
++
+     if (commandBuffer->autoReleaseFence) {
+         VULKAN_ReleaseFence(
+             (SDL_GPURenderer *)renderer,
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan_vkfuncs.h b/src/gpu/vulkan/SDL_gpu_vulkan_vkfuncs.h
+index 7316eb91..be1e9101 100644
+--- a/src/gpu/vulkan/SDL_gpu_vulkan_vkfuncs.h
++++ b/src/gpu/vulkan/SDL_gpu_vulkan_vkfuncs.h
+@@ -160,6 +160,12 @@ VULKAN_DEVICE_FUNCTION(vkResetFences)
+ VULKAN_DEVICE_FUNCTION(vkUnmapMemory)
+ VULKAN_DEVICE_FUNCTION(vkUpdateDescriptorSets)
+ VULKAN_DEVICE_FUNCTION(vkWaitForFences)
++// dq8-gfx: added, for DQ8_GFX_GPU_TIMES.
++VULKAN_DEVICE_FUNCTION(vkCreateQueryPool)
++VULKAN_DEVICE_FUNCTION(vkDestroyQueryPool)
++VULKAN_DEVICE_FUNCTION(vkCmdResetQueryPool)
++VULKAN_DEVICE_FUNCTION(vkCmdWriteTimestamp)
++VULKAN_DEVICE_FUNCTION(vkGetQueryPoolResults)
+ 
+ // VK_KHR_swapchain
+ VULKAN_DEVICE_FUNCTION(vkAcquireNextImageKHR)

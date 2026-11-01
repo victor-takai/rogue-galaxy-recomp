@@ -17,11 +17,22 @@ set(SDL_RENDER_D3D OFF CACHE BOOL "" FORCE)
 set(SDL_RENDER_D3D11 OFF CACHE BOOL "" FORCE)
 set(SDL_RENDER_D3D12 OFF CACHE BOOL "" FORCE)
 set(SDL_RENDER_VULKAN OFF CACHE BOOL "" FORCE)
+# Patched (Rogue Galaxy: added): dual-source blend factors
+# (SDL_GPU_BLENDFACTOR_SRC1_ALPHA), so a source-alpha blend stores its exact
+# alpha in the same pass as its colour; and, with DQ8_GFX_GPU_TIMES=1, a GPU
+# timestamp at each debug label, the GPU's time logged by label
+# (cmake/patches).
 FetchContent_Declare(SDL3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
     GIT_TAG release-3.2.24
     GIT_SHALLOW TRUE
-    GIT_PROGRESS TRUE)
+    GIT_PROGRESS TRUE
+    PATCH_COMMAND "${CMAKE_COMMAND}"
+        -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/sdl3-dual-source-blend.patch
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dq8ApplyPatch.cmake"
+    COMMAND "${CMAKE_COMMAND}"
+        -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/sdl3-gpu-timestamps.patch
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dq8ApplyPatch.cmake")
 FetchContent_MakeAvailable(SDL3)
 
 # Backend-neutral GS support: local memory, swizzled access, transfers.
@@ -46,6 +57,7 @@ target_link_libraries(dq8_gfx_sdlgpu PUBLIC dq8_gfx_gs SDL3::SDL3-static)
 
 foreach(shader IN ITEMS
         "gs_draw.vert;vert;kGsDrawVertSpirv"
+        "gs_native.vert;vert;kGsNativeVertSpirv"
         "gs_draw.frag;frag;kGsDrawFragSpirv"
         "gs_reinterpret.vert;vert;kGsReinterpretVertSpirv"
         "gs_reinterpret.frag;frag;kGsReinterpretFragSpirv"
@@ -66,6 +78,11 @@ endforeach()
 dq8_add_shader(dq8_gfx_sdlgpu
     SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/backends/sdlgpu/shaders/gs_draw.frag"
     STAGE frag SYMBOL kGsDrawDstCopyFragSpirv DESTINATION_COPY)
+# The draw shader giving the blend its source-alpha factor as a second
+# output, so the first keeps the exact alpha (Rogue Galaxy: added).
+dq8_add_shader(dq8_gfx_sdlgpu
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/backends/sdlgpu/shaders/gs_draw.frag"
+    STAGE frag SYMBOL kGsDrawDualFragSpirv DUAL_SOURCE)
 
 # The in-game menu (src/ui), drawn with Dear ImGui over the backend's window.
 # Dear ImGui is the submodule at thirdparty/imgui, the commit DQ8 pins.

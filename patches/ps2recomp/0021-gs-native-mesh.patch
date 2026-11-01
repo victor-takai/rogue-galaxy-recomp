@@ -1,0 +1,411 @@
+diff --git a/ps2xRuntime/include/runtime/gs/gs_backend.h b/ps2xRuntime/include/runtime/gs/gs_backend.h
+index f57aa2f..f1660e0 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_backend.h
+@@ -31,6 +31,21 @@ public:
+             Submit(*batches[i]);
+     }
+ 
++    // A strip a VU1 program would have drawn, as its inputs, under `state`
++    // (GSNativeMesh; Rogue Galaxy: added). By default the triangles the
++    // program would have kicked, one Submit each.
++    virtual void SubmitNativeMesh(const GSNativeMesh &mesh, const GSDrawState &state)
++    {
++        GSPrimitiveBatch batch{};
++        batch.vertexCount = 3u;
++        batch.state = state;
++        gsExpandNativeMesh(mesh, [&](const GSVertex *triangle) {
++            for (size_t i = 0; i < 3u; ++i)
++                batch.vertices[i] = triangle[i];
++            Submit(batch);
++        });
++    }
++
+     virtual void BeginTransfer(const GSTransferCommand &command) = 0;
+     virtual void UploadImage(const uint8_t *data, uint32_t sizeBytes) = 0;
+ 
+diff --git a/ps2xRuntime/include/runtime/gs/gs_frontend.h b/ps2xRuntime/include/runtime/gs/gs_frontend.h
+index 1f54906..fabffc5 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_frontend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_frontend.h
+@@ -107,6 +107,9 @@ public:
+     void setRasterBackend(std::unique_ptr<GSRasterBackend> backend);
+ 
+     void processGIFPacket(const uint8_t *data, uint32_t sizeBytes);
++    // A strip a VU1 program would have drawn (GSNativeMesh), under the draw
++    // state of now, in order with the packets (Rogue Galaxy: added).
++    void submitNativeMesh(const GSNativeMesh &mesh);
+     // Image data continuing the open transfer, as an IMAGE GIFtag's payload
+     // would: the VIF1 thread hands over a DIRECT's bytes in place instead of
+     // copying them behind a synthesized tag (Rogue Galaxy: added).
+@@ -175,6 +178,7 @@ private:
+     void processImageData(const uint8_t *data, uint32_t sizeBytes);
+     bool tryProcessNativeImageUploadPacket(const uint8_t *data, uint32_t sizeBytes);
+     GSPrimitiveBatch buildDrawBatch(int vertexCount) const;
++    GSDrawState currentDrawState() const;
+     void updatePreferredDisplaySourceForDraw(const GSPrimitiveBatch &batch);
+     GSPresentationRequest buildPresentationRequestUnlocked() const;
+ 
+diff --git a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
+index ccfadf6..27c0456 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
+@@ -17,6 +17,7 @@ public:
+     void Initialize(uint8_t *vram, uint32_t size) override;
+     void Reset() override;
+     void Submit(const GSPrimitiveBatch &batch) override;
++    void SubmitNativeMesh(const GSNativeMesh &mesh, const GSDrawState &state) override;
+     void BeginTransfer(const GSTransferCommand &command) override;
+     void UploadImage(const uint8_t *data, uint32_t size) override;
+     void Flush() override;
+diff --git a/ps2xRuntime/include/runtime/gs/gs_types.h b/ps2xRuntime/include/runtime/gs/gs_types.h
+index 4014e39..f175e0d 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_types.h
++++ b/ps2xRuntime/include/runtime/gs/gs_types.h
+@@ -2,6 +2,7 @@
+ 
+ #include <cstddef>
+ #include <array>
++#include <cmath>
+ #include <cstdint>
+ #include <cstring>
+ #include <limits>
+@@ -327,6 +328,212 @@ struct GSPrimitiveBatch
+     uint32_t sourceCamera = 0; // ps2_gs_detail::t_sourceCamera, likewise
+ };
+ 
++// A strip a VU1 program would have drawn, as the program's inputs (Rogue
++// Galaxy: added; the game's src/vu1_native.h builds it). A renderer that can
++// transforms the vertices itself (SdlGpuBackend, on the GPU); any other gets
++// the triangles the program would have kicked, from gsExpandNativeMesh. The
++// draw state is the GS's when it is submitted (GS::submitNativeMesh), as for
++// a primitive.
++struct GSNativeMesh
++{
++    struct Vertex
++    {
++        float x = 0.0f, y = 0.0f, z = 0.0f; // object space
++        float u = 0.0f, v = 0.0f;           // texture coordinates, before the divide by w
++        float r = 0.0f, g = 0.0f, b = 0.0f, a = 0.0f; // color before the clamp, 0-255
++        // The Z the program computes (gsNativeMeshDepth, in the VU's rounding),
++        // when not negative: a renderer whose arithmetic rounds otherwise
++        // takes it as it is, since a pass drawn at nearly the same depth
++        // turns a unit of difference into missing pixels.
++        float depth = -1.0f;
++    };
++    // Trivially copyable: the game's GIF stage carries it as bytes.
++    struct Header
++    {
++        // To GS window coordinates (XYOFFSET included), row vectors:
++        // clip = x * matrix[0] + y * matrix[1] + z * matrix[2] + matrix[3].
++        float matrix[4][4] = {};
++        // F = clamp(fog[0] + fog[3] * w, at most fog[1], at least fog[2]).
++        float fog[4] = {};
++        // The projected z, scaled, then capped, before its fixed point.
++        float depthScale = 1.0f;
++        float depthMax = std::numeric_limits<float>::max();
++        float colorMax[4] = {};
++        // A vertex is outside the guard band when p * bandScale + bandOffset *
++        // bandScale passes 1 in x, y or z, p the projected point (its z
++        // before depthScale), as the program sums it.
++        float bandScale[4] = {};
++        float bandOffset[4] = {};
++        // The first triangle's winding sign; it flips from one to the next.
++        float winding = 1.0f;
++        // A triangle is skipped (ADC on its last vertex) when one of its
++        // vertices is outside the guard band, with guardBand; and when it
++        // faces away, cross * winding < 0, with backface.
++        uint32_t guardBand = 0u;
++        uint32_t backface = 0u;
++        uint32_t vertexCount = 0u;
++        // A triangle list (PRIM 3) rather than a strip: a triangle every
++        // third vertex, tested by the same rule at that vertex.
++        uint32_t triangleList = 0u;
++    };
++    Header header{};
++    std::vector<Vertex> vertices;
++};
++
++// A vertex as the program would have computed it.
++struct GSNativeMeshPoint
++{
++    float px = 0.0f, py = 0.0f, pz = 0.0f; // projected, before the fixed point
++    int32_t x16 = 0, y16 = 0, z16 = 0, f16 = 0; // FTOI4 of x, y, z and the fog
++    float pf = 0.0f;                       // the fog, before its fixed point
++    int32_t rgba[4] = {};                  // FTOI0 of the clamped color
++    float s = 0.0f, t = 0.0f, q = 1.0f;
++    bool outside = false;
++};
++
++// The product-sums below must round as the VU1's separate multiply and add
++// do: no fused multiply-add, whatever -march the build has.
++#if defined(__clang__)
++#pragma clang fp contract(off)
++#elif defined(_MSC_VER)
++#pragma fp_contract(off)
++#elif defined(__GNUC__)
++#pragma GCC push_options
++#pragma GCC optimize("fp-contract=off")
++#endif
++
++// 1 / x as the VU1's DIV gives it: at 0 the most float, with x's sign.
++inline float gsNativeReciprocal(float x)
++{
++    if (x != 0.0f)
++        return 1.0f / x;
++    return std::signbit(x) ? -std::numeric_limits<float>::max() : std::numeric_limits<float>::max();
++}
++
++// FTOI0 and FTOI4: truncation toward zero, saturated.
++inline int32_t gsNativeFtoi(float value, float scale)
++{
++    const double scaled = static_cast<double>(value) * scale;
++    if (!(scaled > -2147483648.0))
++        return std::numeric_limits<int32_t>::min();
++    if (scaled >= 2147483647.0)
++        return std::numeric_limits<int32_t>::max();
++    return static_cast<int32_t>(scaled);
++}
++
++inline GSNativeMeshPoint gsNativeMeshPoint(const GSNativeMesh::Header &h, const GSNativeMesh::Vertex &v)
++{
++    const auto &m = h.matrix;
++    float clip[4];
++    for (int i = 0; i < 4; ++i)
++        clip[i] = v.x * m[0][i] + v.y * m[1][i] + v.z * m[2][i] + m[3][i];
++    GSNativeMeshPoint p;
++    p.q = gsNativeReciprocal(clip[3]);
++    p.px = clip[0] * p.q;
++    p.py = clip[1] * p.q;
++    const float z = clip[2] * p.q;
++    p.pz = std::fmin(z * h.depthScale, h.depthMax);
++    const float f = std::fmax(std::fmin(h.fog[0] + h.fog[3] * clip[3], h.fog[1]), h.fog[2]);
++    p.pf = f;
++    p.x16 = gsNativeFtoi(p.px, 16.0f);
++    p.y16 = gsNativeFtoi(p.py, 16.0f);
++    p.z16 = gsNativeFtoi(p.pz, 16.0f);
++    p.f16 = gsNativeFtoi(f, 16.0f);
++    const float color[4] = {v.r, v.g, v.b, v.a};
++    for (int i = 0; i < 4; ++i)
++        p.rgba[i] = gsNativeFtoi(std::fmin(color[i], h.colorMax[i]), 1.0f);
++    p.s = v.u * p.q;
++    p.t = v.v * p.q;
++    const float projected[3] = {p.px, p.py, z};
++    for (int i = 0; i < 3; ++i)
++    {
++        const float g = projected[i] * h.bandScale[i] + h.bandOffset[i] * h.bandScale[i];
++        p.outside = p.outside || g > 1.0f || g < -1.0f;
++    }
++    return p;
++}
++
++// The Z of gsNativeMeshPoint alone (the same operations in the same order,
++// so the same bits): the whole units of the projected z, scaled and capped.
++inline float gsNativeMeshDepth(const GSNativeMesh::Header &h, const GSNativeMesh::Vertex &v)
++{
++    const auto &m = h.matrix;
++    const float z = v.x * m[0][2] + v.y * m[1][2] + v.z * m[2][2] + m[3][2];
++    const float w = v.x * m[0][3] + v.y * m[1][3] + v.z * m[2][3] + m[3][3];
++    const float pz = std::fmin(z * gsNativeReciprocal(w) * h.depthScale, h.depthMax);
++    return static_cast<float>((static_cast<uint32_t>(gsNativeFtoi(pz, 16.0f)) >> 4) & 0xFFFFFFu);
++}
++
++// Whether the triangle ending at vertex k (k >= 1) is skipped, with
++// `winding` its sign. The program also tests the second vertex, against a
++// "previous" vertex at the origin; it never draws, but its ADC is in the
++// packet.
++inline bool gsNativeMeshSkips(const GSNativeMesh::Header &h, const GSNativeMeshPoint *points, uint32_t k,
++                              float winding)
++{
++    const GSNativeMeshPoint origin{};
++    const GSNativeMeshPoint &a = k >= 2u ? points[k - 2u] : origin;
++    const GSNativeMeshPoint &b = points[k - 1u];
++    const GSNativeMeshPoint &c = points[k];
++    bool skip = h.guardBand && ((k >= 2u && a.outside) || b.outside || c.outside);
++    if (h.backface)
++    {
++        const float facing = ((c.px - b.px) * (b.py - a.py) - (b.px - a.px) * (c.py - b.py)) * winding;
++        skip = skip || facing < 0.0f;
++    }
++    return skip;
++}
++
++// A point as the GS front end makes a vertex of the program's packed ST,
++// RGBAQ and XYZF2.
++inline GSVertex gsNativeMeshVertex(const GSNativeMeshPoint &p)
++{
++    GSVertex out;
++    out.x = static_cast<float>(static_cast<uint16_t>(p.x16)) / 16.0f;
++    out.y = static_cast<float>(static_cast<uint16_t>(p.y16)) / 16.0f;
++    out.z = static_cast<float>((static_cast<uint32_t>(p.z16) >> 4) & 0xFFFFFFu);
++    out.r = static_cast<uint8_t>(p.rgba[0]);
++    out.g = static_cast<uint8_t>(p.rgba[1]);
++    out.b = static_cast<uint8_t>(p.rgba[2]);
++    out.a = static_cast<uint8_t>(p.rgba[3]);
++    out.q = p.q == 0.0f ? 1.0f : p.q;
++    out.s = p.s;
++    out.t = p.t;
++    out.fog = static_cast<uint8_t>((static_cast<uint32_t>(p.f16) >> 4) & 0xFFu);
++    return out;
++}
++
++// The triangles the program would have kicked, as GS vertices.
++template <typename Emit>
++void gsExpandNativeMesh(const GSNativeMesh &mesh, Emit &&emit)
++{
++    const uint32_t count = static_cast<uint32_t>(mesh.vertices.size());
++    std::vector<GSNativeMeshPoint> points(count);
++    for (uint32_t k = 0; k < count; ++k)
++        points[k] = gsNativeMeshPoint(mesh.header, mesh.vertices[k]);
++    float winding = mesh.header.winding;
++    for (uint32_t k = 1; k < count; ++k)
++    {
++        const bool skip = gsNativeMeshSkips(mesh.header, points.data(), k, winding);
++        winding = -winding;
++        const bool kicks = mesh.header.triangleList ? k % 3u == 2u : k >= 2u;
++        if (kicks && !skip)
++        {
++            const GSVertex triangle[3] = {gsNativeMeshVertex(points[k - 2u]), gsNativeMeshVertex(points[k - 1u]),
++                                          gsNativeMeshVertex(points[k])};
++            emit(triangle);
++        }
++    }
++}
++
++#if defined(__clang__)
++#pragma clang fp contract(on)
++#elif defined(_MSC_VER)
++#pragma fp_contract(on)
++#elif defined(__GNUC__)
++#pragma GCC pop_options
++#endif
++
+ struct GSTransferCommand
+ {
+     GSBitBltBuf bitbltbuf{};
+diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+index a0d2120..a948a2e 100644
+--- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+@@ -1842,25 +1842,43 @@ GSPrimitiveBatch GS::buildDrawBatch(int vertexCount) const
+     batch.vertexCount = static_cast<uint8_t>(std::min(vertexCount, 3));
+     for (int i = 0; i < batch.vertexCount; ++i)
+         batch.vertices[static_cast<size_t>(i)] = m_vtxQueue[i];
+-    batch.state.context = m_ctx[m_prim.ctxt ? 1 : 0];
+-    batch.state.prim = m_prim;
+-    batch.state.texa = m_texa;
+-    batch.state.texclut = m_texclut;
+-    batch.state.pabe = m_pabe;
+-    batch.state.scanmsk = m_scanmsk;
+-    batch.state.dimx = m_dimx;
+-    batch.state.dthe = m_dthe;
+-    batch.state.colclamp = m_colclamp;
+-    batch.state.fogR = m_fogR;
+-    batch.state.fogG = m_fogG;
+-    batch.state.fogB = m_fogB;
+-    batch.state.textureWidth = static_cast<uint16_t>(1u << std::min<uint32_t>(batch.state.context.tex0.tw, 10u));
+-    batch.state.textureHeight = static_cast<uint16_t>(1u << std::min<uint32_t>(batch.state.context.tex0.th, 10u));
+-    const uint64_t tex1 = batch.state.context.tex1;
++    batch.state = currentDrawState();
++    return batch;
++}
++
++GSDrawState GS::currentDrawState() const
++{
++    GSDrawState state{};
++    state.context = m_ctx[m_prim.ctxt ? 1 : 0];
++    state.prim = m_prim;
++    state.texa = m_texa;
++    state.texclut = m_texclut;
++    state.pabe = m_pabe;
++    state.scanmsk = m_scanmsk;
++    state.dimx = m_dimx;
++    state.dthe = m_dthe;
++    state.colclamp = m_colclamp;
++    state.fogR = m_fogR;
++    state.fogG = m_fogG;
++    state.fogB = m_fogB;
++    state.textureWidth = static_cast<uint16_t>(1u << std::min<uint32_t>(state.context.tex0.tw, 10u));
++    state.textureHeight = static_cast<uint16_t>(1u << std::min<uint32_t>(state.context.tex0.th, 10u));
++    const uint64_t tex1 = state.context.tex1;
+     const uint8_t mmag = static_cast<uint8_t>((tex1 >> 5u) & 0x1u);
+     const uint8_t mmin = static_cast<uint8_t>((tex1 >> 6u) & 0x7u);
+-    batch.state.linearFilter = mmag != 0u || mmin == 1u || (mmin & 0x4u) != 0u;
+-    return batch;
++    state.linearFilter = mmag != 0u || mmin == 1u || (mmin & 0x4u) != 0u;
++    return state;
++}
++
++void GS::submitNativeMesh(const GSNativeMesh &mesh)
++{
++    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
++    // The mesh stands for the strip's kicks: the queue starts over, as after
++    // the PRIM write that began it.
++    m_vtxCount = 0;
++    m_vtxIndex = 0;
++    if (m_backend && mesh.vertices.size() >= 3u)
++        m_backend->SubmitNativeMesh(mesh, currentDrawState());
+ }
+ 
+ void GS::updatePreferredDisplaySourceForDraw(const GSPrimitiveBatch &batch)
+diff --git a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+index 5f1f3fa..efdf14b 100644
+--- a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+@@ -68,20 +68,29 @@ struct GSThreadedBackend::Impl
+         GSPresentationRequest request;
+         std::shared_ptr<PresentationResult> result;
+     };
+-    enum class Op { Submit, Transfer, Upload, Flush, TextureFlush, Write, Prepare, Sync };
++    enum class Op { Submit, Transfer, Upload, Flush, TextureFlush, Write, Prepare, Sync, Native };
++    // Out of line: a mesh in the variant would grow every command, and with it
++    // the copy each primitive makes.
++    struct Native
++    {
++        GSNativeMesh mesh;
++        GSDrawState state;
++    };
+     using Pixel = std::array<uint32_t, 6>;
+     struct Command
+     {
+         Op op;
+         std::variant<std::monostate, GSPrimitiveBatch, GSTransferCommand,
+-                     std::vector<uint8_t>, Pixel, Prepare, GSSyncReason> data;
++                     std::vector<uint8_t>, Pixel, Prepare, GSSyncReason, std::shared_ptr<Native>> data;
+         // The VIF1 thread queues one command per primitive; std::fegetround
+         // goes through the CRT (x87 and SSE control words both) and was 3%
+         // of that thread. The VU math is SSE, so MXCSR alone names the mode.
+         int rounding = ps2_gs_detail::currentRoundingMode();
+         size_t bytes() const
+         {
+-            return sizeof(Command) + (op == Op::Upload ? std::get<std::vector<uint8_t>>(data).size() : 0u);
++            return sizeof(Command) + (op == Op::Upload ? std::get<std::vector<uint8_t>>(data).size() : 0u) +
++                   (op == Op::Native ? std::get<std::shared_ptr<Native>>(data)->mesh.vertices.size() * sizeof(GSNativeMesh::Vertex)
++                                     : 0u);
+         }
+     };
+ 
+@@ -224,6 +231,12 @@ struct GSThreadedBackend::Impl
+         switch (command.op)
+         {
+         case Op::Submit: backend->Submit(std::get<GSPrimitiveBatch>(command.data)); break;
++        case Op::Native:
++        {
++            const auto &native = *std::get<std::shared_ptr<Native>>(command.data);
++            backend->SubmitNativeMesh(native.mesh, native.state);
++            break;
++        }
+         case Op::Transfer: backend->BeginTransfer(std::get<GSTransferCommand>(command.data)); break;
+         case Op::Upload:
+         {
+@@ -419,6 +432,10 @@ void GSThreadedBackend::Submit(const GSPrimitiveBatch &batch)
+     std::get<GSPrimitiveBatch>(command.data).sourceCamera = ps2_gs_detail::t_sourceCamera;
+     m_impl->enqueue(std::move(command));
+ }
++void GSThreadedBackend::SubmitNativeMesh(const GSNativeMesh &mesh, const GSDrawState &state)
++{
++    m_impl->enqueue({Impl::Op::Native, std::make_shared<Impl::Native>(Impl::Native{mesh, state})});
++}
+ void GSThreadedBackend::BeginTransfer(const GSTransferCommand &command)
+ {
+     m_impl->enqueue({Impl::Op::Transfer, command});

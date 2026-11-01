@@ -77,7 +77,6 @@ add_executable(roguegalaxy
     draw_distance.cpp
     ee_fpu.cpp
     flip_pacing.cpp
-    font_trace.cpp
     free_camera.cpp
     movie_audio.cpp
     quick_scenes.cpp
@@ -86,19 +85,22 @@ add_executable(roguegalaxy
     libc_rand.cpp
     loading_screen.cpp
     map_chests.cpp
+    native_renderer.cpp
     opening.cpp
+    voice_language.cpp
     widescreen.cpp
     hud_size.cpp
-    save_anywhere.cpp
+    inventory.cpp
     update_check.cpp
     scene_timing.cpp
     settings_pages.cpp
-    sharp_letters.cpp
     shop_prices.cpp
     step_fixes.cpp
     stick_response.cpp
     texture_pack.cpp
     vif1_thread.cpp
+    vu1_native.cpp
+    gif_events.cpp
     vu0_flags.cpp
     overlay/overlay_manager.cpp
     debug/call_trace.cpp
@@ -114,14 +116,40 @@ add_executable(roguegalaxy
     debug/sampler.cpp
     debug/stall_watch.cpp
     debug/selftest.cpp
+    debug/vu1_replay.cpp
 )
 target_include_directories(roguegalaxy PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(roguegalaxy PRIVATE rg_generated_main ${RG_OVERLAY_LIBS} ps2_runtime)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # GNU ld reads each archive once, in order: the function table defined in
+    # rg_generated_main is first needed by ps2_runtime, listed after it, so the
+    # member would never be pulled in. Rescan them as a group.
+    target_link_libraries(roguegalaxy PRIVATE
+        "$<LINK_GROUP:RESCAN,rg_generated_main,${RG_OVERLAY_LIBS},ps2_runtime>")
+else()
+    target_link_libraries(roguegalaxy PRIVATE rg_generated_main ${RG_OVERLAY_LIBS} ps2_runtime)
+endif()
 if(WIN32)
     # update_check.cpp asks GitHub through WinHTTP.
     target_link_libraries(roguegalaxy PRIVATE winhttp)
 endif()
 target_compile_definitions(roguegalaxy PRIVATE RG_APP_VERSION="${PROJECT_VERSION}")
+
+# The native VU1 programs match the VU1 to the bit, which needs the products
+# and sums rounded apart; an -march with FMA would fuse them.
+if(NOT MSVC)
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/vu1_native.cpp" PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+
+# tools/vu1/oracle: replays an RG_VU1_REPLAY recording through VU1 without the
+# game, the check for native replacements of the VU1 programs. Not built by
+# default: cmake --build build/game --target rg_vu1_oracle
+add_executable(rg_vu1_oracle EXCLUDE_FROM_ALL
+    "${CMAKE_SOURCE_DIR}/tools/vu1/oracle/rg_vu1_oracle.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/gif_events.cpp"
+    "${CMAKE_SOURCE_DIR}/tools/vu1/oracle/native.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/vu1_native.cpp")
+target_include_directories(rg_vu1_oracle PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/debug" "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(rg_vu1_oracle PRIVATE ps2_runtime)
 # The commit this build is from, for the menu's About window (as of the last
 # configure): the REVISION file of a release's source archive, which is no
 # git checkout (tools/release/source_zip.py), or else git. Changed files make

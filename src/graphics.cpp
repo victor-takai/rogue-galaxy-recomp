@@ -23,18 +23,19 @@
 #include "draw_distance.h"
 #include "free_camera.h"
 #include "instant_text.h"
+#include "voice_language.h"
 #include "map_chests.h"
+#include "native_renderer.h"
 #include "loading_screen.h"
 #include "opening.h"
 #include "quick_scenes.h"
 #include "scene_timing.h"
 #include "settings_pages.h"
-#include "sharp_letters.h"
 #include "shop_prices.h"
 #include "texture_pack.h"
 #include "vif1_thread.h"
 #include "hud_size.h"
-#include "save_anywhere.h"
+#include "inventory.h"
 #include "widescreen.h"
 #include "ps2_runtime.h"
 #include "stick_response.h"
@@ -226,21 +227,24 @@ void applyGameOption(const std::string &key, bool on)
         rg::loading::setInstantRecap(on);
     else if (key == "instant_text")
         rg::instanttext::setEnabled(on);
-    else if (key == "sharp_letters")
-    {
-        rg::letters::setEnabled(on);
-        rg::texturePack::refresh();
-    }
     else if (key == "texture_packs")
         rg::texturePack::setEnabled(on);
     else if (key.rfind("texture_pack_", 0) == 0)
         rg::texturePack::setPackEnabled(key.substr(13), on);
-    else if (key == "save_anywhere")
-        rg::saveanywhere::setEnabled(on);
+    else if (key == "japanese_voices")
+        rg::voicelanguage::setEnabled(on);
+    else if (key == "full_bag_to_storage")
+        rg::inventory::setFullBagToStorage(on);
+    else if (key == "stack_limit_99")
+        rg::inventory::setStackLimit99(on);
+    else if (key == "bigger_bag")
+        rg::inventory::setBiggerBag(on);
     else if (key == "map_chests")
         rg::mapchests::setEnabled(on);
     else if (key == "dev_tools")
         rg::devtools::setEnabled(on);
+    else if (key == "native_renderer")
+        rg::nativerenderer::setPreferred(on);
     else if (key == "free_camera")
         rg::freecamera::setEnabled(on);
     else if (key == "faster_camera")
@@ -435,6 +439,14 @@ bool pump(void *userData)
                            dq8::ui::Icon::Camera);
         }
     }
+    // Items the bag had no room for, sent to the storage.
+    if (const unsigned sent = rg::inventory::takeSentToStorage(); sent != 0u && g_menu)
+    {
+        g_menu->notify(sent == 1u ? "The bag is full: the item went to the transporter's item storage"
+                                  : "The bag is full: " + std::to_string(sent) +
+                                        " items went to the transporter's item storage",
+                       dq8::ui::Icon::Info);
+    }
     // A newer release found by the check of this run: a toast, once.
     static bool releaseTold = false;
     static auto releaseAsked = std::chrono::steady_clock::time_point{};
@@ -603,15 +615,11 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "RB, LT and RT, as each button is bound in Controls. Off, or with a PlayStation or Nintendo controller "
          "or the keyboard, the game's PlayStation buttons.",
          true},
-        {"sharp_letters", "Sharp letters",
-         "Above 1x, the game's letters are traced into smooth outlines and drawn at the internal resolution, "
-         "with a round black border, instead of enlarged as blocks. Each new letter is made the first time it "
-         "shows, in a frame or two.",
-         true},
         {"texture_packs", "Texture packs",
-         "Above 1x, the 2D art (icons, window pieces, menu pictures) is drawn from the larger versions in the "
-         "packs under textures\\packs, where they have it. The game ships none: packs are made from your own "
-         "disc or come from others (docs\\TEXTURE_PACKS.md).",
+         "Above 1x, the game's art is drawn from the larger versions in the packs under textures\\packs, where "
+         "they have it: the 2D art (icons, window pieces, menu pictures) and, from a pack made for PCSX2, the "
+         "scenery and the characters. The game ships none: packs are made from your own disc or come from "
+         "others (docs\\TEXTURE_PACKS.md).",
          true},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},
@@ -627,17 +635,27 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "The chests not yet opened show on the maps in the parts you have explored, as the game shows them once "
          "every save point of a planet is activated. Nothing is saved: the planet's own completion still comes.",
          false},
-        {"save_anywhere", "Save anywhere (R1 + Triangle)",
-         "In the field, Triangle with R1 held opens the transporter's menu wherever the main menu could open: save, "
-         "teleport, exchange points and item storage. A save made away from a transporter loads at the area's "
-         "transporter.",
-         false},
         {"fast_transporter", "Fast transporters",
          "A transporter's warp plays at up to twice the speed. The music and the sounds keep their pace.", false},
         {"check_updates", "Check for new versions",
          "At each start the game asks GitHub for this project's releases (nothing is sent but the request) and, "
          "when a newer one is out, says so and links to it from the menu's About window.",
          true},
+        {"full_bag_to_storage", "Full bag to storage",
+         "An item found when the bag has no room for it (no free space, or as many of that item as the bag "
+         "holds) goes to the transporter's item storage, instead of the overflow the game makes you sort out in "
+         "the item menu, or losing it when that is full too. Shops and the Factory still ask for room in the "
+         "bag.",
+         false},
+        {"stack_limit_99", "Item limit 99",
+         "Every item that stacks can be carried up to 99 in the bag. The game holds some to 20, 30 or 50, healing "
+         "items and boosts among them. Off again, nothing carried is lost; more just cannot be added.",
+         false},
+        {"bigger_bag", "Seventh bag page",
+         "The bag gets a seventh page: 280 spaces instead of 240. The transporter's storage keeps its 320. A save "
+         "made with it still loads without it: the seventh page's items are kept, hidden, until it is on again. "
+         "Takes effect the next time the game starts.",
+         false, 0, 0, 0, "", 1, true, true},
         {"fast_revelation", "Fast Revelation Flow",
          "Items going into a Revelation Flow cell, the zoom, the glow and the ability won, play at up to twice "
          "the speed.",
@@ -667,6 +685,17 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         {"action_gauge", "Action gauge speed",
          "How fast the party's action gauge fills again in battle, against the game's (100%).",
          false, 25, 400, 100, "%d%%", 25},
+        {"japanese_voices", "Undub (Japanese voices)",
+         "The voices in scenes and the movies come from your Japanese Director's Cut disc instead of the English "
+         "ones; the text stays as it is. It needs that disc's files: run Install-Undub.bat in the game's folder "
+         "once and pick your Japanese disc image. Without them the voices stay English. A few lines have no "
+         "Japanese voice and play silent. Takes effect the next time the game starts.",
+         false, 0, 0, 0, "", 1, true, true, "language"},
+        {"native_renderer", "Native renderer",
+         "Experimental, for development: the models and the post effects drawn by the PC's renderer instead of "
+         "through the emulation of the PS2's graphics chip, as that work lands; for now it changes nothing. Off, "
+         "everything goes through the emulation. Takes effect the next time the game starts.",
+         false, 0, 0, 0, "", 1, true, true},
         {"dev_tools", "Developer tools",
          "The tools the developers left in the game, switched off for release. Main menu: R3 shows every item's "
          "icon, R1 + R3 a list of them, and Cross gives one of the one picked. Help pages and info list: R1 + "
@@ -684,7 +713,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
             after = host.gameOptions.insert(
                         after + 1, {"texture_pack_" + pack.key, "Pack: " + pack.name,
                                     "The pack's pictures (" + std::to_string(pack.regions) +
-                                        " regions). Packs are read by name, a later one over an earlier one, "
+                                        "). Packs are read by name, a later one over an earlier one, "
                                         "textures\\hd first.",
                                     pack.enabled});
         }
@@ -702,6 +731,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         {"texture_packs", "Texture packs"},
         {"skip_opening", "Convenience"},
         {"encounter_rate", "Battles and rewards"},
+        {"native_renderer", "Rendering"},
         {"dev_tools", "Developers"},
     };
     // The game's own Settings screen shows them on pages of its own.
@@ -811,7 +841,6 @@ Setup::Setup(PS2Runtime &runtime)
         dq8::gfx::setPresentObserver(&debug::noteFrameTime);
         // Aspect ratio Auto follows the Widescreen option.
         sdl->setGameWidescreenQuery([] { return rg::widescreen::wide() ? 1 : 0; });
-        rg::letters::installRenderer(*sdl);
         rg::texturePack::install(*sdl);
         sdl->setSideImageLoader(&loadBorderImage);
         if (noWindow)

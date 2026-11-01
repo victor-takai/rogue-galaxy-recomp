@@ -9,8 +9,9 @@ namespace dq8::gfx
 class SdlGpuBackend;
 }
 
-// The game's 2D art at a higher resolution: a replacement pack kept on the
-// player's machine (made from their own disc, never in the repository).
+// The game's art at a higher resolution: replacement packs kept on the
+// player's machine (made from their own disc or by others, never in the
+// repository).
 //
 // Collecting (RG_TEXTURE_DUMP=DIR, textures\RogueGalaxy-collect.bat): every
 // region a UV sprite draws from a texture -- a glyph of the font, a menu
@@ -23,9 +24,9 @@ class SdlGpuBackend;
 // Reading (textures\hd, RG_TEXTURE_PACK=DIR): a PNG there by the same name,
 // a whole 2 to 8 times larger (tools\texture_pack\make_pack.py writes them),
 // is drawn in place of that region above 1x (SdlGpuBackend::
-// setRegionReplacements). The backend takes one lookup, so this file owns it:
-// the sharp letters (sharp_letters.h) answer for their fonts' palettes, the
-// pack for the rest.
+// setRegionReplacements). A pack made for PCSX2 (TEX0HASH-CLUTHASH-BITS.dds)
+// replaces whole textures, the scenery's and the characters', through the
+// same lookup (RegionRequest::whole); docs/TEXTURE_PACKS.md.
 namespace rg::texturePack
 {
 
@@ -47,8 +48,8 @@ std::vector<PackInfo> packs();
 
 void setPackEnabled(const std::string &key, bool on);
 
-// The sharp letters switched: what dq8-gfx kept of the answers goes, so the
-// regions are asked about again.
+// What dq8-gfx kept of the answers goes, so the regions and textures are
+// asked about again (a pack or the packs switched).
 void refresh();
 
 } // namespace rg::texturePack

@@ -74,6 +74,10 @@ public:
         return m_inner->GetTransferSnapshot();
     }
 
+    void SubmitNativeMesh(const GSNativeMesh &mesh, const GSDrawState &state) override
+    {
+        m_inner->SubmitNativeMesh(mesh, state);
+    }
     void Submit(const GSPrimitiveBatch &batch) override { m_inner->Submit(batch); }
     void SubmitMany(const GSPrimitiveBatch *const *batches, size_t count) override
     {

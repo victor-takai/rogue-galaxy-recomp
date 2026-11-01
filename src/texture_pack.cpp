@@ -22,7 +22,6 @@
 #include "dds.h"
 #include "gfx/backends/sdlgpu/sdlgpu_backend.h"
 #include "mini_json.h"
-#include "sharp_letters.h"
 #include "zip_reader.h"
 
 // raylib's stb_image and stb_image_write, which the runtime links in.
@@ -676,11 +675,10 @@ void collect(const dq8::gfx::RegionRequest &request)
     g_dumpWake.notify_one();
 }
 
-// The backend takes one lookup: the sharp letters' answer for their fonts'
-// palettes, the pack's for the rest.
-bool wanted(uint64_t clut)
+// Whether the backend should hash the regions drawn with a palette at all.
+bool wanted(uint64_t)
 {
-    return rg::letters::wantsRegion(clut) || !g_dumpDirectory.empty() ||
+    return !g_dumpDirectory.empty() ||
            (g_enabled.load(std::memory_order_relaxed) && g_anyPicture.load(std::memory_order_relaxed));
 }
 
@@ -720,10 +718,6 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
             g_wake.notify_one();
         }
         return dq8::gfx::kRegionPending;
-    }
-    if (rg::letters::wantsRegion(request.clut))
-    {
-        return rg::letters::lookupRegion(request, width, height, rgba);
     }
     if (!g_dumpDirectory.empty())
     {

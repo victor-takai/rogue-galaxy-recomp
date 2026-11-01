@@ -19,8 +19,8 @@ namespace {
 using gfx::PadInput;
 
 constexpr const char *kTimes = "\xC3\x97"; // U+00D7, spelled out for compilers without /utf-8
-constexpr const char *kPageNames[] = {"Display", "Sound", "Controls", "Game", "Textures", "Interface"};
-constexpr Icon kPageIcons[] = {Icon::Display, Icon::Sound, Icon::Controls, Icon::Disc, Icon::Folder,
+constexpr const char *kPageNames[] = {"Display", "Sound", "Controls", "Game", "Language", "Textures", "Interface"};
+constexpr Icon kPageIcons[] = {Icon::Display, Icon::Sound, Icon::Controls, Icon::Disc, Icon::Info, Icon::Folder,
                                Icon::Interface};
 constexpr const char *kProjectUrl = "https://github.com/victor-takai/rogue-galaxy-recomp";
 constexpr const char *kIssuesUrl = "https://github.com/victor-takai/rogue-galaxy-recomp/issues";
@@ -155,6 +155,7 @@ void Overlay::drawSettingsWindow() {
         case SettingsPage::Sound: drawSoundPage(); break;
         case SettingsPage::Controls: drawControlsPage(); break;
         case SettingsPage::Game: drawGamePage(); break;
+        case SettingsPage::Language: drawLanguagePage(); break;
         case SettingsPage::Textures: drawTexturesPage(); break;
         case SettingsPage::Interface: drawInterfacePage(); break;
         case SettingsPage::Count: break;
@@ -396,6 +397,10 @@ void Overlay::drawInterfacePage() {
 // The game's own switches, in the host's sections (Rogue Galaxy: added).
 void Overlay::drawGamePage() {
     drawGameOptions(std::string(), "The game has no options of its own.", "Game");
+}
+
+void Overlay::drawLanguagePage() {
+    drawGameOptions("language", "There are no language options.", "Language");
 }
 
 // The host's switches for packs of art (Rogue Galaxy: added).

@@ -62,6 +62,14 @@ struct SdlGpuStats {
 
     uint64_t primitivesSubmitted = 0u;
     uint64_t primitivesDrawn = 0u;
+    // GSNativeMesh strips drawn on the GPU, and those expanded on the CPU
+    // because their draw reads its target (Rogue Galaxy: added).
+    uint64_t nativeMeshes = 0u;
+    uint64_t nativeMeshesExpanded = 0u;
+    // The draw calls the GPU's strips took, merged, and the strips wholly off
+    // screen, not drawn (Rogue Galaxy: added).
+    uint64_t nativeDraws = 0u;
+    uint64_t nativeMeshesCulled = 0u;
     // Drawn through the same-state fast path (Rogue Galaxy: added).
     uint64_t sameStatePrimitives = 0u;
     uint64_t trianglesDrawn = 0u;
@@ -169,6 +177,8 @@ public:
     void Reset() override;
 
     void Submit(const GSPrimitiveBatch &batch) override;
+    // Transformed on the GPU, by gs_native.vert (Rogue Galaxy: added).
+    void SubmitNativeMesh(const GSNativeMesh &mesh, const GSDrawState &state) override;
     void SubmitMany(const GSPrimitiveBatch *const *batches, size_t count) override;
     void BeginTransfer(const GSTransferCommand &command) override;
     void UploadImage(const uint8_t *data, uint32_t sizeBytes) override;

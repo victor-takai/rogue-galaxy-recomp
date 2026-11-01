@@ -1,0 +1,40 @@
+diff --git a/ps2xRuntime/include/runtime/gs/gs_types.h b/ps2xRuntime/include/runtime/gs/gs_types.h
+index 0e0b79b..e41eb2d 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_types.h
++++ b/ps2xRuntime/include/runtime/gs/gs_types.h
+@@ -250,11 +250,20 @@ struct GSDrawState
+     bool linearFilter = false;
+ };
+ 
++namespace ps2_gs_detail
++{
++// What the thread submitting primitives to the backend says drew them (the
++// game names a VU1 program here, src/vif1_thread.cpp); the threaded backend
++// stamps each batch with it. Profiling only; 0 is "none" (Rogue Galaxy: added).
++inline thread_local uint32_t t_sourceTag = 0;
++} // namespace ps2_gs_detail
++
+ struct GSPrimitiveBatch
+ {
+     std::array<GSVertex, 3> vertices{};
+     uint8_t vertexCount = 0;
+     GSDrawState state{};
++    uint32_t sourceTag = 0; // ps2_gs_detail::t_sourceTag when it was submitted
+ };
+ 
+ struct GSTransferCommand
+diff --git a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+index 1fde224..5829bc5 100644
+--- a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+@@ -414,7 +414,9 @@ void GSThreadedBackend::Initialize(uint8_t *vram, uint32_t size)
+ void GSThreadedBackend::Reset() { m_impl->observe([](auto &b) { b.Reset(); }); }
+ void GSThreadedBackend::Submit(const GSPrimitiveBatch &batch)
+ {
+-    m_impl->enqueue({Impl::Op::Submit, batch});
++    Impl::Command command{Impl::Op::Submit, batch};
++    std::get<GSPrimitiveBatch>(command.data).sourceTag = ps2_gs_detail::t_sourceTag;
++    m_impl->enqueue(std::move(command));
+ }
+ void GSThreadedBackend::BeginTransfer(const GSTransferCommand &command)
+ {

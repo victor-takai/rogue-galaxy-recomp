@@ -117,6 +117,10 @@ public:
 
     void Initialize(uint8_t *vram, uint32_t vramSize) override { m_inner->Initialize(vram, vramSize); }
     void Reset() override { m_inner->Reset(); }
+    void SubmitNativeMesh(const GSNativeMesh &mesh, const GSDrawState &state) override
+    {
+        m_inner->SubmitNativeMesh(mesh, state);
+    }
     void Submit(const GSPrimitiveBatch &batch) override
     {
         if (keep(batch))

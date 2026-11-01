@@ -912,7 +912,7 @@ bool GsTextureCache::uploadRegion(SDL_GPUTexture *texture, const GsRegion &regio
     std::memcpy(mapped, m_staging.data(), bytes);
     SDL_UnmapGPUTransferBuffer(device, upload);
 
-    SDL_GPUCommandBuffer *commands = m_device.pendingCommands(error);
+    SDL_GPUCommandBuffer *commands = m_device.pendingCommands(error, "texture upload");
     if (!commands)
         return false;
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(commands);
@@ -1334,7 +1334,7 @@ bool GsTextureCache::build(const GsTextureKey &key, Entry &entry, std::string &e
     std::memcpy(mapped, m_staging.data(), m_staging.size());
     SDL_UnmapGPUTransferBuffer(device, upload);
 
-    SDL_GPUCommandBuffer *commands = m_device.pendingCommands(error);
+    SDL_GPUCommandBuffer *commands = m_device.pendingCommands(error, "texture build");
     if (!commands) {
         SDL_ReleaseGPUTexture(device, entry.texture);
         entry.texture = nullptr;

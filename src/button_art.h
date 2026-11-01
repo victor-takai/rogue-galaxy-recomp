@@ -7,10 +7,8 @@
 
 // What an Xbox pad's buttons look like in the special-character picture
 // (gaiji2.img, 256x256): the letters as the PS2-sized picture has them,
-// which src/button_glyphs.cpp draws into it, and the same buttons drawn
-// from their shapes at any scale, for the larger versions of the regions
-// the game draws them from (src/sharp_letters.cpp hands those to the
-// renderer). Nothing here touches the game's memory.
+// which src/button_glyphs.cpp draws into it. Nothing here touches the
+// game's memory.
 namespace rg::buttons::art
 {
 
@@ -60,21 +58,5 @@ constexpr Rgb kPlateShade{51, 50, 48};
 // The plate's face, cleared of the PlayStation's letters (and the shade
 // below it), in the cell.
 constexpr int kPlateFaceLeft = 4, kPlateFaceRight = 27, kPlateFaceTop = 4, kPlateFaceBottom = 15;
-
-// The region of the picture at (x, y), `width` by `height` texels, as the
-// game draws it (RGBA, alpha as the GS's), drawn `scale` times larger from
-// its shapes when it is one of the Xbox's buttons or the registered mark:
-// `out` is (width x scale) by (height x scale), row by row. False for
-// anything else (the PlayStation's buttons are left as they are).
-bool drawLarger(uint32_t x, uint32_t y, uint32_t width, uint32_t height, const uint8_t *rgba, uint32_t scale,
-                std::vector<uint8_t> &out);
-
-// The region of the loading screen's picture at (x, y) holding its cross
-// (kLoadingCrossX, kLoadingCrossY), `scale` times larger: the picture as the
-// GS's bilinear filter enlarges it, the circle cleared and the face button
-// of `crossCell` (the special characters' Cross cell, 22x22 RGBA) drawn
-// over it from its shapes, as the text's are. False for any other region.
-bool drawLoadingLarger(uint32_t x, uint32_t y, uint32_t width, uint32_t height, const uint8_t *rgba,
-                       uint32_t scale, const std::vector<uint8_t> &crossCell, std::vector<uint8_t> &out);
 
 } // namespace rg::buttons::art
