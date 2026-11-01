@@ -710,23 +710,25 @@ public:
         {
             if (!resume)
             {
-                // identify hashes about 6 KiB: once per entry and code
-                // image. The objects alternate entries (the setup at 0x000,
-                // then their program's), so a few are kept per image.
+                // identify hashes every candidate piece byte by byte (a
+                // quarter of this thread at the boss, 2026-11-01). The game
+                // composes its programs from pieces per object, so the code
+                // changes often but is one of a few images: each image is
+                // hashed once as it changes (a word at a time) and what each
+                // entry of it is stays known for the run.
                 if (memory.getVU1CodeGeneration() != m_nativeGeneration)
                 {
                     m_nativeGeneration = memory.getVU1CodeGeneration();
-                    m_identified.clear();
+                    m_codeHash = imageHash(memory.getVU1Code());
                 }
                 m_nativePC = startPC;
-                auto found = std::find_if(m_identified.begin(), m_identified.end(),
-                                          [startPC](const auto &entry) { return entry.first == startPC; });
+                const uint64_t key = m_codeHash ^ (static_cast<uint64_t>(startPC) * 0x9E3779B97F4A7C15ull);
+                auto found = m_identified.find(key);
                 if (found == m_identified.end())
                 {
-                    if (m_identified.size() >= 8u)
-                        m_identified.erase(m_identified.begin());
-                    m_identified.emplace_back(startPC, rg::vu1native::identify(memory.getVU1Code(), startPC));
-                    found = std::prev(m_identified.end());
+                    if (m_identified.size() >= 4096u)
+                        m_identified.clear();
+                    found = m_identified.emplace(key, rg::vu1native::identify(memory.getVU1Code(), startPC)).first;
                 }
                 m_nativeProgram = found->second;
             }
@@ -998,8 +1000,23 @@ private:
     const rg::vu1native::Program *m_nativeProgram = nullptr;
     uint64_t m_nativeGeneration = ~0ull;
     uint32_t m_nativePC = 0u;
-    // The programs identified at each entry in this code image.
-    std::vector<std::pair<uint32_t, const rg::vu1native::Program *>> m_identified;
+    // The programs identified, by code image (its hash) and entry.
+    std::unordered_map<uint64_t, const rg::vu1native::Program *> m_identified;
+    uint64_t m_codeHash = 0u;
+
+    // The 16 KiB of micro memory, a word at a time.
+    static uint64_t imageHash(const uint8_t *code)
+    {
+        uint64_t hash = 0x84222325CBF29CE4ull;
+        for (uint32_t i = 0; i < PS2_VU1_CODE_SIZE; i += 8u)
+        {
+            uint64_t word;
+            std::memcpy(&word, code + i, sizeof(word));
+            hash = (hash ^ word) * 0x100000001B3ull;
+            hash ^= hash >> 29;
+        }
+        return hash;
+    }
     uint32_t m_checkCount = 0u;
     rg::vu1native::Monitor m_nativeMonitor{nativeMode()};
     std::vector<std::vector<uint8_t>> m_nativePackets;
