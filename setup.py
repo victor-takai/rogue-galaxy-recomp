@@ -518,12 +518,19 @@ def expand_vu1_manifest(version: str, disc: Path) -> None:
     if not manifest.is_file():
         print("   no manifest; VU1 programs come only from local recordings")
         return
-    shutil.rmtree(VU1_MANIFEST_OUT, ignore_errors=True)
+    # Expanded into a staging folder, then only the files that changed are
+    # written over: CMake regenerates and recompiles every VU1 program shard
+    # when entries.txt is newer, and rewriting the same bytes cost every
+    # update minutes of shards (2026-10-31).
+    stage = VU1_MANIFEST_OUT.with_name(VU1_MANIFEST_OUT.name + ".new")
+    shutil.rmtree(stage, ignore_errors=True)
     rc = subprocess.run([sys.executable, "-I", str(VU1_TOOL), "expand", "--manifest", str(manifest),
-                         "--game-root", str(disc), "--output", str(VU1_MANIFEST_OUT)]).returncode
+                         "--game-root", str(disc), "--output", str(stage)]).returncode
     if rc != 0:
         sys.exit("expanding the VU1 manifest failed")
-    print(f"   wrote {VU1_MANIFEST_OUT.relative_to(ROOT)}")
+    changed, removed = sync_tree(stage, VU1_MANIFEST_OUT)
+    shutil.rmtree(stage, ignore_errors=True)
+    print(f"   {VU1_MANIFEST_OUT.relative_to(ROOT)}: {changed} file(s) changed, {removed} removed")
 
 
 def cmd_vu1_manifest(args: argparse.Namespace) -> int:
@@ -615,8 +622,8 @@ def cmd_vu_blocks_manifest(args: argparse.Namespace) -> int:
 
 def expand_vu_blocks_manifest(version: str, disc: Path) -> None:
     manifest = config_dir(version) / "vu-blocks.txt"
-    shutil.rmtree(VU_BLOCKS_OUT, ignore_errors=True)
     if not manifest.is_file():
+        shutil.rmtree(VU_BLOCKS_OUT, ignore_errors=True)
         print("   no manifest; VU blocks come only from local recordings")
         return
     files: dict[str, bytes] = {}
@@ -639,12 +646,19 @@ def expand_vu_blocks_manifest(version: str, disc: Path) -> None:
         sys.exit(f"{manifest.relative_to(ROOT)} does not match this disc's files")
     lengths = {len(raw) // 8 for _, raw in blocks}
     header = "VU-BLOCKS 1" if lengths == {4} else "VU-BLOCKS 2" if lengths <= {4, 8, 12, 16} else "VU-BLOCKS 3"
-    VU_BLOCKS_OUT.mkdir(parents=True)
-    (VU_BLOCKS_OUT / "blocks.txt").write_text(
+    # Written only when its bytes changed, as the VU1 manifest above: a newer
+    # blocks.txt has CMake regenerate and recompile all the block shards.
+    stage = VU_BLOCKS_OUT.with_name(VU_BLOCKS_OUT.name + ".new")
+    shutil.rmtree(stage, ignore_errors=True)
+    stage.mkdir(parents=True)
+    (stage / "blocks.txt").write_text(
         header + "\n" + "".join(
             f"{unit} " + " ".join(f"{int.from_bytes(raw[i:i + 8], 'little'):x}" for i in range(0, len(raw), 8)) + "\n"
             for unit, raw in blocks), newline="\n")
-    print(f"   wrote {VU_BLOCKS_OUT.relative_to(ROOT)} ({len(blocks)} blocks)")
+    changed, removed = sync_tree(stage, VU_BLOCKS_OUT)
+    shutil.rmtree(stage, ignore_errors=True)
+    print(f"   {VU_BLOCKS_OUT.relative_to(ROOT)}: {len(blocks)} blocks, "
+          f"{'rewritten' if changed else 'unchanged'}")
 
 
 def sync_tree(src: Path, dst: Path) -> tuple[int, int]:

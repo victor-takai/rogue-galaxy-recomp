@@ -12,6 +12,7 @@
 #   Install.bat -UseToolsOnPath         (developers: the toolchain already on PATH)
 #   Install.bat -Yes                    (no questions: a short path is used if needed,
 #                                        no shortcut is made and the game is not started)
+#   Install.bat -Updating               (from Update.bat: rebuilds what changed, no shortcut question)
 #
 # Windows PowerShell 5.1, so no newer syntax; plain ASCII, which 5.1 reads
 # without a byte order mark.
@@ -19,7 +20,8 @@
 param(
     [string]$Iso = "",
     [switch]$UseToolsOnPath,
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$Updating
 )
 
 $ErrorActionPreference = "Stop"
@@ -117,6 +119,7 @@ function Move-ToShortPath([string]$Problem) {
     if ($Iso) { $forward += @("-Iso", $Iso) }
     if ($UseToolsOnPath) { $forward += "-UseToolsOnPath" }
     if ($Yes) { $forward += "-Yes" }
+    if ($Updating) { $forward += "-Updating" }
     & (Join-Path $System32 "WindowsPowerShell\v1.0\powershell.exe") -NoProfile -ExecutionPolicy Bypass -File $script @forward
     exit $LASTEXITCODE
 }
@@ -345,8 +348,13 @@ function Main {
         if ($LASTEXITCODE -ne 0) { Stop-Install "Fetching the git submodules failed." }
     }
 
-    Write-Step "Building the game"
-    Write-Host "This takes about 20 minutes on a fast PC, up to an hour on a slower one; it can be left alone."
+    if ($Updating) {
+        Write-Step "Rebuilding what changed"
+        Write-Host "A few minutes when little changed; as long as the first install when the new version changed how the game's code is translated."
+    } else {
+        Write-Step "Building the game"
+        Write-Host "This takes about 20 minutes on a fast PC, up to an hour on a slower one; it can be left alone."
+    }
     Write-Host "Clicking inside this window pauses it (the title then starts with ""Select""); press Esc to go on."
     Write-Host "Everything shown here also goes to install.log."
     $log = Join-Path $Root "install.log"
@@ -382,7 +390,7 @@ function Main {
 
     Write-Step "Done"
     Write-Host "The game is $game"
-    if (-not $Yes -and (Confirm-Step "Put a shortcut to it on the desktop?")) {
+    if (-not $Yes -and -not $Updating -and (Confirm-Step "Put a shortcut to it on the desktop?")) {
         $shell = New-Object -ComObject WScript.Shell
         $link = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath("Desktop")) "Rogue Galaxy.lnk"))
         $link.TargetPath = $game

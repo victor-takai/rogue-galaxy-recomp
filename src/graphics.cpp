@@ -451,7 +451,7 @@ bool pump(void *userData)
         if (const rg::updates::Release newer = rg::updates::newer(); !newer.version.empty())
         {
             releaseTold = true;
-            g_menu->notify("Version " + newer.version + " is out: F1, then Rogue Galaxy > About", dq8::ui::Icon::Info,
+            g_menu->notify("Version " + newer.version + " is out: run Update.bat, or see F1 > Rogue Galaxy > About", dq8::ui::Icon::Info,
                            10.0);
         }
     }

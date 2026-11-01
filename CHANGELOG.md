@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `Update.bat`: brings an installed folder to the newest release and rebuilds
+  only what changed, a few minutes in most cases. A rebuild also no longer
+  redoes the compiled 3D programs when nothing changed (every rebuild used
+  to spend ten minutes on them).
 - Undub: the Japanese voices and movies from your own Japanese Director's Cut disc
   (Settings > Language). Run `Install-Undub.bat` first and pick the disc image. The
   text stays English.
