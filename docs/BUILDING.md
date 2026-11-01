@@ -77,6 +77,42 @@ VU0 alone), and CMake compiles every `build/vu-blocks/*.txt` it finds too
 (as many shards at a time as memory allows: each takes 2.2 GB to compile); maintainers:
 `python setup.py vu-blocks-manifest` folds the recordings into the manifest.
 
+## Rebuilding after a change
+
+Every step keeps what it already made, so a change is rebuilt from the step
+it touches on down. From the repository root:
+
+| What changed | Run |
+|---|---|
+| `src/`, `CMakeLists.txt`, `thirdparty/dq8-gfx`, `thirdparty/imgui` | `cmake --build build/game` |
+| `config/SCUS_974.90/` (function maps, recompiler configs, `vu1-programs.txt`, `vu-blocks.txt`), `tools/mwo3/`, `tools/funcmap/` | `python setup.py recompile`, then `python setup.py build` |
+| `patches/ps2recomp/`, or the commit `thirdparty/PS2Recomp` is pinned to | `python setup.py tools`, then `recompile`, then `build` |
+| A new version of a git checkout (`git pull`), or in doubt | `python setup.py install` (on Windows, `Install.bat`) |
+| A new release, in a folder `Install.bat` built | `Update.bat` ([`tools/install/update.ps1`](../tools/install/update.ps1): downloads the zip, writes only the files whose bytes differ, deletes from the code folders what the new version no longer has, then runs the installer) |
+
+What each step keeps:
+
+- `tools` applies only the patches not yet applied (the ones applied are
+  listed in `thirdparty/PS2Recomp/.rg-patches-applied`; a checkout that lost
+  them is noticed and patched again) and rebuilds the recompiler
+  incrementally.
+- `recompile` runs the recompiler on all six images (about a minute) into
+  a staging folder and copies into `build/generated/` only the files whose
+  bytes changed; the VU manifests (`build/vu1-manifest`,
+  `build/vu-blocks-manifest`) are rewritten only when they changed too,
+  since CMake recompiles every VU shard after a newer one. So the next
+  build compiles just what changed: with nothing changed, `recompile`
+  takes 35 s and the build 1 s. A change to what the recompiler generates
+  (a patch in `patches/ps2recomp/` that changes its output) touches most
+  of the generated files, and that build takes about as long as the first.
+- `build` configures `build/game` the first time only (CMake reconfigures by
+  itself when a `CMakeLists.txt` or a patch changes) and lets Ninja rebuild
+  what depends on the changed files.
+- `install` skips the disc once `disc/manifest.json` and the ELF are there
+  (delete the manifest to extract again), then runs `tools`, `recompile` and
+  `build` as above. `Install.bat` also keeps the toolchain it downloaded
+  while its hash matches the version pinned in `tools/install/install.ps1`.
+
 ## Steam Deck (untested)
 
 The installer needs Windows, but the game it builds can go to a Steam Deck
@@ -96,6 +132,7 @@ Compatibility. It starts in fullscreen there; Back + Start opens the menu
 | Path | What |
 |---|---|
 | `Install.bat`, `tools/install/` | The Windows installer: build tools into `toolchain\`, then `setup.py install` |
+| `Update.bat`, `tools/install/update.ps1` | Brings a folder `Install.bat` built to the newest release and rebuilds what changed (a git checkout uses `git pull` instead) |
 | `CHANGELOG.md` | What each release brings, and its known issues |
 | `setup.py` | `verify`, `extract`, `info`, `overlays`, `check`, `recompile`, `tools`, `build`, `install`, `portable` (and `make-hashes`, `maps`, `vu1-manifest`, `vu-blocks-manifest` for maintainers) |
 | `CMakeLists.txt`, `src/` | The game executable: build of the generated trees, overlay manager (`src/overlay/`), call tracing (`src/debug/`), `main.cpp`; the Windows launcher, `Rogue Galaxy.exe` (`src/launcher/`) |

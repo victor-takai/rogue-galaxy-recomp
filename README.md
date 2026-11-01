@@ -66,6 +66,31 @@ the Japanese Director's Cut (SCPS-17013). After `Install.bat`, double-click
 the voices and movies, about 3 GB, into the folder. Then turn the undub on in
 the game: F1 > Settings > Language.
 
+### Update
+
+The game says at start when a newer version is out, and F1 > Rogue Galaxy >
+About links to it. Nothing changes by itself: to update, double-click
+`Update.bat`. It downloads the newest release, replaces only the files that
+changed and rebuilds what depends on them: a few minutes when little
+changed, about as long as the first install when the new version changes
+how the game's code is translated. The build tools stay unless the new
+version needs newer ones. Your disc, saves (`disc\mc0`), settings
+(`%APPDATA%\RogueGalaxy\Recompiled`), textures and the undub's files
+(`disc\JA`) are not touched. `update.log` and `install.log` say what
+happened. A zip downloaded by hand from the [releases](../../releases) page
+can be dropped onto `Update.bat` instead.
+
+Version 0.1.0 has no `Update.bat`, so the first update from it is by hand:
+download the new `RogueGalaxy-<version>.zip`, extract it where your game
+folder is (for `C:\RogueGalaxy`, into `C:\`, so that the zip's `RogueGalaxy`
+folder merges into yours; let Windows replace the files it asks about), then
+double-click `Install.bat` again. It does not ask for the disc image. From
+then on `Update.bat` is in the folder.
+
+Updating into a fresh folder works too, but then the tools are downloaded,
+the disc extracted and everything built again, as the first time; copy
+`disc\mc0` (and `disc\mc1`) from the old folder to keep your saves.
+
 ## Controls
 
 The game window takes a keyboard or a gamepad (PlayStation layout).
