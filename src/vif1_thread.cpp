@@ -1318,9 +1318,12 @@ std::string busyReport()
         lastCompiled = compiled;
         if (newInterpreted != 0u)
         {
-            char more[96];
-            std::snprintf(more, sizeof(more), " | vu1 interpreted %llu pairs (%.0f%%)",
-                          static_cast<unsigned long long>(newInterpreted),
+            // Per second, and as a share of the pairs the VU1 ran at all: the
+            // chunks done natively never run it, so a high share of a small
+            // count is no load (2026-11-01: 44% was 14k pairs a second).
+            char more[128];
+            std::snprintf(more, sizeof(more), " | vu1 interpreted %.1fk pairs/s (%.0f%% of what the VU1 ran)",
+                          wall > 0.0 ? static_cast<double>(newInterpreted) / wall / 1000.0 : 0.0,
                           100.0 * static_cast<double>(newInterpreted) /
                               static_cast<double>(newInterpreted + newCompiled));
             return std::string(text) + more;
