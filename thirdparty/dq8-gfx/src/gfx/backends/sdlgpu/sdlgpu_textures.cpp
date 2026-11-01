@@ -19,12 +19,12 @@ namespace dq8::gfx {
 
 namespace {
 
-// Rogue Galaxy: added. RG_TEXTURE_DUMP_WHOLE=DIR writes each new 8-bit or 4-bit
-// texture the game builds, whole and in colour, named as a PCSX2 pack names it
-// ("TEX0HASH-CLUTHASH-BITS.pam": the hash of its GS blocks, this build's hash
-// of its palette, the format and log2 of its size), so a pack can be made for
-// the textures the game really uses. A PAM is RGBA with the GS's alpha (0x80
-// opaque).
+// Rogue Galaxy: added. RG_TEXTURE_DUMP_WHOLE=DIR writes each new indexed texture
+// the game builds (8-bit or 4-bit), whole and in colour, named as a PCSX2 pack
+// names it ("TEX0HASH-CLUTHASH-BITS.pam", the hashes in hex without leading
+// zeros: its texels' and its palette's, then the format and log2 of its size),
+// so a pack can be made for the textures the game really uses. A PAM is RGBA
+// with the GS's alpha (0x80 opaque).
 struct WholeDump {
     const char *directory = nullptr;
     std::unordered_set<uint64_t> done;
@@ -473,25 +473,69 @@ SDL_GPUTexture *GsTextureCache::storeLarger(uint64_t id, uint32_t factor, bool n
     return texture;
 }
 
+bool GsTextureCache::pcsx2Hashable(const GsTextureKey &key) {
+    switch (key.psm & 0x3fu) {
+    case GS_PSM_T8:
+    case GS_PSM_T4:
+    case GS_PSM_T8H:
+    case GS_PSM_T4HL:
+    case GS_PSM_T4HH:
+        return (key.width & (key.width - 1u)) == 0u && (key.height & (key.height - 1u)) == 0u;
+    default:
+        return false;
+    }
+}
+
+uint64_t GsTextureCache::pcsx2TexelHash(const GsTextureKey &key) {
+    const uint32_t psm = key.psm & 0x3fu;
+    const uint32_t width = key.width, height = key.height;
+    const bool four = psm == GS_PSM_T4;
+    m_wholeBlocks.clear();
+    if ((psm == GS_PSM_T8 && width >= 16u && height >= 16u) || (four && width >= 32u && height >= 16u)) {
+        // T8 and T4 fill every bit of their words: PCSX2 hashes the GS blocks
+        // they cover as they sit in memory.
+        m_vram.appendBlocks(four, key.tbp0, key.tbw, width, height, m_wholeBlocks);
+        return XXH3_64bits(m_wholeBlocks.data(), m_wholeBlocks.size());
+    }
+    // A texture smaller than one block, and the formats whose indices share
+    // their words with something else (T8H, T4HL, T4HH), PCSX2 expands to an
+    // index a byte, row by row, and hashes that.
+    m_wholeBlocks.resize(size_t(width) * height);
+    m_rawRow.resize(size_t(width) * 4u);
+    const uint32_t shift = psm == GS_PSM_T4HH ? 28u : 24u;
+    const uint32_t mask = psm == GS_PSM_T8H ? 0xffu : 0x0fu;
+    for (uint32_t y = 0u; y < height; ++y) {
+        uint8_t *row = m_wholeBlocks.data() + size_t(y) * width;
+        if (psm == GS_PSM_T8) {
+            GSMem::ReadRowP8(m_vram.data(), key.tbp0, key.tbw, 0u, y, width, row);
+        } else if (four) {
+            m_vram.readRowT4(key.tbp0, key.tbw, 0u, y, width, row);
+        } else {
+            GSMem::ReadRowCT32(m_vram.data(), key.tbp0, key.tbw, 0u, y, width, m_rawRow.data());
+            for (uint32_t x = 0u; x < width; ++x) {
+                uint32_t word;
+                std::memcpy(&word, m_rawRow.data() + size_t(x) * 4u, sizeof(word));
+                row[x] = static_cast<uint8_t>((word >> shift) & mask);
+            }
+        }
+    }
+    return XXH3_64bits(m_wholeBlocks.data(), m_wholeBlocks.size());
+}
+
 SDL_GPUTexture *GsTextureCache::wholeReplacement(const GSDrawState &state, uint32_t &scale, bool &nearest,
                                                  std::string &error) {
     if (!m_regionLookup)
         return nullptr;
     syncRegionGeneration();
     const GsTextureKey key = keyFor(state);
-    if (key.psm != GS_PSM_T8 && key.psm != GS_PSM_T4)
-        return nullptr;
-    if ((key.width & (key.width - 1u)) != 0u || (key.height & (key.height - 1u)) != 0u)
+    if (!pcsx2Hashable(key))
         return nullptr;
     const auto found = m_entries.find(key);
     if (found == m_entries.end())
         return nullptr;
     Entry &entry = found->second;
     if (entry.identity.texels == 0u || entry.pcsx2For != entry.identity.texels) {
-        // PCSX2 names a texture by the hash of the GS blocks it covers.
-        m_wholeBlocks.clear();
-        m_vram.appendBlocks(key.psm == GS_PSM_T4, key.tbp0, key.tbw, key.width, key.height, m_wholeBlocks);
-        entry.pcsx2 = XXH3_64bits(m_wholeBlocks.data(), m_wholeBlocks.size());
+        entry.pcsx2 = pcsx2TexelHash(key);
         entry.pcsx2For = entry.identity.texels;
     }
     if (!entry.pcsx2ClutValid || entry.pcsx2ClutFor != entry.identity.clut) {
@@ -1231,11 +1275,8 @@ bool GsTextureCache::build(const GsTextureKey &key, Entry &entry, std::string &e
     entry.identity.texels = expand(key, {0u, 0u, width, height});
     dumpTexture(key, entry.identity, m_staging, m_stats.builds);
 
-    if (WholeDump &dump = wholeDump(); dump.directory && indexed && (key.psm == GS_PSM_T8 || key.psm == GS_PSM_T4)) {
-        // PCSX2 hashes the GS blocks as they sit in memory (T8 and T4 cover every bit of a word).
-        std::vector<uint8_t> blocks;
-        m_vram.appendBlocks(key.psm == GS_PSM_T4, key.tbp0, key.tbw, width, height, blocks);
-        const uint64_t hash = XXH3_64bits(blocks.data(), blocks.size());
+    if (WholeDump &dump = wholeDump(); dump.directory && pcsx2Hashable(key)) {
+        const uint64_t hash = pcsx2TexelHash(key);
         if (dump.done.insert(hash * 1099511628211ull ^ entry.identity.clut).second) {
             const auto log2 = [](uint32_t v) {
                 uint32_t n = 0u;
@@ -1247,7 +1288,7 @@ bool GsTextureCache::build(const GsTextureKey &key, Entry &entry, std::string &e
             buildPalette(key);
             const uint64_t clutHash = XXH3_64bits(m_clutRgba.data(), m_clutRgba.size() * sizeof(uint32_t));
             char name[512];
-            std::snprintf(name, sizeof name, "%s/%016llx-%016llx-%08x.pam", dump.directory,
+            std::snprintf(name, sizeof name, "%s/%llx-%llx-%08x.pam", dump.directory,
                           static_cast<unsigned long long>(hash),
                           static_cast<unsigned long long>(clutHash),
                           key.psm | (log2(width) << 6u) | (log2(height) << 10u));

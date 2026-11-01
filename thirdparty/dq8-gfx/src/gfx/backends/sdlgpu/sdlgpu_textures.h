@@ -335,6 +335,12 @@ private:
     // under `id`; null with `error` set if the GPU refuses it.
     SDL_GPUTexture *storeLarger(uint64_t id, uint32_t factor, bool nearest, uint32_t width, uint32_t height,
                                 std::string &error);
+    // A texture PCSX2 names by its indices (8-bit and 4-bit, in their own
+    // words or in a 32-bit one's high bits), with a power-of-two size.
+    static bool pcsx2Hashable(const GsTextureKey &key);
+    // The hash PCSX2 names that texture by (XXH3-64 of its GS blocks, or of
+    // its indices a byte each, row by row); m_wholeBlocks is its scratch.
+    uint64_t pcsx2TexelHash(const GsTextureKey &key);
     std::vector<uint8_t> m_wholeBlocks;
     // Expand scratch: raw texels for one row (indices for indexed PSMs, whole
     // words when the indices ride inside a 32-bit layout), and the palette

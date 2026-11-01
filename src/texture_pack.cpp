@@ -165,7 +165,10 @@ bool parseWholeName(const std::string &name, uint64_t &key, uint64_t &anyKey)
     unsigned long long texels = 0u, clut = 0u;
     unsigned bits = 0u;
     char tail = 0;
-    if (std::sscanf(name.c_str(), "%16llx-%16llx-%8x%c", &texels, &clut, &bits, &tail) != 3 || name.size() != 42u)
+    // PCSX2 writes the hashes without leading zeros.
+    if (std::count(name.begin(), name.end(), '-') != 2 ||
+        name.find_first_not_of("0123456789abcdefABCDEF-") != std::string::npos ||
+        std::sscanf(name.c_str(), "%16llx-%16llx-%8x%c", &texels, &clut, &bits, &tail) != 3)
     {
         return false;
     }
