@@ -1,0 +1,303 @@
+diff --git a/ps2xRecomp/include/ps2recomp/code_generator.h b/ps2xRecomp/include/ps2recomp/code_generator.h
+index 6977df4..79e22c1 100644
+--- a/ps2xRecomp/include/ps2recomp/code_generator.h
++++ b/ps2xRecomp/include/ps2recomp/code_generator.h
+@@ -55,6 +55,10 @@ namespace ps2recomp
+         void setResumeEntryTargets(const std::unordered_map<uint32_t, std::vector<uint32_t>> &resumeTargetsByOwner);
+         void setEmitInstructionComments(bool emitInstructionComments);
+         void setReporter(RecompilerReporter *reporter);
++        // The function entries a call to a fixed address reaches through
++        // g_ps2DirectCallTable, sorted; empty leaves every call to the
++        // dispatcher (Rogue Galaxy: added).
++        void setDirectCallTargets(std::vector<uint32_t> targets);
+ 
+         AnalysisResult collectInternalBranchTargets(const Function &function,
+                                                   const std::vector<Instruction> &instructions,
+@@ -68,6 +72,8 @@ namespace ps2recomp
+         std::unordered_map<uint32_t, std::vector<uint32_t>> m_resumeEntryTargetsByOwner;
+         const std::vector<Section>& m_sections;
+         BootstrapInfo m_bootstrapInfo;
++        std::vector<uint32_t> m_directCallTargets;
++        std::unordered_map<uint32_t, uint32_t> m_directCallIndex;
+         bool m_emitInstructionComments = true;
+         RecompilerReporter *m_reporter = nullptr;
+         std::string m_currentFunctionName;
+diff --git a/ps2xRecomp/include/ps2recomp/types.h b/ps2xRecomp/include/ps2recomp/types.h
+index 39adf9a..61e241a 100644
+--- a/ps2xRecomp/include/ps2recomp/types.h
++++ b/ps2xRecomp/include/ps2recomp/types.h
+@@ -184,6 +184,10 @@ namespace ps2recomp
+         bool patchSyscalls = false;
+         bool patchCop0 = true;
+         bool patchCache = true;
++        // Calls to fixed addresses read their function from a dense table of
++        // the image's function entries (Rogue Galaxy: added). Only for the
++        // image whose register_functions.cpp keeps the unrenamed globals.
++        bool directCallTable = false;
+         std::vector<std::string> skipFunctions;
+         std::unordered_map<uint32_t, std::string> patches;
+         std::vector<std::string> stubImplementations;
+diff --git a/ps2xRecomp/src/lib/code_generator.cpp b/ps2xRecomp/src/lib/code_generator.cpp
+index 2ea66a2..b87794b 100644
+--- a/ps2xRecomp/src/lib/code_generator.cpp
++++ b/ps2xRecomp/src/lib/code_generator.cpp
+@@ -161,6 +161,19 @@ namespace ps2recomp
+         m_reporter = reporter;
+     }
+ 
++    void CodeGenerator::setDirectCallTargets(std::vector<uint32_t> targets)
++    {
++        std::sort(targets.begin(), targets.end());
++        targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
++        m_directCallTargets = std::move(targets);
++        m_directCallIndex.clear();
++        m_directCallIndex.reserve(m_directCallTargets.size());
++        for (uint32_t i = 0; i < m_directCallTargets.size(); ++i)
++        {
++            m_directCallIndex.emplace(m_directCallTargets[i], i);
++        }
++    }
++
+     std::string CodeGenerator::getFunctionName(uint32_t address) const
+     {
+         auto it = m_renamedFunctions.find(address);
+diff --git a/ps2xRecomp/src/lib/config_manager.cpp b/ps2xRecomp/src/lib/config_manager.cpp
+index b6f382d..be92ad4 100644
+--- a/ps2xRecomp/src/lib/config_manager.cpp
++++ b/ps2xRecomp/src/lib/config_manager.cpp
+@@ -64,6 +64,7 @@ namespace ps2recomp
+             config.patchSyscalls = toml::find_or<bool>(general, "patch_syscalls", config.patchSyscalls);
+             config.patchCop0 = toml::find_or<bool>(general, "patch_cop0", config.patchCop0);
+             config.patchCache = toml::find_or<bool>(general, "patch_cache", config.patchCache);
++            config.directCallTable = toml::find_or<bool>(general, "direct_call_table", config.directCallTable);
+ 
+             if (general.contains("stubs") && general.at("stubs").is_array())
+             {
+@@ -274,6 +275,7 @@ namespace ps2recomp
+         general["patch_syscalls"] = config.patchSyscalls;
+         general["patch_cop0"] = config.patchCop0;
+         general["patch_cache"] = config.patchCache;
++        general["direct_call_table"] = config.directCallTable;
+         general["skip"] = config.skipFunctions;
+         general["stubs"] = config.stubImplementations;
+         data["general"] = general;
+diff --git a/ps2xRecomp/src/lib/control_flow_emitter.cpp b/ps2xRecomp/src/lib/control_flow_emitter.cpp
+index ce30206..b0f3a21 100644
+--- a/ps2xRecomp/src/lib/control_flow_emitter.cpp
++++ b/ps2xRecomp/src/lib/control_flow_emitter.cpp
+@@ -227,6 +227,19 @@ namespace ps2recomp
+     void ControlFlowEmitter::emitExternalJumpDispatch(uint32_t target, StaticBranchKind kind, std::string_view indent)
+     {
+         const bool isCall = kind == StaticBranchKind::Call;
++        if (isCall)
++        {
++            const auto indexIt = m_gen.m_directCallIndex.find(target);
++            if (indexIt != m_gen.m_directCallIndex.end())
++            {
++                m_ss << fmt::format(
++                    "{}if (!runtime->directGuestCall(rdram, ctx, g_ps2DirectCallTable[{}], 0x{:X}u, 0x{:X}u, 0x{:X}u)) {{\n",
++                    indent, indexIt->second, target, branchPc(), fallthroughPc());
++                m_ss << fmt::format("{}    return;\n", indent);
++                m_ss << fmt::format("{}}}\n", indent);
++                return;
++            }
++        }
+         emitRuntimeBranchDispatch(fmt::format("0x{:X}u", target),
+                                   branchPc(),
+                                   isCall ? fallthroughPc() : 0u,
+diff --git a/ps2xRecomp/src/lib/function_table_emitter.cpp b/ps2xRecomp/src/lib/function_table_emitter.cpp
+index 84d3850..368a432 100644
+--- a/ps2xRecomp/src/lib/function_table_emitter.cpp
++++ b/ps2xRecomp/src/lib/function_table_emitter.cpp
+@@ -173,6 +173,23 @@ namespace ps2recomp
+         ss << "extern const uint32_t g_ps2RecompiledFunctionTableSlotCount = " << std::dec << slotCount << "u;\n";
+         ss << "PS2Runtime::RecompiledFunction g_ps2RecompiledFunctionTable[" << std::dec << (slotCount == 0u ? 1u : slotCount) << "u] = {};\n\n";
+ 
++        if (!cg.m_directCallTargets.empty())
++        {
++            const size_t count = cg.m_directCallTargets.size();
++            ss << "// The function entries calls to fixed addresses reach, by the index\n";
++            ss << "// each call site was given (direct_call_table).\n";
++            ss << "PS2Runtime::RecompiledFunction g_ps2DirectCallTable[" << std::dec << count << "u] = {};\n";
++            ss << "namespace {\n";
++            ss << "constexpr uint32_t kDirectCallCount = " << std::dec << count << "u;\n";
++            ss << "const uint32_t kDirectCallTargets[" << count << "u] = {";
++            for (size_t i = 0; i < count; ++i)
++            {
++                ss << ((i % 8u) == 0u ? "\n    " : " ") << "0x" << std::hex << cg.m_directCallTargets[i] << std::dec << "u,";
++            }
++            ss << "\n};\n";
++            ss << "}\n\n";
++        }
++
+         ss << "namespace {\n";
+         ss << "struct GeneratedFunctionTableInitializer {\n";
+         ss << "    GeneratedFunctionTableInitializer() {\n";
+@@ -182,6 +199,17 @@ namespace ps2recomp
+             ss << "        g_ps2RecompiledFunctionTable[" << std::dec << slot << "] = " << name
+                << "; // 0x" << std::hex << address << std::dec << "\n";
+         }
++        if (!cg.m_directCallTargets.empty())
++        {
++            // Copied from the table above, so both hold the same functions.
++            ss << "        for (uint32_t i = 0; i < kDirectCallCount; ++i) {\n";
++            ss << "            const uint32_t address = kDirectCallTargets[i];\n";
++            ss << "            if (address >= g_ps2RecompiledFunctionTableBase && address < g_ps2RecompiledFunctionTableEnd) {\n";
++            ss << "                g_ps2DirectCallTable[i] = g_ps2RecompiledFunctionTable[(address - g_ps2RecompiledFunctionTableBase) >> 2];\n";
++            ss << "            }\n";
++            ss << "        }\n";
++            ss << "        PS2Runtime::setDirectCallTable(g_ps2DirectCallTable, kDirectCallTargets, kDirectCallCount);\n";
++        }
+         ss << "    }\n";
+         ss << "};\n";
+         ss << "static const GeneratedFunctionTableInitializer g_generatedFunctionTableInitializer;\n";
+diff --git a/ps2xRecomp/src/lib/ps2_recompiler.cpp b/ps2xRecomp/src/lib/ps2_recompiler.cpp
+index 54fdfcf..d1b9f18 100644
+--- a/ps2xRecomp/src/lib/ps2_recompiler.cpp
++++ b/ps2xRecomp/src/lib/ps2_recompiler.cpp
+@@ -1118,6 +1118,20 @@ namespace ps2recomp
+             if (m_codeGenerator)
+             {
+                 m_codeGenerator->setRenamedFunctions(m_functionRenames);
++
++                std::vector<uint32_t> directCallTargets;
++                if (m_config.directCallTable)
++                {
++                    directCallTargets.reserve(m_functionRenames.size());
++                    for (const auto &[address, name] : m_functionRenames)
++                    {
++                        if ((address & 3u) == 0u)
++                        {
++                            directCallTargets.push_back(address);
++                        }
++                    }
++                }
++                m_codeGenerator->setDirectCallTargets(std::move(directCallTargets));
+             }
+ 
+             if (m_bootstrapInfo.valid && m_codeGenerator)
+diff --git a/ps2xRuntime/include/ps2_runtime.h b/ps2xRuntime/include/ps2_runtime.h
+index 0615393..d915c7b 100644
+--- a/ps2xRuntime/include/ps2_runtime.h
++++ b/ps2xRuntime/include/ps2_runtime.h
+@@ -375,6 +375,23 @@ public:
+     // Passing nullptr removes the resolver.
+     static void setFunctionRegionResolver(FunctionRegionResolver resolver, void *userData);
+ 
++    // The calls to fixed addresses of an image recompiled with
++    // direct_call_table (Rogue Galaxy: added). Its register_functions.cpp
++    // fills a dense copy of the table holding only function entries, sorted
++    // by address in `targets`, and registers it here so replaceFunction keeps
++    // both in step. Each call site reads its function from that copy with an
++    // index fixed at recompile time and comes to directGuestCall: what
++    // dispatchGuestBranch does for a DirectCall, without the lookup in the
++    // table of every instruction (7 MB, a cache miss per call; 14% of the
++    // game thread at Rogue Galaxy's first boss went to the dispatcher).
++    static void setDirectCallTable(RecompiledFunction *table, const uint32_t *targets, uint32_t count);
++    bool directGuestCall(uint8_t *rdram,
++                         R5900Context *ctx,
++                         RecompiledFunction fn,
++                         uint32_t targetPc,
++                         uint32_t sourcePc,
++                         uint32_t fallthroughPc);
++
+     bool replaceFunction(uint32_t address, RecompiledFunction func);
+     // TODO remove this later need to update all tests
+     bool registerFunction(uint32_t address, RecompiledFunction func);
+@@ -611,5 +628,7 @@ extern const uint32_t g_ps2RecompiledFunctionTableBase;
+ extern const uint32_t g_ps2RecompiledFunctionTableEnd;
+ extern const uint32_t g_ps2RecompiledFunctionTableSlotCount;
+ extern PS2Runtime::RecompiledFunction g_ps2RecompiledFunctionTable[];
++// Only in an image recompiled with direct_call_table (Rogue Galaxy: added).
++extern PS2Runtime::RecompiledFunction g_ps2DirectCallTable[];
+ 
+ #endif // PS2_RUNTIME_H
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index b5472de..59fbce1 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -1170,6 +1170,20 @@ namespace
+     }
+ }
+ 
++namespace
++{
++    PS2Runtime::RecompiledFunction *g_directCallTable = nullptr;
++    const uint32_t *g_directCallTargets = nullptr;
++    uint32_t g_directCallCount = 0u;
++}
++
++void PS2Runtime::setDirectCallTable(RecompiledFunction *table, const uint32_t *targets, uint32_t count)
++{
++    g_directCallTable = table;
++    g_directCallTargets = targets;
++    g_directCallCount = table && targets ? count : 0u;
++}
++
+ void PS2Runtime::setFunctionRegionResolver(FunctionRegionResolver resolver, void *userData)
+ {
+     g_functionRegionResolverUserData.store(userData, std::memory_order_release);
+@@ -1190,6 +1204,15 @@ bool PS2Runtime::replaceFunction(uint32_t address, RecompiledFunction func)
+     }
+ 
+     *slot = func;
++    if (g_directCallCount != 0u)
++    {
++        const uint32_t *end = g_directCallTargets + g_directCallCount;
++        const uint32_t *it = std::lower_bound(g_directCallTargets, end, address);
++        if (it != end && *it == address)
++        {
++            g_directCallTable[it - g_directCallTargets] = func;
++        }
++    }
+     return true;
+ }
+ 
+@@ -1544,6 +1567,47 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+     return ctx->pc == fallthroughPc;
+ }
+ 
++bool PS2Runtime::directGuestCall(uint8_t *rdram,
++                                 R5900Context *ctx,
++                                 RecompiledFunction fn,
++                                 uint32_t targetPc,
++                                 uint32_t sourcePc,
++                                 uint32_t fallthroughPc)
++{
++    if (!fn)
++    {
++        // Missing: the dispatcher reports it and applies the policy.
++        return dispatchGuestBranch(rdram, ctx, targetPc, sourcePc, fallthroughPc,
++                                   GuestBranchKind::DirectCall, "JAL");
++    }
++
++    // The rest is dispatchGuestBranch's call path; see the reasons there.
++    ctx->pc = targetPc;
++    if (m_eeScheduler && m_eeScheduler->checkpointDue(EeScheduler::kGuestDispatchCycles))
++    {
++        m_eeScheduler->noteGuestUnwind();
++        return false;
++    }
++
++    pushDispatchPc(targetPc);
++    const uint32_t entrySp = static_cast<uint32_t>(_mm_extract_epi32(ctx->r[29], 0));
++    const uint64_t unwindSerial = m_eeScheduler ? m_eeScheduler->guestUnwindSerial() : 0u;
++    fn(rdram, ctx, this);
++
++    if (isStopRequested() || ctx->pc == 0u)
++    {
++        return false;
++    }
++
++    if (ctx->pc == targetPc && static_cast<uint32_t>(_mm_extract_epi32(ctx->r[29], 0)) == entrySp &&
++        !(m_eeScheduler && m_eeScheduler->guestUnwoundSince(unwindSerial)))
++    {
++        ctx->pc = fallthroughPc;
++    }
++
++    return ctx->pc == fallthroughPc;
++}
++
+ void PS2Runtime::SignalException(R5900Context *ctx, PS2Exception exception)
+ {
+     if (exception == EXCEPTION_INTEGER_OVERFLOW)

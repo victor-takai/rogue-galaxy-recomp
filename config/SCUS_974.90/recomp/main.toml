@@ -14,6 +14,11 @@ patch_syscalls = false
 patch_cop0 = true
 patch_cache = true
 
+# Calls to fixed addresses read their function from a dense table of this
+# image's function entries instead of the dispatcher's lookup (patch 0030).
+# Main executable only: the overlays' tables are renamed globals.
+direct_call_table = true
+
 # SDK functions the runtime implements, as handler@address. Map names carry
 # their address, so nothing binds by name alone: this list is the whole set.
 #
