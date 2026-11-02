@@ -28,9 +28,11 @@
 // pieces no recording holds (the ramp and swell Fs, the point-light Cs, the
 // depth-only affine D, the float-skinning Bs, the untextured float-color D) are written from the code and checked against the interpreter
 // only (docs/VU1-NATIVE.md, "Pieces written from the code alone"); their
-// program names say "unverified". Not done, so left to the VU1 chunk by
-// chunk: clipping (slot E) where the GPU does not clip, the paths no
-// recording took, and the pieces nothing reached.
+// program names say "unverified". So are the triangle lists of the backface
+// D pieces and of the projected texture, and the shadow skinning's four
+// bones. Not done, so left to the VU1 chunk by chunk: clipping (slot E)
+// where the GPU does not clip, 87.y & 0x100 in the vertex-color Cs, lists
+// not of whole triangles, and the pieces nothing reached.
 //
 // The arithmetic per vertex is the runtime's (gsNativeMeshPoint in
 // runtime/gs/gs_types.h), whichever way a chunk goes out.

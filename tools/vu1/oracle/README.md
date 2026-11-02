@@ -54,7 +54,11 @@ instead of the recorded kicks. With `--candidate native` that checks a
 native piece against the VU1 on real vertices without a scene that runs it.
 `--synth-floats` turns each chunk's int16 positions, normals and UVs into the
 floats B would have made (`--synth-float-colors`: the colors too), for pieces
-that take floats. `tools/vu1/ssa.py` runs the code symbolically (named temporaries) to read
+that take floats. `--synth-list` makes each chunk a triangle list (PRIM
+type 3 in TOP.x, the count in TOP.y and the tag's NLOOP in TOP.z cut to
+whole triangles), for the list paths of the pieces that have their own;
+`--synth-bones ENTRY` enters the skinning B at ENTRY pairs (76.z set,
+TOP+1.w) with each vertex's weights widened to four bones. `tools/vu1/ssa.py` runs the code symbolically (named temporaries) to read
 what a pipelined piece computes.
 
 ## The first recording (2026-10-28)

@@ -352,6 +352,13 @@ struct Options
     // --synth-floats: each chunk's int16 positions, normals and UVs turned into the floats B would have made.
     bool floats = false;
     bool floatColors = false; // --synth-float-colors: the colors section as floats (int16 / 32768 * 256)
+    // --synth-bones ENTRY: each chunk enters the skinning B at ENTRY pairs
+    // (76.z set, TOP+1.w), its weights section widened to four bones (the
+    // bones it had, repeated, weighted 100, 70, 55, 30 / 255).
+    int32_t bonesEntry = -1;
+    // --synth-list: each chunk drawn as a triangle list (TOP.x's PRIM type
+    // 3), its count (TOP.y, and NLOOP in TOP.z) cut to whole triangles.
+    bool list = false;
     struct CodePatch
     {
         std::string file;
@@ -417,6 +424,16 @@ bool parse(int argc, char **argv, Options &options)
         {
             options.floatColors = true;
             options.floats = true;
+            options.synth = true;
+        }
+        else if (arg == "--synth-bones" && hasValue)
+        {
+            options.bonesEntry = static_cast<int32_t>(std::strtol(argv[++i], nullptr, 0));
+            options.synth = true;
+        }
+        else if (arg == "--synth-list")
+        {
+            options.list = true;
             options.synth = true;
         }
         else if (arg == "--synth-floats")
@@ -563,6 +580,63 @@ int main(int argc, char **argv)
         for (const Options::QuadPoke &poke : options.pokes)
             if (!options.filtered || run.programHash == options.programHash)
                 std::memcpy(run.data.data() + poke.quad * 16u, poke.value, 16u);
+    if (options.bonesEntry >= 0)
+    {
+        for (Run &run : recording.runs)
+        {
+            if (options.filtered && run.programHash != options.programHash)
+                continue;
+            auto word = [&](uint32_t q, uint32_t lane) -> uint32_t {
+                uint32_t v;
+                std::memcpy(&v, run.data.data() + (q & 1023u) * 16u + lane * 4u, 4u);
+                return v;
+            };
+            auto set = [&](uint32_t q, uint32_t lane, uint32_t v) {
+                std::memcpy(run.data.data() + (q & 1023u) * 16u + lane * 4u, &v, 4u);
+            };
+            const uint32_t top = run.header.top;
+            const uint32_t had = (word(76u, 2) & 0xFFFFu) != 0u ? word(top + 1u, 3) & 0xFFFFu : 0u;
+            set(76u, 2, 1u);
+            if (!(run.header.flags & replay::kRunResume))
+                continue;
+            set(top + 1u, 3, static_cast<uint32_t>(options.bonesEntry));
+            const uint32_t count = word(top, 1) & 0xFFFFu;
+            const uint32_t weights = top + 2u + (word(top + 1u, 2) & 0xFFFFu);
+            static constexpr uint32_t kWeights[4] = {100u, 70u, 55u, 30u};
+            for (uint32_t k = 0; k < count; ++k)
+            {
+                const uint32_t q = weights + 2u * k;
+                const uint32_t a = word(q, 0) & 0xFFFFu, b = had != 0u ? word(q, 1) & 0xFFFFu : a;
+                const uint32_t index[4] = {a, b, b, a};
+                for (uint32_t i = 0; i < 4u; ++i)
+                {
+                    set(q, i, (word(q, i) & 0xFFFF0000u) | index[i]);
+                    set(q + 1u, i, kWeights[i]);
+                }
+            }
+        }
+    }
+    if (options.list)
+    {
+        for (Run &run : recording.runs)
+        {
+            if (!(run.header.flags & replay::kRunResume) || (options.filtered && run.programHash != options.programHash))
+                continue;
+            uint8_t *top = run.data.data() + (run.header.top & 1023u) * 16u;
+            uint32_t prim, count;
+            std::memcpy(&prim, top, 4u);
+            std::memcpy(&count, top + 4u, 4u);
+            prim = (prim & ~7u) | 3u;
+            count = (count & 0xFFFF0000u) | ((count & 0xFFFFu) / 3u * 3u);
+            // TOP.z is the GIF tag's word: NLOOP the count, EOP above it.
+            uint32_t tag;
+            std::memcpy(&tag, top + 8u, 4u);
+            tag = (tag & ~0x7FFFu) | (count & 0xFFFFu);
+            std::memcpy(top, &prim, 4u);
+            std::memcpy(top + 4u, &count, 4u);
+            std::memcpy(top + 8u, &tag, 4u);
+        }
+    }
     if (options.floats)
     {
         for (Run &run : recording.runs)

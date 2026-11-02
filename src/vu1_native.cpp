@@ -127,8 +127,9 @@ constexpr UvPiece kUvs[] = {
 // The B pieces. A calls B at 0x960, or with quad 76.z set at 0x960 plus
 // the chunk's TOP+1.w pairs: af62ff64 has the one entry; 26a933a5 has four,
 // 0 one bone, 2 two bones, 4 and 6 four (skin()).
-// 542b235c (the outlines') has the first two, its one-bone path positions
-// only.
+// 542b235c (the outlines' and the shadow volumes') has the same four, its
+// one-bone path positions only; its four-bone path (0x9b0, the skinned
+// shadow volumes' 4 and 6) skins as 26a933a5's and only scales the normals.
 struct DecodePiece
 {
     Piece b;
@@ -140,7 +141,7 @@ struct DecodePiece
 constexpr DecodePiece kDecodes[] = {
     {{0x0960u, 0x0a38u, 0xaf62ff64ac67b45full}, Decode::Plain, 0},
     {{0x0960u, 0x1020u, 0x26a933a58f99a9daull}, Decode::Skinned, 4},
-    {{0x0960u, 0x0f30u, 0x542b235c4775a710ull}, Decode::Skinned, 2},
+    {{0x0960u, 0x0f30u, 0x542b235c4775a710ull}, Decode::Skinned, 4},
     // Positions only, one entry (a shadow volume B).
     {{0x0960u, 0x09e0u, 0xa293001f25f94532ull}, Decode::Plain, 0},
     // UNVERIFIED (nothing was seen to run them): skinning of positions (and
@@ -1549,6 +1550,12 @@ void buildProjector(const Program &program, const VuData &vu, uint32_t top,
     // The two vertices before (scaled z), and whether each is outside.
     float before[2][3] = {};
     bool outBefore[2] = {outside(before[0]), outside(before[1])};
+    // A triangle list goes through C's own path: each triangle judged once,
+    // at its last vertex, from its three vertices' guard band (each with its
+    // z unscaled) and its facing with the first triangle's sign throughout;
+    // only that vertex's XYZF2 word w is cut to its low half and ADC.
+    const bool list = (vu.half(top, 0) & 7u) == 3u;
+    bool rawBefore[2] = {false, false};
     for (uint32_t j = 0; j < count; ++j)
     {
         float position[3];
@@ -1564,21 +1571,33 @@ void buildProjector(const Program &program, const VuData &vu, uint32_t top,
         const float f = std::fmax(std::fmin(fog.x * 1.0f + fog.w * c.w, fog.y), fog.z);
         const float ax = before[1][0] - before[0][0], ay = before[1][1] - before[0][1];
         const float bx = scaled[0] - before[1][0], by = scaled[1] - before[1][1];
-        if (j != 0u)
+        if (j != 0u && !list)
         {
             winding = 0.0f - winding;
         }
         const float facing = (ax * by - bx * ay) * winding;
-        const bool hidden = outside(raw) || outBefore[0] || outBefore[1] || facing > 0.0f;
+        const bool rawOut = outside(raw);
         const uint32_t fogWord = static_cast<uint32_t>(gsNativeFtoi(f, 16.0f));
-        const uint32_t low = j == 0u ? static_cast<uint32_t>(vu.word(output + 2u, 3)) : fogWord;
-        const uint32_t w = (low & 0xFFFFu) | (hidden ? 0x8000u : 0u);
+        uint32_t w;
+        if (list)
+        {
+            const bool hidden = j % 3u == 2u && (rawOut || rawBefore[0] || rawBefore[1] || facing > 0.0f);
+            w = j % 3u != 2u ? fogWord : (fogWord & 0xFFFFu) | (hidden ? 0x8000u : 0u);
+        }
+        else
+        {
+            const bool hidden = rawOut || outBefore[0] || outBefore[1] || facing > 0.0f;
+            const uint32_t low = j == 0u ? static_cast<uint32_t>(vu.word(output + 2u, 3)) : fogWord;
+            w = (low & 0xFFFFu) | (hidden ? 0x8000u : 0u);
+        }
         const float stq[4] = {u * q, v * q, 1.0f * q, 0.0f};
         putQuad(packet, stq);
         putQuad(packet, rgba);
         putWords(packet, static_cast<uint32_t>(gsNativeFtoi(scaled[0], 16.0f)),
                  static_cast<uint32_t>(gsNativeFtoi(scaled[1], 16.0f)),
                  static_cast<uint32_t>(gsNativeFtoi(scaled[2], 16.0f)), w);
+        rawBefore[0] = rawBefore[1];
+        rawBefore[1] = rawOut;
         std::memcpy(before[0], before[1], sizeof(before[0]));
         std::memcpy(before[1], scaled, sizeof(scaled));
         outBefore[0] = outBefore[1];
@@ -1876,19 +1895,24 @@ const char *declineChunk(const Program &program, const uint8_t *data, uint32_t t
     {
         if ((vu.half(81, 0) & 2u) && !clips)
             return "clipping (slot E)";
-        if ((vu.half(top, 0) & 7u) == 3u)
-            return "triangle list (C's own path)";
+        // C's list path loops until it has written exactly the count's
+        // vertices.
+        if ((vu.half(top, 0) & 7u) == 3u && vu.half(top, 1) % 3u != 0u)
+            return "triangle list not of whole triangles (C's own path)";
         return vu.half(top, 1) == 0u ? "no vertices" : nullptr;
     }
     if ((vu.half(81, 0) & 2u) && !clips && program.uv != Uv::Beam)
         return "clipping (slot E)";
-    // PRIM from the chunk header. Only the backface piece reads it, with a
-    // path of its own for triangle lists; the others run lists through
-    // their strip code, whose ADC window of three vertices lands on each
-    // triangle.
+    // PRIM from the chunk header. Only the backface pieces read it, with a
+    // path of their own for triangle lists (a triangle at a time, its ADC on
+    // its last vertex, the facing sign not alternating), which loops until
+    // it has written exactly the count's vertices: another count would run
+    // past the end. The others run lists through their strip code, whose
+    // ADC window of three vertices lands on each triangle.
     const uint32_t primType = vu.half(top, 0) & 7u;
-    if (primType == 3u && program.cull == Cull::GuardBandAndBackface)
-        return "triangle list (D's own path)";
+    if (primType == 3u && program.cull == Cull::GuardBandAndBackface &&
+        (vu.half(top, 1) == 0u || vu.half(top, 1) % 3u != 0u))
+        return "triangle list not of whole triangles (D's own path)";
     if (primType != 3u && primType != 4u)
         return "neither strip nor triangle list";
     const uint32_t flags = vu.half(87, 1);
@@ -2085,16 +2109,20 @@ void buildChunk(const Program &program, const uint8_t *data, uint32_t top,
         // The culling pieces clear the clip flags, then set each vertex's
         // ADC from the last three judgments: the first vertex's from its
         // own. (It never draws; it is in the packet.)
-        if (count != 0u && points[0].outside)
+        // The backface pieces' list path judges each triangle once, at its
+        // last vertex, with the sign the strips' first triangle has.
+        const bool lists = mesh.header.triangleList && mesh.header.backface;
+        if (count != 0u && points[0].outside && !lists)
         {
             const uint32_t w = (static_cast<uint32_t>(points[0].f16) & 0xFFFFu) | 0x8000u;
             std::memcpy(packet.data() + 64u + 2u * 16u + 12u, &w, 4u);
         }
-        float winding = mesh.header.winding;
+        float winding = lists ? -mesh.header.winding : mesh.header.winding;
         for (uint32_t k = 1; k < count; ++k)
         {
-            const bool skip = gsNativeMeshSkips(mesh.header, points.data(), k, winding);
-            winding = -winding;
+            const bool skip = (!lists || k % 3u == 2u) && gsNativeMeshSkips(mesh.header, points.data(), k, winding);
+            if (!lists)
+                winding = -winding;
             const uint32_t w = (static_cast<uint32_t>(points[k].f16) & 0xFFFFu) | (skip ? 0x8000u : 0u);
             std::memcpy(packet.data() + 64u + (k * 3u + 2u) * 16u + 12u, &w, 4u);
         }
