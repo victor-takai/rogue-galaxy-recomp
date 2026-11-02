@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <emmintrin.h>
 #include <xmmintrin.h>
 
 #include "native_renderer.h"
@@ -95,17 +96,47 @@ float in(float value)
     return value;
 }
 
-// normalizeResult, without the flags.
-float out(float value)
-{
-    return in(value);
-}
-
 // Destination masks, as the VU's dest field: x is the highest bit.
 constexpr int X = 8, Y = 4, Z = 2, W = 1;
 constexpr int XY = X | Y, XYZ = X | Y | Z, XYZW = 15, YZW = Y | Z | W, XZW = X | Z | W, XYW = X | Y | W,
               YW = Y | W, ZW = Z | W, XZ = X | Z;
 constexpr int kX = 0, kY = 1, kZ = 2, kW = 3;
+
+#if defined(_MSC_VER)
+#define RG_VU0_INLINE __forceinline
+#else
+#define RG_VU0_INLINE inline __attribute__((always_inline))
+#endif
+
+// The same normalization on four lanes at once. The helpers below work on
+// whole registers with SSE (Rogue Galaxy: they were per-lane loops the
+// compiler left as calls, 5% of the game thread at the first boss); each
+// lane's arithmetic is still one IEEE add, subtract or multiply under the
+// rounding MXCSR holds, so the results are the scalar ones bit for bit
+// (rg_vu0_check).
+RG_VU0_INLINE __m128 inV(__m128 value)
+{
+    const __m128i bits = _mm_castps_si128(value);
+    const __m128i sign = _mm_and_si128(bits, _mm_set1_epi32(static_cast<int>(0x80000000u)));
+    const __m128i exponent = _mm_and_si128(bits, _mm_set1_epi32(0x7F800000));
+    const __m128i zeroExponent = _mm_cmpeq_epi32(exponent, _mm_setzero_si128());
+    const __m128i fullExponent = _mm_cmpeq_epi32(exponent, _mm_set1_epi32(0x7F800000));
+    const __m128i largest = _mm_or_si128(sign, _mm_set1_epi32(0x7F7FFFFF));
+    __m128i r = _mm_or_si128(_mm_andnot_si128(zeroExponent, bits), _mm_and_si128(zeroExponent, sign));
+    r = _mm_or_si128(_mm_andnot_si128(fullExponent, r), _mm_and_si128(fullExponent, largest));
+    return _mm_castsi128_ps(r);
+}
+
+RG_VU0_INLINE __m128 load(const float *v)
+{
+    return inV(_mm_loadu_ps(v));
+}
+
+// t's lane bc on every lane, or t itself (bc < 0).
+RG_VU0_INLINE __m128 loadBc(const float *t, int bc)
+{
+    return bc < 0 ? load(t) : inV(_mm_set1_ps(t[bc]));
+}
 
 struct Vu
 {
@@ -115,87 +146,65 @@ struct Vu
     uint16_t vi[16];
 
     // Writes the lanes of `mask` (vf0 is never written: it stays 0, 0, 0, 1).
-    void put(float *dst, int mask, const float r[4], bool normalize = true)
+    RG_VU0_INLINE void put(float *dst, int mask, __m128 r, bool normalize = true)
     {
         if (dst == vf[0])
             return;
-        for (int c = 0; c < 4; ++c)
-            if (mask & (8 >> c))
-                dst[c] = normalize ? out(r[c]) : r[c];
+        if (normalize)
+            r = inV(r);
+        const __m128i lanes = _mm_setr_epi32((mask & 8) ? -1 : 0, (mask & 4) ? -1 : 0, (mask & 2) ? -1 : 0,
+                                             (mask & 1) ? -1 : 0);
+        const __m128 keep = _mm_castsi128_ps(lanes);
+        _mm_storeu_ps(dst, _mm_or_ps(_mm_and_ps(keep, r), _mm_andnot_ps(keep, _mm_loadu_ps(dst))));
     }
     // d = s + t[bc], or s + t lane by lane (bc < 0).
-    void add(float *d, int mask, const float *s, const float *t, int bc = -1)
+    RG_VU0_INLINE void add(float *d, int mask, const float *s, const float *t, int bc = -1)
     {
-        float r[4];
-        for (int c = 0; c < 4; ++c)
-            r[c] = in(s[c]) + in(t[bc < 0 ? c : bc]);
-        put(d, mask, r);
+        put(d, mask, _mm_add_ps(load(s), loadBc(t, bc)));
     }
-    void sub(float *d, int mask, const float *s, const float *t, int bc)
+    RG_VU0_INLINE void sub(float *d, int mask, const float *s, const float *t, int bc)
     {
-        float r[4];
-        for (int c = 0; c < 4; ++c)
-            r[c] = in(s[c]) - in(t[bc]);
-        put(d, mask, r);
+        put(d, mask, _mm_sub_ps(load(s), loadBc(t, bc)));
     }
-    void subI(float *d, int mask, const float *s)
+    RG_VU0_INLINE void subI(float *d, int mask, const float *s)
     {
-        float r[4];
-        for (int c = 0; c < 4; ++c)
-            r[c] = in(s[c]) - in(i);
-        put(d, mask, r);
+        put(d, mask, _mm_sub_ps(load(s), inV(_mm_set1_ps(i))));
     }
-    void mul(float *d, int mask, const float *s, const float *t, int bc = -1)
+    RG_VU0_INLINE void mul(float *d, int mask, const float *s, const float *t, int bc = -1)
     {
-        float r[4];
-        for (int c = 0; c < 4; ++c)
-            r[c] = in(s[c]) * in(t[bc < 0 ? c : bc]);
-        put(d, mask, r);
+        put(d, mask, _mm_mul_ps(load(s), loadBc(t, bc)));
     }
-    void mulI(float *d, int mask, const float *s)
+    RG_VU0_INLINE void mulI(float *d, int mask, const float *s)
     {
-        float r[4];
-        for (int c = 0; c < 4; ++c)
-            r[c] = in(s[c]) * in(i);
-        put(d, mask, r);
+        put(d, mask, _mm_mul_ps(load(s), inV(_mm_set1_ps(i))));
     }
     // ACC = s * t (MULA), ACC + s * t (MADDA), ACC - s * t (MSUBA); into d
-    // instead of ACC for MADD and MSUB.
-    void productSum(float *d, int mask, const float *s, float t, int c, int sign, float r[4])
+    // instead of ACC for MADD and MSUB. The product is rounded before the
+    // sum, as on the VU.
+    RG_VU0_INLINE __m128 productSum(const float *s, __m128 t, int sign)
     {
-        (void)d;
-        (void)mask;
-        const float product = in(s[c]) * t;
-        r[c] = sign == 0 ? product : sign > 0 ? in(acc[c]) + product : in(acc[c]) - product;
+        const __m128 product = _mm_mul_ps(load(s), t);
+        if (sign == 0)
+            return product;
+        return sign > 0 ? _mm_add_ps(load(acc), product) : _mm_sub_ps(load(acc), product);
     }
-    void fma(float *d, int mask, const float *s, const float *t, int bc, int sign)
+    RG_VU0_INLINE void fma(float *d, int mask, const float *s, const float *t, int bc, int sign)
     {
-        float r[4];
-        for (int c = 0; c < 4; ++c)
-            productSum(d, mask, s, in(t[bc < 0 ? c : bc]), c, sign, r);
-        put(d, mask, r);
+        put(d, mask, productSum(s, loadBc(t, bc), sign));
     }
-    void fmaI(float *d, int mask, const float *s, int sign)
+    RG_VU0_INLINE void fmaI(float *d, int mask, const float *s, int sign)
     {
-        float r[4];
-        for (int c = 0; c < 4; ++c)
-            productSum(d, mask, s, in(i), c, sign, r);
-        put(d, mask, r);
+        put(d, mask, productSum(s, inV(_mm_set1_ps(i)), sign));
     }
-    void abs(float *d, int mask, const float *s)
+    RG_VU0_INLINE void abs(float *d, int mask, const float *s)
     {
-        float r[4];
-        for (int c = 0; c < 4; ++c)
-            r[c] = std::fabs(in(s[c]));
-        put(d, mask, r, false);
+        put(d, mask, _mm_and_ps(load(s), _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF))), false);
     }
-    void max(float *d, int mask, const float *s, const float *t, int bc)
+    // s > b ? s : b on each lane: MAXPS returns its second operand unless
+    // the first is greater.
+    RG_VU0_INLINE void max(float *d, int mask, const float *s, const float *t, int bc)
     {
-        float r[4];
-        const float b = in(t[bc]);
-        for (int c = 0; c < 4; ++c)
-            r[c] = in(s[c]) > b ? in(s[c]) : b;
-        put(d, mask, r, false);
+        put(d, mask, _mm_max_ps(load(s), inV(_mm_set1_ps(t[bc]))), false);
     }
 };
 
