@@ -357,3 +357,23 @@ In the game, the last 25 s of the walk in the 60 fps mode
   is skipped; check mode compares it (`memoryEffectsMatch`).
 - **Commands over SSH run in zsh** on the build machine: `set -- $pair`
   does not split, and an empty argument vanishes. Wrap loops in `bash -c`.
+
+## VU0 (2026-11-01)
+
+The game runs one VU0 micro program, at entry 0, from two places only
+(`vcallms 0` in `MatFromSRTVu0` 0x13bc90 and `MatRotateVu0` 0x13bc20). The
+main executable uploads it by VIF0 with two other pieces nothing calls:
+pairs 0-111 (file offset 0x3459a0), 200-219 and 300-358. It builds a matrix
+in vf4-vf7 from scale vf1, angles vf2 and translation vf3: it adds vf2 into
+vf0 for the zero flags alone and skips the rotations whose angles are zero
+(all three, x and y, or z), with sine and cosine from a polynomial after a
+range reduction. At the boss it was 16% of a core on the game thread under
+deck mode at 1x, as compiled blocks.
+
+`src/vu0_native.cpp` is it written from the code, pair by pair, with the
+interpreter's operand and result rules in round-toward-zero; no recording
+was taken. `rg_vu0_check` (tools/vu1/oracle/vu0_check.cpp) runs it and the
+VU0 on 100,000 synthetic inputs (zero and minus-zero angles a quarter of the
+time, so every branch runs): every vf register, ACC, I and vi1-vi4 match bit
+for bit. The MAC, status and clip flags are not reproduced; neither caller
+reads them.

@@ -1,0 +1,39 @@
+--- a/ps2xRuntime/include/ps2_runtime.h
++++ b/ps2xRuntime/include/ps2_runtime.h
+@@ -409,6 +409,14 @@
+     void executeVU0Microprogram(uint8_t *rdram, R5900Context *ctx, uint32_t address);
+     void vu0StartMicroProgram(uint8_t *rdram, R5900Context *ctx, uint32_t address);
+ 
++    // A game's own version of a VU0 micro program (Rogue Galaxy: added):
++    // asked first with the context, VU0 code and data memory, the start PC
++    // and the code memory's generation; true when it ran the program on the
++    // context's VU0 registers itself, false to leave it to the VU0.
++    using Vu0MicroHook = bool (*)(R5900Context *ctx, uint8_t *code, uint8_t *data, uint32_t startPC,
++                                  uint64_t generation);
++    void setVu0MicroHook(Vu0MicroHook hook) { m_vu0MicroHook = hook; }
++
+ public:
+     void handleSyscall(uint8_t *rdram, R5900Context *ctx);
+     void handleSyscall(uint8_t *rdram, R5900Context *ctx, uint32_t encodedSyscallId);
+@@ -547,6 +555,7 @@
+     PS2AudioBackend m_audioBackend;
+     PSPadBackend m_padBackend;
+     VU1Interpreter m_vu0{VU1Interpreter::Unit::VU0};
++    Vu0MicroHook m_vu0MicroHook = nullptr;
+     VU1Interpreter m_vu1{VU1Interpreter::Unit::VU1};
+     R5900Context m_cpuContext;
+     std::unique_ptr<EeScheduler> m_eeScheduler;
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -1570,6 +1570,11 @@
+         return;
+     }
+ 
++    if (m_vu0MicroHook &&
++        m_vu0MicroHook(ctx, vu0Code, vu0Data, startPC, m_memory.getVU0CodeGeneration()))
++    {
++        return;
++    }
+     m_vu0.reset();
+     copyVu0ContextToState(ctx, m_vu0.state());
+     m_vu0.execute(vu0Code, PS2_VU0_CODE_SIZE,

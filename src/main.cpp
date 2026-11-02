@@ -51,6 +51,7 @@
 #include "step_fixes.h"
 #include "vif1_thread.h"
 #include "vu0_flags.h"
+#include "vu0_native.h"
 #include "ps2_runtime.h"
 #include "runtime/ps2_native_iop.h"
 
@@ -162,6 +163,7 @@ int run(int argc, char **argv)
     rg::steps::install(runtime);
     rg::libc::install(runtime);
     rg::vu0::install(runtime);
+    rg::vu0native::install(runtime);
     rg::movie::install(runtime);
     rg::loading::install(runtime);
     rg::widescreen::install(runtime);
