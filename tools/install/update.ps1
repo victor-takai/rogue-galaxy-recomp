@@ -42,6 +42,17 @@ $ZipFolder = "RogueGalaxy/"
 $CodeFolders = @("src", "patches", "config", "cmake", "tools", "docs", "debug", "thirdparty")
 # What the zip never holds and the update never writes.
 $NeverWrite = @("disc", "build", "toolchain", "mc0", "mc1", "textures")
+# The zip holds the framework as upstream has it, and the build applies
+# patches/ps2recomp to it (cmake/framework_patches.cmake), so on disk its
+# files are the patched ones. They are compared as the build will have them:
+# compared as the zip has them, every update wrote the patched files back,
+# the build applied the patches again, and the new dates rebuilt the
+# recompiler, the runtime and all the generated code (15 minutes for one
+# changed .cpp, 2026-11-03).
+$FrameworkFolder = "thirdparty\PS2Recomp\"
+$PatchFolder = "patches/ps2recomp/"
+# The patches the framework holds, one name a line (framework_patches.cmake).
+$PatchStamp = ".rg-patches-applied"
 
 function Write-Step([string]$Text) {
     Write-Host ""
@@ -85,8 +96,15 @@ function Compare-Versions([string]$Left, [string]$Right) {
     return 0
 }
 
+# This folder's game, if it runs. Another copy (a second install, a
+# developer's worktree) may go on running: it uses none of these files. One
+# whose path cannot be read counts, to be safe.
 function Get-RunningGame {
-    return @(Get-Process -Name "roguegalaxy", "Rogue Galaxy" -ErrorAction SilentlyContinue)
+    return @(Get-Process -Name "roguegalaxy", "Rogue Galaxy" -ErrorAction SilentlyContinue | Where-Object {
+        $path = $null
+        try { $path = $_.Path } catch { }
+        (-not $path) -or $path.StartsWith($Root + "\", [StringComparison]::OrdinalIgnoreCase)
+    })
 }
 
 # The newest release GitHub lists with a RogueGalaxy-<version>.zip: its tag
@@ -174,15 +192,107 @@ function Test-SameBytes([string]$Path, [byte[]]$Data) {
     }
 }
 
-# Writes the zip's files over $Root where their bytes differ. Returns the
-# zip's revision, the relative paths it holds (lower-case keys) and how many
-# files were written.
+# Writes $Data to $Relative under $Root unless the file there holds those
+# bytes already; true when it wrote.
+function Write-IfChanged([string]$Relative, [byte[]]$Data) {
+    $target = Join-Path $Root $Relative
+    if ((Test-Path -LiteralPath $target -PathType Leaf) -and (Test-SameBytes $target $Data)) { return $false }
+    $dir = Split-Path -Parent $target
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    [System.IO.File]::WriteAllBytes($target, $Data)
+    return $true
+}
+
+# The toolchain's git (Install.bat downloads it), or one on PATH.
+function Find-Git {
+    $own = Join-Path $Root "toolchain\git\cmd\git.exe"
+    if (Test-Path -LiteralPath $own) { return $own }
+    $onPath = @(Get-Command "git.exe" -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($onPath) { return $onPath.Path }
+    return ""
+}
+
+# The zip's framework with the zip's patches applied, in build\update, as
+# the build will have it: relative path (from $Root) -> bytes, the patch
+# stamp among them. $null when it cannot be made (no git, a patch that does
+# not apply); the zip's files are then written as they are, and the build
+# applies the patches again.
+function Get-PatchedFramework([System.IO.Compression.ZipArchive]$Archive) {
+    $git = Find-Git
+    if (-not $git) {
+        Write-Host "  no git found: the framework is written as the zip has it, and the build patches it again"
+        return $null
+    }
+    $prefix = $ZipFolder + $FrameworkFolder.Replace("\", "/")
+    $patchPrefix = $ZipFolder + $PatchFolder
+    # Inside the folder, whose path Install.bat keeps short, for the
+    # framework's deepest paths.
+    $stage = Join-Path $Root "build\update\framework"
+    $tree = Join-Path $stage "PS2Recomp"
+    $patchDir = Join-Path $stage "patches"
+    if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+    try {
+        New-Item -ItemType Directory -Force -Path $tree, $patchDir | Out-Null
+        $patches = @()
+        foreach ($entry in $Archive.Entries) {
+            if ($entry.FullName.EndsWith("/")) { continue }
+            if ($entry.FullName.StartsWith($prefix)) {
+                $target = Join-Path $tree $entry.FullName.Substring($prefix.Length).Replace("/", "\")
+                $dir = Split-Path -Parent $target
+                if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+                $data = Read-Entry $entry
+                [System.IO.File]::WriteAllBytes($target, $data)
+            } elseif ($entry.FullName.StartsWith($patchPrefix) -and $entry.Name.EndsWith(".patch") -and
+                      ($entry.FullName.Substring($patchPrefix.Length) -eq $entry.Name)) {
+                $data = Read-Entry $entry
+                [System.IO.File]::WriteAllBytes((Join-Path $patchDir $entry.Name), $data)
+                $patches += $entry.Name
+            }
+        }
+        # In the build's order: list(SORT), by name, byte by byte.
+        $names = [string[]]@($patches)
+        [Array]::Sort($names, [StringComparer]::Ordinal)
+        foreach ($name in $names) {
+            # Its messages are no error of this script's (Windows PowerShell
+            # turns a native program's stderr into errors when redirected).
+            $previous = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                & $git -C $tree apply (Join-Path $patchDir $name) 2>$null | Out-Null
+                $applied = ($LASTEXITCODE -eq 0)
+            } catch {
+                $applied = $false
+            } finally {
+                $ErrorActionPreference = $previous
+            }
+            if (-not $applied) {
+                Write-Host "  $name does not apply to the zip's framework: it is written as the zip has it, and the build patches it again"
+                return $null
+            }
+        }
+        $files = @{}
+        foreach ($file in @(Get-ChildItem -LiteralPath $tree -File -Recurse -Force)) {
+            $files[$FrameworkFolder + $file.FullName.Substring($tree.Length + 1)] = [System.IO.File]::ReadAllBytes($file.FullName)
+        }
+        # As CMake's file(APPEND) writes it on Windows: CRLF.
+        $stamp = ($names | ForEach-Object { "$_`r`n" }) -join ""
+        $files[$FrameworkFolder + $PatchStamp] = [System.Text.Encoding]::ASCII.GetBytes($stamp)
+        return $files
+    } finally {
+        if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+    }
+}
+
+# Writes the zip's files over $Root where their bytes differ (the framework's
+# as patched). Returns the zip's revision, the relative paths it holds
+# (lower-case keys) and how many files were written.
 function Apply-Zip([string]$ZipPath) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
     try {
         $revision = Get-ZipRevision $archive
         if (-not $revision) { Stop-Update "$ZipPath is not a release of this project: it holds no $($ZipFolder)REVISION." }
+        $framework = Get-PatchedFramework $archive
         $delivered = @{}
         $written = 0
         foreach ($entry in $archive.Entries) {
@@ -193,14 +303,17 @@ function Apply-Zip([string]$ZipPath) {
                 Stop-Update "$ZipPath holds a path outside the folder ($($entry.FullName)); not a release of this project."
             }
             if ($NeverWrite -contains $parts[0]) { continue }
+            # The framework's files come from the patched copy, below.
+            if ($framework -and $relative.StartsWith($FrameworkFolder, [StringComparison]::OrdinalIgnoreCase)) { continue }
             $delivered[$relative.ToLowerInvariant()] = $true
-            $target = Join-Path $Root $relative
             $data = Read-Entry $entry
-            if ((Test-Path -LiteralPath $target -PathType Leaf) -and (Test-SameBytes $target $data)) { continue }
-            $dir = Split-Path -Parent $target
-            if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-            [System.IO.File]::WriteAllBytes($target, $data)
-            $written++
+            if (Write-IfChanged $relative $data) { $written++ }
+        }
+        if ($framework) {
+            foreach ($relative in @($framework.Keys)) {
+                $delivered[$relative.ToLowerInvariant()] = $true
+                if (Write-IfChanged $relative $framework[$relative]) { $written++ }
+            }
         }
         return @{ Revision = $revision; Delivered = $delivered; Written = $written }
     } finally {
