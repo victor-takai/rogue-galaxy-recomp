@@ -112,6 +112,8 @@ chmod +x rogue-galaxy.sh
 here=$(pwd)
 apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mkdir -p "$apps"
+icons="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
+mkdir -p "$icons" && cp -f src/launcher/rogue-galaxy.png "$icons/rogue-galaxy.png"
 cat >"$apps/rogue-galaxy.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -120,6 +122,7 @@ Comment=Rogue Galaxy Recompiled
 Exec=$here/rogue-galaxy.sh
 Path=$here
 Terminal=false
+Icon=rogue-galaxy
 Categories=Game;
 EOF
 

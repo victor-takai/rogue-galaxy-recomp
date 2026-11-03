@@ -29,6 +29,8 @@ fi
 # The [gfx] line a second unless one is set already. The Vulkan layers are
 # left alone: gamescope's and Steam's overlay are among them.
 export DQ8_GFX_STATS_EVERY="${DQ8_GFX_STATS_EVERY:-60}"
+# The window's app id, so the desktop matches it to rogue-galaxy.desktop (icon).
+export SDL_APP_ID="${SDL_APP_ID:-rogue-galaxy}"
 
 [ -f build/last-run.log ] && cp -f build/last-run.log build/last-run.prev.log
 "$game" "$disc" "$@" >build/last-run.log 2>&1 </dev/null
