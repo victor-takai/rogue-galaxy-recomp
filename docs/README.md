@@ -31,6 +31,8 @@ What each page here is for, by who it is for. New to the project? Start with
   environment variables.
 - [HOOKS.md](HOOKS.md): writing hooks, the way changes to the game's
   behaviour go in.
+- [ADDING-OPTIONS.md](ADDING-OPTIONS.md): adding an option to the F1 menu
+  and the game's Settings screen, with a checklist.
 - [FINDING-THINGS.md](FINDING-THINGS.md): finding the code and data behind
   something in the game.
 - [MAPS.md](MAPS.md): the function maps the recompiler reads, and how they

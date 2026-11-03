@@ -158,7 +158,8 @@ AbilityModeRun ([STATUS.md](STATUS.md), "Two freezes after round four", and
 
 **Threads.** Guest code, and so every hook, runs on the game's thread. An
 option the menu changes reaches a hook through an atomic (`g_enabled` in
-`src/instant_text.cpp`).
+`src/instant_text.cpp`); [ADDING-OPTIONS.md](ADDING-OPTIONS.md) has the
+whole path of an option.
 
 **Check that it fires.** A temporary `std::fprintf(stderr, ...)` or counter
 in the hook, read in `build/last-run.log`, before relying on it.
