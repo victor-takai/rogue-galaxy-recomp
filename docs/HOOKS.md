@@ -1,5 +1,11 @@
 # Writing hooks
 
+**In short:** the game's code was translated into C++, one C++ function for
+each function of the game. A hook is a function of ours put in place of one
+of them, so the game runs ours when it calls that one. The options, the
+60 fps mode and widescreen all work that way. This page is for people who
+write C++ for the project.
+
 Changes to how the game behaves go into `src/` as hooks: host C++ functions
 that take the place of a game function. A change there only needs
 `cmake --build build/game` ([BUILDING.md](BUILDING.md#rebuilding-after-a-change)).
