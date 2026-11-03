@@ -150,6 +150,8 @@ See [docs/OPTIONS.md](docs/OPTIONS.md) for each one.
 ## More
 
 - [CHANGELOG.md](CHANGELOG.md): what each release brings, and its known issues
+- [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md): how the project works, in plain
+  words
 - [docs/OPTIONS.md](docs/OPTIONS.md): the menu and every game option
 - [docs/BUILDING.md](docs/BUILDING.md): building by hand, and the project's layout
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): the debug launchers, profiling and
@@ -157,6 +159,8 @@ See [docs/OPTIONS.md](docs/OPTIONS.md) for each one.
 - [docs/HOOKS.md](docs/HOOKS.md): writing hooks, the way changes to the game's
   behaviour go in
 - [docs/STATUS.md](docs/STATUS.md): how the work went, and what the game needs
+- [docs/FINDING-THINGS.md](docs/FINDING-THINGS.md): finding the code and data
+  behind something in the game
 
 ## Legal
 
