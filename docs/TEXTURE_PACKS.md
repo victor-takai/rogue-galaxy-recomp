@@ -8,8 +8,8 @@ share. Faces, portraits and painted icons look best as the game draws them;
 packs are for the pieces a pack's author wants to redraw.
 
 Packs are read above 1x (an internal scale of 2x or more). The menu's
-Textures page (F1 > Settings > Textures) has one switch for all of them
-and one for each pack found, which take effect at once.
+Textures page (F1 > Settings > Textures) has a switch for each pack found,
+which takes effect at once.
 
 ## Where packs go
 

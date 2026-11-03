@@ -33,8 +33,6 @@ namespace rg::texturePack
 // Before the game runs.
 void install(dq8::gfx::SdlGpuBackend &backend);
 
-void setEnabled(bool on);
-
 // The packs found, in the order they are read (a later one over an earlier
 // one): `key` names the pack's switch in the settings (texture_pack_KEY),
 // `enabled` is where it starts.
@@ -49,7 +47,7 @@ std::vector<PackInfo> packs();
 void setPackEnabled(const std::string &key, bool on);
 
 // What dq8-gfx kept of the answers goes, so the regions and textures are
-// asked about again (a pack or the packs switched).
+// asked about again (a pack switched).
 void refresh();
 
 } // namespace rg::texturePack

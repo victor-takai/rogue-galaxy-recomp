@@ -35,7 +35,6 @@ namespace rg::texturePack
 namespace
 {
 
-std::atomic<bool> g_enabled{true};
 dq8::gfx::SdlGpuBackend *g_backend = nullptr;
 
 // A region as the collected files name it.
@@ -678,18 +677,13 @@ void collect(const dq8::gfx::RegionRequest &request)
 // Whether the backend should hash the regions drawn with a palette at all.
 bool wanted(uint64_t)
 {
-    return !g_dumpDirectory.empty() ||
-           (g_enabled.load(std::memory_order_relaxed) && g_anyPicture.load(std::memory_order_relaxed));
+    return !g_dumpDirectory.empty() || g_anyPicture.load(std::memory_order_relaxed);
 }
 
 int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &height, std::vector<uint8_t> &rgba)
 {
     if (request.whole)
     {
-        if (!g_enabled.load(std::memory_order_relaxed))
-        {
-            return dq8::gfx::kRegionNone;
-        }
         // The texture's own palette first, else any one of its texels' pictures.
         const uint64_t key = regionKey(request.texels, request.clut, request.width, request.height);
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -723,7 +717,7 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
     {
         collect(request);
     }
-    if (!g_enabled.load(std::memory_order_relaxed) || request.border || request.shadow)
+    if (request.border || request.shadow)
     {
         return dq8::gfx::kRegionNone;
     }
@@ -765,12 +759,6 @@ void refresh()
     {
         g_backend->invalidateRegionReplacements();
     }
-}
-
-void setEnabled(bool on)
-{
-    g_enabled.store(on, std::memory_order_relaxed);
-    refresh();
 }
 
 std::vector<PackInfo> packs()

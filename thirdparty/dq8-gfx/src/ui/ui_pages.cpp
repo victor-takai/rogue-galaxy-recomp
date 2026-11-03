@@ -405,13 +405,16 @@ void Overlay::drawLanguagePage() {
 
 // The host's switches for packs of art (Rogue Galaxy: added).
 void Overlay::drawTexturesPage() {
-    drawGameOptions("textures", "The game has no texture options.", "Textures");
+    drawGameOptions("textures",
+                    "No texture packs found: put one (a folder or a .zip) in textures\\packs.\n"
+                    "They are drawn above 1x. The game ships none (docs\\TEXTURE_PACKS.md).",
+                    "Texture packs");
 }
 
 void Overlay::drawGameOptions(const std::string &page, const char *emptyText, const char *firstTitle) {
     if (std::none_of(m_host.gameOptions.begin(), m_host.gameOptions.end(),
                      [&](const GameOption &option) { return option.page == page; })) {
-        mutedText(emptyText);
+        mutedText("%s", emptyText);
         return;
     }
     bool started = false, table = false;

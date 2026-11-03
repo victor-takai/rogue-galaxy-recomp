@@ -227,8 +227,6 @@ void applyGameOption(const std::string &key, bool on)
         rg::loading::setInstantRecap(on);
     else if (key == "instant_text")
         rg::instanttext::setEnabled(on);
-    else if (key == "texture_packs")
-        rg::texturePack::setEnabled(on);
     else if (key.rfind("texture_pack_", 0) == 0)
         rg::texturePack::setPackEnabled(key.substr(13), on);
     else if (key == "japanese_voices")
@@ -615,12 +613,6 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "RB, LT and RT, as each button is bound in Controls. Off, or with a PlayStation or Nintendo controller "
          "or the keyboard, the game's PlayStation buttons.",
          true},
-        {"texture_packs", "Texture packs",
-         "Above 1x, the game's art is drawn from the larger versions in the packs under textures\\packs, where "
-         "they have it: the 2D art (icons, window pieces, menu pictures) and, from a pack made for PCSX2, the "
-         "scenery and the characters. The game ships none: packs are made from your own disc or come from "
-         "others (docs\\TEXTURE_PACKS.md).",
-         true},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},
         {"instant_loading_recap", "Show the loading recap at once",
@@ -704,31 +696,20 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "not let you skip, which can leave the story out of order.",
          false},
     };
-    // One switch for each pack found, under the one for them all.
+    // One switch for each pack found, on a page of their own in the menu (F1 > Textures).
+    for (const rg::texturePack::PackInfo &pack : rg::texturePack::packs())
     {
-        auto after = std::find_if(host.gameOptions.begin(), host.gameOptions.end(),
-                                  [](const dq8::ui::GameOption &option) { return option.key == "texture_packs"; });
-        for (const rg::texturePack::PackInfo &pack : rg::texturePack::packs())
-        {
-            after = host.gameOptions.insert(
-                        after + 1, {"texture_pack_" + pack.key, "Pack: " + pack.name,
-                                    "The pack's pictures (" + std::to_string(pack.regions) +
-                                        "). Packs are read by name, a later one over an earlier one, "
-                                        "textures\\hd first.",
-                                    pack.enabled});
-        }
-        // They have a page of their own in the menu (F1 > Textures).
-        for (dq8::ui::GameOption &option : host.gameOptions)
-        {
-            if (option.key.rfind("texture_pack", 0) == 0)
-            {
-                option.page = "textures";
-            }
-        }
+        dq8::ui::GameOption option{"texture_pack_" + pack.key, "Pack: " + pack.name,
+                                   "Above 1x, the game's art is drawn from this pack's " +
+                                       std::to_string(pack.regions) +
+                                       " pictures, where it has them. Packs are read by name, a later one over an "
+                                       "earlier one, textures\\hd first.",
+                                   pack.enabled};
+        option.page = "textures";
+        host.gameOptions.push_back(std::move(option));
     }
     host.gameSections = {
         {"sixty_fps", "Camera and view"},
-        {"texture_packs", "Texture packs"},
         {"skip_opening", "Convenience"},
         {"encounter_rate", "Battles and rewards"},
         {"native_renderer", "Rendering"},
