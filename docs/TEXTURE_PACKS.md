@@ -81,6 +81,11 @@ A folder of PCSX2's replacement files, `TEX0HASH-CLUTHASH-BITS.dds` (or
 as it is: point `RG_TEXTURE_PACK` at it, or put it in `textures\packs`. Such a
 picture replaces a whole texture, not a region, and so reaches what the region
 pictures do not: the scenery, the characters' skin and the 3D art in general.
+It is drawn on the 3D alone. The menus, the save's portraits, the icons, the
+compass and the minimap are sprites, and stay as the game draws them (or as a
+region pack redraws them), whatever pictures of them the pack has. The story
+screen's starry background is drawn as 3D, and is replaced.
+
 The game names a texture as PCSX2 does, by an XXH3-64 hash: of the GS blocks it
 covers for an 8-bit or 4-bit texture, of its indices a byte each, row by row,
 for one smaller than a block or with its indices in a 32-bit word's high bits
@@ -96,7 +101,7 @@ any one of the texels' pictures. The alpha is read as the console's
 Its BC1, BC2, BC3 and BC7 pictures whose sides are multiples of 4 go to the
 GPU as they are and stay compressed there: a BC3 (DXT5) picture takes a
 quarter of the memory it would decoded. Walking through Salgin's town at 3x,
-a US pack's pictures took 36 MB instead of 146. A format the GPU does not
+a US pack's pictures took 28 MB instead of 114. A format the GPU does not
 sample is decoded as before, and `RG_TEXTURE_PACK_DECODE=1` decodes them all,
 to compare. The 2D art's pictures are always decoded: their alpha is halved
 and the texels a draw does not show are cleared, which blocks do not allow.

@@ -2781,7 +2781,13 @@ struct SdlGpuBackend::Impl {
                     if (largerTexture)
                         texture = largerTexture;
                 }
-                if (texture && regionPack && !largerTexture && state.prim.tme) {
+                // A whole texture's larger version (a PCSX2 pack's) is drawn
+                // on the 3D, not on sprites: the game draws its 2D (menus, the
+                // save's portraits, icons, the compass and the minimap) with
+                // sprites, and its art stays as the game draws it, or as a
+                // region pack redraws it (Rogue Galaxy: added).
+                if (texture && regionPack && !largerTexture && state.prim.tme &&
+                    state.prim.type != GS_PRIM_SPRITE) {
                     std::string wholeError;
                     if (SDL_GPUTexture *whole =
                             textures->wholeReplacement(state, wholeScale, wholeNearest, wholeError)) {
