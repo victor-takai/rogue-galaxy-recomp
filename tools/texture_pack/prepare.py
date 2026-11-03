@@ -9,7 +9,7 @@ pixels, all but 10% grey, at least 70% of them of one height of 12 or more
 high, at least 2.2 times as wide, at least 60% grey. The help pages, text and
 pictures together, stay out. --all prepares everything.
 
-COLLECTED (default textures/collected) holds what textures\\RogueGalaxy-collect.bat
+COLLECTED (default textures/collected) holds what debug\\RogueGalaxy-collect.bat
 wrote: RGBA PNGs named TEXELS_CLUT_WxH.png, alpha doubled (255 opaque). An image
 upscaler, an AI one above all, handles colour and transparency badly together,
 so each picture becomes two opaque ones in OUT (default textures/to-upscale):
