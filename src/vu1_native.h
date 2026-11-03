@@ -24,8 +24,9 @@
 // bounds; F scroll or sphere map), and the programs whose pieces draw by
 // themselves (Kind): the outlines, the shadow volumes, the overlay sprites,
 // the object setup, the particles and the projected texture. Not done, so
-// left to the VU1 chunk by chunk: clipping (slot E) where the GPU does not
-// clip, the paths no recording took, and the pieces no recording reached.
+// left to the VU1 chunk by chunk: clipping (slot E), in every mode (the
+// GPU's clipping across the eye plane differed on one driver), the paths no
+// recording took, and the pieces no recording reached.
 //
 // The arithmetic per vertex is the runtime's (gsNativeMeshPoint in
 // runtime/gs/gs_types.h), whichever way a chunk goes out.
@@ -114,7 +115,8 @@ const Program *identify(const uint8_t *code, uint32_t startPC);
 
 // Why the chunk an MSCNT runs (its header at `top`, in quadwords) is left to
 // the VU1, or null when it is done natively. `clips`: what draws it clips
-// triangles itself (the GPU), so slot E's chunks are done too.
+// triangles itself (the GPU), so slot E's chunks are done too; the VIF1
+// thread passes false in every mode, `gpu` too (src/vif1_thread.cpp).
 const char *declineChunk(const Program &program, const uint8_t *data, uint32_t top, bool clips = false);
 
 // Which of the pieces this file knows the code at `startPC` has, slot by

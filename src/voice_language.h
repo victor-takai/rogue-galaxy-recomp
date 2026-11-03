@@ -7,8 +7,9 @@ class PS2Runtime;
 // one at 0x48152C (voice, as in wav/!/EV01-0060/...). StaticInitLangCodeTables
 // (0x4698B0) points both at EN. With RG_VOICE_LANG=JA (or EN, ES, FR, IT, DE,
 // KO, ZH) the voice token is pointed at that entry of the game's own table
-// (0x44AF38) instead. An experiment for the Japanese voices: the archives that
-// hold wav/ja/ have to be the ones in the disc folder.
+// (0x44AF38) instead. The menu's Undub switch means JA: the voice archives
+// (wav/ja/) and the movies that differ then come from disc/JA, which
+// `setup.py extract-japanese` (Install-Undub.bat) fills.
 namespace rg::voicelanguage
 {
 

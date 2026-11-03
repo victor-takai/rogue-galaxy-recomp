@@ -8,7 +8,7 @@ read code; [HOW-IT-WORKS.md](HOW-IT-WORKS.md) explains the words used here.
 ## Start from the names
 
 [`config/SCUS_974.90/functions_main.csv`](../config/SCUS_974.90/functions_main.csv)
-lists the main program's 17,726 functions with their names and addresses
+lists the main program's 17,733 functions with their names and addresses
 (`Name,Start,End,Size`). The names come from
 [RGDecomp](https://github.com/Dorgengoa/RGDecomp) ([MAPS.md](MAPS.md)), so
 searching the file for a word is the quickest way in:
@@ -42,6 +42,10 @@ python tools/mipsdis.py disc/SCUS_974.90 config/SCUS_974.90/functions_main.csv d
 | `dis START END` | The machine code between two addresses, with names |
 | `find HEX` | A byte pattern in the program |
 | `sym ADDR` | The function an address belongs to |
+| `scan VALUE MASK [START END N]` | The instructions whose bits, masked, equal VALUE, each with the N after it |
+| `gp` | The value of the gp register, which the game's globals are read through |
+
+It reads the main program only, not the overlays in `disc/BIN/`.
 
 The C++ our build runs is in `build/generated/main/`, one file per function
 (`MesWinGetInstant_277600_0x277600.cpp`), after `python setup.py recompile`.
@@ -49,14 +53,19 @@ The C++ our build runs is in `build/generated/main/`, one file per function
 ## Watch it run
 
 These variables go in `debug\RogueGalaxy.bat`, which has examples, and print
-to `build/last-run.log`. [DEVELOPMENT.md](DEVELOPMENT.md) has the full list.
+to `build/last-run.log`. Their details, defaults and limits are in
+[DEVELOPMENT.md](DEVELOPMENT.md#diagnosis), with the rest of the tools.
 
 | Variable | What it shows |
 |---|---|
-| `RG_TRACE=0xADDR,...` | The first calls of those functions: a0 to a3 (as text too, when they point at some), the return address, and v0 on return. `RG_TRACE_ARG0=0xOFF` adds the word at a0+OFF, handy when a0 points at a structure. `RG_TRACE_LIMIT=N` sets how many calls (default 16) |
+| `RG_TRACE=0xADDR,...` | The first calls of those functions: arguments, return address and result. `RG_TRACE_ARG0=0xOFF` adds the word at a0+OFF, handy when a0 points at a structure |
 | `RG_WATCH=0xADDR,...` | Those memory words, every second |
 | `RG_HWWATCH=0xADDR` | Who writes a memory word, with the writer's call stack. Add `RG_HWWATCH_RANGE=0-0xFFFFFFFF` to catch every write: by default it reports only values that point into the main stack. Windows only |
 | `RG_SCENE_TRACE=1` | Each change of the game's mode and phase, and the main menu's state |
+
+`RG_TRACE`, like a hook, sees only the calls that go through the function
+table: a function reached by a tail `j` does not show
+([HOOKS.md](HOOKS.md)).
 
 ## Look at memory from outside
 
@@ -97,9 +106,9 @@ its hook was found.
    the option on it returns 1, otherwise it calls the game's own. That is the
    first shape in [HOOKS.md](HOOKS.md).
 
-`RG_TRACE=0x277600` with `RG_TRACE_ARG0=0xB4` shows it live: each call while
-text types out, the window in a0, and the flag (the low half of the word
-printed).
+`RG_TRACE=0x277600` with `RG_TRACE_ARG0=0xB4` shows it live: the first 16
+calls while text types out, the window in a0, and the flag (the low half of
+the word printed).
 
 ## Data files
 

@@ -7,8 +7,8 @@
   redoes the compiled 3D programs when nothing changed (every rebuild used
   to spend ten minutes on them).
 - Undub: the Japanese voices and movies from your own Japanese Director's Cut disc
-  (Settings > Language). Run `Install-Undub.bat` first and pick the disc image. The
-  text stays English.
+  (F1 > Settings > Language, from the next start). Run `Install-Undub.bat` first
+  and pick the disc image. The text stays English.
 - With an Xbox controller, the game's text shows its buttons (A, B, X, Y,
   LB, RB, LT, RT) instead of the PlayStation's (Game > Controller's
   buttons, on by default).
@@ -23,13 +23,14 @@
 - Texture packs: above 1x, the 2D art (icons, window pieces, menu
   pictures) can be drawn from larger versions in packs under
   `textures\packs` (folders or zips of PNG or DDS files), each with a switch
-  in the menu (F1 > Textures). The game ships none; the format is in
-  docs/TEXTURE_PACKS.md, and `textures\RogueGalaxy-collect.bat` collects
-  what a pack can replace from your own play.
-  A pack made for PCSX2 (`TEX0HASH-CLUTHASH-BITS.dds`) works too and replaces
-  scenery and character textures; the menus, portraits and icons stay as the
-  game draws them. Its pictures stay compressed on the GPU, a quarter of the
-  memory.
+  in the menu (F1 > Settings > Textures). The game ships none; the format is
+  in [docs/TEXTURE_PACKS.md](docs/TEXTURE_PACKS.md), and
+  `debug\RogueGalaxy-collect.bat` collects what a pack can replace from your
+  own play.
+  A pack made for PCSX2 (`TEX0HASH-CLUTHASH-BITS.dds`) works too, at 1x as
+  well, and replaces scenery and character textures; the menus, portraits
+  and icons stay as the game draws them. Its pictures stay compressed on the
+  GPU, a quarter of the memory.
 - The free camera no longer lets a button pressed to move it reach a scene
   waiting for one, and gives the controller back at once when turned off.
 - Full bag to storage: an item found when the bag is full goes to the
@@ -42,6 +43,12 @@
 - The free camera no longer leaves the game stuck at the battle's "escape?"
   question (a hit can push the leader out of the battle's area while the
   camera flies): the question turns it off, and it can be answered.
+- Faster at high internal resolutions: blended draws take one pass instead
+  of two where the graphics card allows it, and blurs and draws from
+  upscaled pictures cost the graphics card less.
+- A Native renderer switch (Game > Native renderer, off by default): the
+  work on drawing the game with the PC's renderer goes behind it. It
+  changes nothing yet.
 
 ## 0.1.0 (pre-release)
 

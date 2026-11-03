@@ -7,10 +7,11 @@ upscaled. A candidate is only closed with a reason that holds for that
 hardware; a small share of power on a desktop card (RX 6700 XT) is not one.
 
 Measured with `DQ8_GFX_PROFILE_CYCLE` (see `sdlgpu_backend.cpp`,
-`tools/bench/gpubusy.sh`): the game steps through categories of GPU work,
-skipping each in turn, and the card's power draw says what it cost. Run-to-run
-noise is about 1.5 W. All numbers: Salgin's first scene, 4x, 60 fps,
-baseline 72-85 W, 2026-10-28.
+`tools/bench/gpubusy.sh`; both on the contributor's machine, not in this
+repository): the game steps through categories of GPU work, skipping each
+in turn, and the card's power draw says what it cost. Run-to-run noise is
+about 1.5 W. All numbers: Salgin's first scene, 4x, 60 fps, baseline
+72-85 W, 2026-10-28.
 
 ## Measured
 
@@ -37,26 +38,29 @@ backend is 62% of wall time at 4x and 130-190% at 8x.
 
 | # | Candidate | Status |
 |---|---|---|
-| 1 | What the EE-built draws are (the 36 W block) | **done in part**: 28.5 W is ~20 full-frame passes (clears, copies, blends). Next: classify each exactly |
+| 1 | What the EE-built draws are (the 36 W block) | **done in part**: 28.5 W is ~20 full-frame passes (clears, copies, blends; about 13, as the measured row above corrects). Next: classify each exactly |
 | 1a | Replace whole-target clears (untextured, opaque, constant colour and depth) with a render-pass load-op clear | open; `clearsWhole` already detects a sprite that replaces every pixel |
 | 1b | Replace 1:1 opaque full-frame copies with GPU copy commands | open; needs the classification in 1 |
 | 1c | Write traffic of the whole-target draws: 72 Mpx x 8 B = ~0.6 GB a frame, ~35 GB/s at 60 fps (arithmetic, not measured) | the iGPU argument for 1a-1c |
-| 1d | Bloom/effect buffer (0x2C40, 192x192; 66 draws, 21 Mpx, `feedback` step ~10 W) at a lower scale than the scene | open; the backend already handles targets of different scale |
-| 2 | Run effect buffers (192x192 bloom, blur) at a lower scale than the scene | open; needs 1 |
+| 1d | Bloom/effect buffer (0x2C40, 192x192; 66 draws, 21 Mpx, `feedback` step ~10 W) at a lower scale than the scene | **done** (`d911d1e`: `DQ8_GFX_EFFECT_SCALE`, 2 unless set, for 0x2C40 and 0x3800; [GS-AUDIT.md](GS-AUDIT.md)); was: open; the backend already handles targets of different scale |
+| 2 | Run effect buffers (192x192 bloom, blur) at a lower scale than the scene | **done** with 1d (`d911d1e`); was: open; needs 1 |
 | 3 | Skip or merge redundant full-target passes | open; needs 1 |
-| 4 | Region-limited feedback copies (copy the sampled rectangle, not the surface) | **reopened for iGPUs**: 27 GB/s is a third of their memory bandwidth. Closed on the 6700 XT only |
+| 4 | Region-limited feedback copies (copy the sampled rectangle, not the surface) | **done** (`8a0d39d`: a snapshot copies only the texels its draws read; 255 -> 112 Mpx copied a frame at 8x); was: reopened for iGPUs: 27 GB/s is a third of their memory bandwidth. Closed on the 6700 XT only |
 | 5 | Hardware bilinear for common 3D draws (one fetch, linear sampler) | **reopened for iGPUs**: 3-6% on the 6700 XT, relatively more where TMU and ALU are scarce |
-| 6 | Early depth with alpha-tested draws (`discard` blocks early-Z) | `roguegalaxy-earlyz` built, not run |
+| 6 | Early depth with alpha-tested draws (`discard` blocks early-Z) | **tried and dropped**: no change in frame rate; never committed ([GS-AUDIT.md](GS-AUDIT.md)); was: `roguegalaxy-earlyz` built, not run |
 | 7 | Why `#6bcb` costs 40x more per pixel than `#0970` | open |
 | 8 | PCSX2 power at the same scene and internal resolution (is any of this waste?) | not run; needs the user |
 | 9 | CPU side | measured: at 4x in the scene the GS worker is 66% of one core (48-76%), VIF1 thread 50%, GIF stage 17%; 807 draws, 192 passes, 38 flushes, 5.2 submissions a frame. On a core 2x slower the worker alone is 130%. Next: which functions |
 | 10 | ARM: sse2neon in `gs_vram`, `ee_fpu` rounding (patches 0003, 0004 assume MXCSR), `_mm_getcsr` in `vif1_thread` | open; compile an aarch64 build first |
-| 11 | A game-aware renderer replacing the GS state machine, one VU1 program at a time | open; needs the attribution above (done for programs, not yet for the EE-built draws) |
+| 11 | A game-aware renderer replacing the GS state machine, one VU1 program at a time | open; needs the attribution above (done for programs, not yet for the EE-built draws). Since: the plan is [NATIVE-RENDERER.md](NATIVE-RENDERER.md), and every recorded VU1 program is native behind `RG_VU1_NATIVE` ([VU1-NATIVE.md](VU1-NATIVE.md)) |
 | 12 | Android packaging (SDL3 activity, data path, touch/pad input) | open |
 
 ## How to add a row
 
 Run the cycle (README of the branch, or `grep -n DQ8_GFX_PROFILE_CYCLE
 thirdparty/dq8-gfx/src/gfx/backends/sdlgpu/sdlgpu_backend.cpp`), then put the
-numbers here with the date. Close a candidate only with a measurement or a
+numbers here with the date. (The cycle and that README were on the
+contributor's machine and are not in this repository; the grep finds only a
+comment. What is here is `DQ8_GFX_GPU_TIMES`, the GPU's time by label,
+[GS-AUDIT.md](GS-AUDIT.md).) Close a candidate only with a measurement or a
 reason that holds for an iGPU or a handheld.

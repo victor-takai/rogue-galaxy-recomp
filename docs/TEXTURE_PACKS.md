@@ -1,15 +1,27 @@
 # Texture packs
 
-The game can draw its 2D art (icons, window pieces, menu pictures, pictures
-of text) from larger versions kept on the player's machine. This project
-ships no art: the pictures come from the player's own disc, so a pack is
-never part of the repository, and a pack made by someone else is theirs to
-share. Faces, portraits and painted icons look best as the game draws them;
-packs are for the pieces a pack's author wants to redraw.
+The game can draw its art from larger versions kept on the player's
+machine. Region packs redraw the 2D art (icons, window pieces, menu
+pictures, pictures of text); packs made for PCSX2 redraw the 3D (the
+scenery, the characters). This project ships no art: the pictures come from
+the player's own disc, so a pack is never part of the repository, and a
+pack made by someone else is theirs to share. Faces, portraits and painted
+icons look best as the game draws them; packs are for the pieces a pack's
+author wants to redraw.
 
-Packs are read above 1x (an internal scale of 2x or more). The menu's
-Textures page (F1 > Settings > Textures) has a switch for each pack found,
-which takes effect at once.
+## For players
+
+- Put each pack in `textures\packs`, in the game's folder, as a folder or a
+  zip. Make the folder `textures\packs` if it is not there.
+- A pack's pictures must be at the top of its folder (or of its zip, or of
+  the one folder inside the zip). Pictures in subfolders are not read: a
+  PCSX2 pack sorted into folders needs its files moved up.
+- The game looks for packs when it starts: a pack added while it runs shows
+  after a restart.
+- F1 > Settings > Textures has a switch for each pack found
+  ([OPTIONS.md](OPTIONS.md)). A switch takes effect at once.
+- Region packs are drawn above 1x (an internal scale of 2x or more). A
+  PCSX2 pack works at 1x too.
 
 ## Where packs go
 
@@ -17,13 +29,13 @@ which takes effect at once.
   zip of one (its files at the top, or all inside a single folder, as zipping
   a folder makes it). They are read by name, and a later one wins over an
   earlier one for the same picture.
-- `textures\hd\`: what `textures\make-pack.bat` writes; read first, under
-  every folder of `textures\packs`.
+- `textures\hd\`: what `tools\texture_pack\make-pack.bat` writes; read
+  first, so any pack in `textures\packs` wins over it.
 - `RG_TEXTURE_PACK=DIR` reads that one folder alone.
 
 ## Collecting what a pack can replace
 
-`textures\RogueGalaxy-collect.bat` plays the game while writing each region
+`debug\RogueGalaxy-collect.bat` plays the game while writing each region
 that appears on the screen once into `textures\collected`. A region is the
 rectangle a sprite draws from a texture (a window piece, an icon, a label),
 named by its content: `TEXELS_CLUT_WxH.png`, the texels' hash, the palette's
@@ -78,10 +90,11 @@ the game draws the original until it is ready.
 
 A folder of PCSX2's replacement files, `TEX0HASH-CLUTHASH-BITS.dds` (or
 `.png`, the hashes in hex as PCSX2 writes them, without leading zeros), works
-as it is: point `RG_TEXTURE_PACK` at it, or put it in `textures\packs`. Such a
-picture replaces a whole texture, not a region, and so reaches what the region
-pictures do not: the scenery, the characters' skin and the 3D art in general.
-It is drawn on the 3D alone. The menus, the save's portraits, the icons, the
+as it is, its files at the top of the folder: put it in `textures\packs`, or
+point `RG_TEXTURE_PACK` at it. Such a picture replaces a whole texture, not a
+region, and so reaches what the region pictures do not: the scenery, the
+characters' skin and the 3D art in general. It is drawn on the 3D alone, at
+1x too. The menus, the save's portraits, the icons, the
 compass and the minimap are sprites, and stay as the game draws them (or as a
 region pack redraws them), whatever pictures of them the pack has. The story
 screen's starry background is drawn as 3D, and is replaced.
