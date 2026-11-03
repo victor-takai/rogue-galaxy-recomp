@@ -154,6 +154,8 @@ See [docs/OPTIONS.md](docs/OPTIONS.md) for each one.
 - [docs/BUILDING.md](docs/BUILDING.md): building by hand, and the project's layout
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): the debug launchers, profiling and
   the environment variables
+- [docs/HOOKS.md](docs/HOOKS.md): writing hooks, the way changes to the game's
+  behaviour go in
 - [docs/STATUS.md](docs/STATUS.md): how the work went, and what the game needs
 
 ## Legal
