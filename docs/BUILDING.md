@@ -127,9 +127,13 @@ builds needs only the system's Vulkan, SDL's own dependencies (X11 or
 Wayland, ALSA or PulseAudio) and glibc 2.38 or later; the container is only
 for building.
 
+To update, `git pull --recurse-submodules` and run `./install.sh` again: it
+keeps the extracted disc and rebuilds what changed (`Update.bat` is Windows
+only). The game checks for a new release at start through `curl`.
+
 By hand, the steps above work as they are, with these needs:
 
-- clang with lld, CMake 3.24+, Ninja, Python 3.11+, git, GNU make, nasm,
+- curl (the update check), clang with lld, CMake 3.24+, Ninja, Python 3.11+, git, GNU make, nasm,
   xz, pkg-config and `glslc` (or let the build fetch glslang), plus the
   development packages of Vulkan, X11 (Xext, Xrandr, Xinerama, Xcursor, Xi,
   Xfixes, Xss), xkbcommon, Wayland, libdecor, udev, GL/EGL, ALSA, PulseAudio
