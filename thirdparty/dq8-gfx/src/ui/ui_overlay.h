@@ -57,8 +57,9 @@ struct GameOption {
     // Takes effect at the next start: once it differs from what this run
     // started with, the menu says so in red.
     bool restart = false;
-    // Shown on the Language page instead of the Game page (Rogue Galaxy: added).
-    bool language = false;
+    // The page it is on: empty for Game's, "language" for Language's,
+    // "textures" for Textures' (Rogue Galaxy: added).
+    std::string page;
     bool number() const { return maximum > minimum; }
 };
 
@@ -91,7 +92,9 @@ struct HostServices {
 };
 
 // Game: Rogue Galaxy's own switches (added).
-enum class SettingsPage : uint8_t { Display, Sound, Controls, Game, Language, Interface, Count };
+// Language and Textures: the options a host puts there (GameOption::page),
+// apart from Game's (Rogue Galaxy: added).
+enum class SettingsPage : uint8_t { Display, Sound, Controls, Game, Language, Textures, Interface, Count };
 
 class Overlay final : public gfx::SdlGpuOverlay {
 public:
@@ -186,7 +189,11 @@ private:
     void drawSoundPage();
     void drawControlsPage();
     void drawBindingTable(bool keyboard);
-    void drawGamePage(bool language);
+    void drawGamePage();
+    void drawLanguagePage();
+    void drawTexturesPage();
+    // The host's switches whose page is `page`, in its sections.
+    void drawGameOptions(const std::string &page, const char *emptyText, const char *firstTitle);
     void drawInterfacePage();
     void drawCapturePrompt();
     void drawAbout();

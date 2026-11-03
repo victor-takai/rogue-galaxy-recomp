@@ -83,9 +83,11 @@ void Overlay::runStep(const ScriptStep &step, uint64_t frame) {
     const bool on = first != "off";
     std::fprintf(stderr, "[ui] script frame %llu, %.1f s: %s %s\n", static_cast<unsigned long long>(frame),
                  now() - m_scriptStart, command.c_str(), joined(step.arguments).c_str());
-    static constexpr const char *kPages[] = {"display", "sound", "controls", "game", "language", "interface"};
+    static constexpr const char *kPages[] = {"display", "sound", "controls", "game",
+                                             "language", "textures", "interface"};
     static constexpr SettingsPage kPageValues[] = {SettingsPage::Display, SettingsPage::Sound, SettingsPage::Controls,
-                                                   SettingsPage::Game, SettingsPage::Language, SettingsPage::Interface};
+                                                   SettingsPage::Game, SettingsPage::Language, SettingsPage::Textures,
+                                                   SettingsPage::Interface};
     static constexpr const char *kAspects[] = {"auto", "4:3", "16:9", "native", "stretch"};
     static constexpr gfx::SdlGpuAspect kAspectValues[] = {gfx::SdlGpuAspect::Auto, gfx::SdlGpuAspect::Standard,
                                                           gfx::SdlGpuAspect::Wide, gfx::SdlGpuAspect::Native,

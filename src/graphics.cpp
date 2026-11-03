@@ -32,6 +32,7 @@
 #include "scene_timing.h"
 #include "settings_pages.h"
 #include "shop_prices.h"
+#include "texture_pack.h"
 #include "vif1_thread.h"
 #include "hud_size.h"
 #include "inventory.h"
@@ -226,6 +227,8 @@ void applyGameOption(const std::string &key, bool on)
         rg::loading::setInstantRecap(on);
     else if (key == "instant_text")
         rg::instanttext::setEnabled(on);
+    else if (key.rfind("texture_pack_", 0) == 0)
+        rg::texturePack::setPackEnabled(key.substr(13), on);
     else if (key == "japanese_voices")
         rg::voicelanguage::setEnabled(on);
     else if (key == "full_bag_to_storage")
@@ -679,7 +682,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "ones; the text stays as it is. It needs that disc's files: run Install-Undub.bat in the game's folder "
          "once and pick your Japanese disc image. Without them the voices stay English. A few lines have no "
          "Japanese voice and play silent. Takes effect the next time the game starts.",
-         false, 0, 0, 0, "", 1, true, true, true},
+         false, 0, 0, 0, "", 1, true, true, "language"},
         {"native_renderer", "Native renderer",
          "Experimental, for development: the models and the post effects drawn by the PC's renderer instead of "
          "through the emulation of the PS2's graphics chip, as that work lands; for now it changes nothing. Off, "
@@ -693,6 +696,18 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "not let you skip, which can leave the story out of order.",
          false},
     };
+    // One switch for each pack found, on a page of their own in the menu (F1 > Textures).
+    for (const rg::texturePack::PackInfo &pack : rg::texturePack::packs())
+    {
+        dq8::ui::GameOption option{"texture_pack_" + pack.key, "Pack: " + pack.name,
+                                   "Above 1x, the game's art is drawn from this pack's " +
+                                       std::to_string(pack.regions) +
+                                       " pictures, where it has them. Packs are read by name, a later one over an "
+                                       "earlier one, textures\\hd first.",
+                                   pack.enabled};
+        option.page = "textures";
+        host.gameOptions.push_back(std::move(option));
+    }
     host.gameSections = {
         {"sixty_fps", "Camera and view"},
         {"skip_opening", "Convenience"},
@@ -807,6 +822,7 @@ Setup::Setup(PS2Runtime &runtime)
         dq8::gfx::setPresentObserver(&debug::noteFrameTime);
         // Aspect ratio Auto follows the Widescreen option.
         sdl->setGameWidescreenQuery([] { return rg::widescreen::wide() ? 1 : 0; });
+        rg::texturePack::install(*sdl);
         sdl->setSideImageLoader(&loadBorderImage);
         if (noWindow)
         {

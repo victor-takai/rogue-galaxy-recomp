@@ -97,6 +97,7 @@ add_executable(roguegalaxy
     shop_prices.cpp
     step_fixes.cpp
     stick_response.cpp
+    texture_pack.cpp
     vif1_thread.cpp
     vu1_native.cpp
     gif_events.cpp
