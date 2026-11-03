@@ -2781,7 +2781,13 @@ struct SdlGpuBackend::Impl {
                     if (largerTexture)
                         texture = largerTexture;
                 }
-                if (texture && regionPack && !largerTexture && state.prim.tme) {
+                // A whole texture's larger version (a PCSX2 pack's) is drawn
+                // on the 3D, not on sprites: the game draws its 2D (menus, the
+                // save's portraits, icons, the compass and the minimap) with
+                // sprites, and its art stays as the game draws it, or as a
+                // region pack redraws it (Rogue Galaxy: added).
+                if (texture && regionPack && !largerTexture && state.prim.tme &&
+                    state.prim.type != GS_PRIM_SPRITE) {
                     std::string wholeError;
                     if (SDL_GPUTexture *whole =
                             textures->wholeReplacement(state, wholeScale, wholeNearest, wholeError)) {
@@ -3808,6 +3814,17 @@ struct SdlGpuBackend::Impl {
                               static_cast<unsigned long long>(stats.bordersRounded - previous.bordersRounded),
                               static_cast<unsigned long long>(stats.shadowsDrawn - previous.shadowsDrawn));
                 line += buf;
+            }
+            // The larger pictures on the GPU (Rogue Galaxy: added).
+            static uint64_t previousStored = 0u, previousLetGo = 0u;
+            if (textureStats().largerStored != previousStored || textureStats().largerLetGo != previousLetGo) {
+                std::snprintf(buf, sizeof(buf), " | larger held %llu MiB, uploaded %llu, let go %llu",
+                              static_cast<unsigned long long>(textureStats().largerBytes >> 20u),
+                              static_cast<unsigned long long>(textureStats().largerStored - previousStored),
+                              static_cast<unsigned long long>(textureStats().largerLetGo - previousLetGo));
+                line += buf;
+                previousStored = textureStats().largerStored;
+                previousLetGo = textureStats().largerLetGo;
             }
             // Draws blended in the shader from a snapshot (Rogue Galaxy: added).
             if (stats.destinationReads != previous.destinationReads) {

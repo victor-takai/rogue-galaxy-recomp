@@ -9,7 +9,8 @@
 
 // A DDS picture read to RGBA8, its first (largest) level only: BC1, BC2, BC3
 // and BC7 (DXGI or the FourCC forms DXT1, DXT3, DXT5), and uncompressed
-// 32-bit formats by their masks. Returns null on success or what is wrong.
+// 32-bit formats by their masks; or a BC picture's blocks as they are
+// (blocks). Returns null on success or what is wrong.
 namespace rg::dds
 {
 
@@ -102,25 +103,43 @@ inline void alphaBlock(const uint8_t *block, uint8_t (*out)[4])
 
 } // namespace detail
 
-inline const char *decode(const uint8_t *data, size_t size, uint32_t &width, uint32_t &height,
-                          std::vector<uint8_t> &rgba)
+enum class Kind { Bc1, Bc2, Bc3, Bc7, Raw32, None };
+
+// What a file's header says: its size, its format, where its first level
+// starts and, for Raw32, where each channel sits.
+struct Header
+{
+    uint32_t width = 0u, height = 0u;
+    Kind kind = Kind::None;
+    size_t offset = 128u;
+    uint32_t masks[4] = {};
+};
+
+// The bytes of a BC kind's 4x4 block.
+inline size_t blockBytes(Kind kind)
+{
+    return kind == Kind::Bc1 ? 8u : 16u;
+}
+
+// Reads the header, and checks the first level is all there.
+inline const char *parse(const uint8_t *data, size_t size, Header &header)
 {
     using namespace detail;
     if (size < 128 || std::memcmp(data, "DDS ", 4) != 0 || load32(data + 4) != 124u)
     {
         return "not a DDS file";
     }
-    height = load32(data + 12);
-    width = load32(data + 16);
+    const uint32_t height = header.height = load32(data + 12);
+    const uint32_t width = header.width = load32(data + 16);
     if (!width || !height || width > 16384u || height > 16384u)
     {
         return "bad size";
     }
     const uint32_t pixelFlags = load32(data + 80);
     const uint32_t fourCC = load32(data + 84);
-    enum class Kind { Bc1, Bc2, Bc3, Bc7, Raw32, None } kind = Kind::None;
-    size_t offset = 128u;
-    uint32_t masks[4] = {};
+    Kind &kind = header.kind;
+    size_t &offset = header.offset;
+    uint32_t *masks = header.masks;
     if (pixelFlags & 4u) // DDPF_FOURCC
     {
         if (fourCC == 0x31545844u) // DXT1
@@ -173,14 +192,52 @@ inline const char *decode(const uint8_t *data, size_t size, uint32_t &width, uin
     {
         return "a DDS format this game does not read (BC1, BC2, BC3, BC7 and 32-bit RGB are)";
     }
+    const size_t needed = kind == Kind::Raw32
+                              ? size_t(width) * height * 4u
+                              : size_t((width + 3u) / 4u) * ((height + 3u) / 4u) * blockBytes(kind);
+    if (size < offset + needed)
+    {
+        return "truncated";
+    }
+    return nullptr;
+}
 
+// A BC file's first level as it is, a row of 4x4 blocks after another, for a
+// GPU that samples the format itself (header.kind says which). A Raw32 file
+// is no BC: decode reads it.
+inline const char *blocks(const uint8_t *data, size_t size, Header &header, std::vector<uint8_t> &out)
+{
+    if (const char *error = parse(data, size, header))
+    {
+        return error;
+    }
+    if (header.kind == Kind::Raw32)
+    {
+        return "not block-compressed";
+    }
+    const uint8_t *first = data + header.offset;
+    out.assign(first, first + size_t((header.width + 3u) / 4u) * ((header.height + 3u) / 4u) *
+                                  blockBytes(header.kind));
+    return nullptr;
+}
+
+inline const char *decode(const uint8_t *data, size_t size, uint32_t &width, uint32_t &height,
+                          std::vector<uint8_t> &rgba)
+{
+    using namespace detail;
+    Header header;
+    if (const char *error = parse(data, size, header))
+    {
+        return error;
+    }
+    width = header.width;
+    height = header.height;
+    const Kind kind = header.kind;
+    const size_t offset = header.offset;
+    const uint32_t *masks = header.masks;
     rgba.assign(size_t(width) * height * 4u, 0u);
     if (kind == Kind::Raw32)
     {
-        if (size < offset + size_t(width) * height * 4u)
-        {
-            return "truncated";
-        }
         for (size_t pixel = 0; pixel < size_t(width) * height; ++pixel)
         {
             const uint32_t value = load32(data + offset + pixel * 4u);
@@ -210,16 +267,12 @@ inline const char *decode(const uint8_t *data, size_t size, uint32_t &width, uin
         return nullptr;
     }
 
-    const size_t blockBytes = kind == Kind::Bc1 ? 8u : 16u;
+    const size_t step = blockBytes(kind);
     const uint32_t blocksX = (width + 3u) / 4u, blocksY = (height + 3u) / 4u;
-    if (size < offset + size_t(blocksX) * blocksY * blockBytes)
-    {
-        return "truncated";
-    }
     const uint8_t *block = data + offset;
     for (uint32_t by = 0; by < blocksY; ++by)
     {
-        for (uint32_t bx = 0; bx < blocksX; ++bx, block += blockBytes)
+        for (uint32_t bx = 0; bx < blocksX; ++bx, block += step)
         {
             uint8_t pixels[16][4];
             switch (kind)

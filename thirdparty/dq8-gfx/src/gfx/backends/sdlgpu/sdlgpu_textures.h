@@ -80,6 +80,11 @@ struct GsTextureCacheStats {
     // already held, so nothing was expanded or uploaded (Rogue Galaxy:
     // added).
     uint64_t unchangedUpdates = 0u;
+    // The host's larger pictures: the bytes they hold on the GPU, how many
+    // were uploaded, and how many the budget let go (Rogue Galaxy: added).
+    uint64_t largerBytes = 0u;
+    uint64_t largerStored = 0u;
+    uint64_t largerLetGo = 0u;
     uint64_t evictions = 0u;
     uint64_t texelsExpanded = 0u;
     // Textures sourced from a region a render target owns. Correct, but the
@@ -267,7 +272,9 @@ private:
     // the region is the whole texture. `hashOnly` reads and hashes them the
     // same way and expands nothing (Rogue Galaxy: added).
     uint64_t expand(const GsTextureKey &key, const GsRegion &region, bool hashOnly = false);
-    bool uploadRegion(SDL_GPUTexture *texture, const GsRegion &region, std::string &error);
+    // m_staging's first `bytes` (0: the region's RGBA8, 4 bytes a texel; a
+    // block-compressed texture's blocks otherwise) into the texture.
+    bool uploadRegion(SDL_GPUTexture *texture, const GsRegion &region, std::string &error, size_t bytes = 0u);
     // Transfer buffers come from a pool guarded by the device's submission
     // serials: the movie path uploads dozens of regions a frame, and creating
     // a fresh buffer per region spent a quarter of the EE thread inside the
@@ -331,10 +338,15 @@ private:
     void releaseLarger();
     // Lets go of the larger versions when the host changed what it answers.
     void syncRegionGeneration();
-    // Uploads the host's picture (m_regionPixels, width x height) and keeps it
-    // under `id`; null with `error` set if the GPU refuses it.
+    // Uploads the host's picture (m_regionPixels, width x height, RGBA8 or
+    // the blocks of `format`) and keeps it under `id`; null with `error` set
+    // if the GPU refuses it.
     SDL_GPUTexture *storeLarger(uint64_t id, uint32_t factor, bool nearest, uint32_t width, uint32_t height,
-                                std::string &error);
+                                std::string &error,
+                                SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
+    // The block formats (kRegionBc*) this GPU samples, asked once.
+    int blockFormats();
+    int m_blockFormats = -1;
     // A texture PCSX2 names by its indices (8-bit and 4-bit, in their own
     // words or in a 32-bit one's high bits), with a power-of-two size.
     static bool pcsx2Hashable(const GsTextureKey &key);

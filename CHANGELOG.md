@@ -27,7 +27,9 @@
   docs/TEXTURE_PACKS.md, and `textures\RogueGalaxy-collect.bat` collects
   what a pack can replace from your own play.
   A pack made for PCSX2 (`TEX0HASH-CLUTHASH-BITS.dds`) works too and replaces
-  scenery and character textures.
+  scenery and character textures; the menus, portraits and icons stay as the
+  game draws them. Its pictures stay compressed on the GPU, a quarter of the
+  memory.
 - The free camera no longer lets a button pressed to move it reach a scene
   waiting for one, and gives the controller back at once when turned off.
 - Full bag to storage: an item found when the bag is full goes to the
