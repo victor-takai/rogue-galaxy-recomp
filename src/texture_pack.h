@@ -13,7 +13,7 @@ class SdlGpuBackend;
 // player's machine (made from their own disc or by others, never in the
 // repository).
 //
-// Collecting (RG_TEXTURE_DUMP=DIR, textures\RogueGalaxy-collect.bat): every
+// Collecting (RG_TEXTURE_DUMP=DIR, debug\RogueGalaxy-collect.bat): every
 // region a UV sprite draws from a texture -- a glyph of the font, a menu
 // label drawn as a picture, an icon, a piece of a window -- is written once
 // as DIR\TEXELS_CLUT_WxH.png, named by its content (from the

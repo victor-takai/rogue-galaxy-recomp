@@ -13,41 +13,48 @@ waited until the party stood still, then skipped one category of draws
 for 5 s at a time and logged the frame rate of each step, with a baseline
 first and last; it also counted passes, snapshot copies and the draws of
 one frame by target and state. The uncommitted `DQ8_GFX_PROFILE_CYCLE` in
-the main checkout does the same with power; this one reads frame rate.
+the main checkout (on the contributor's machine; not in this repository)
+does the same with power; this one reads frame rate.
 
 ## Done
 
 | Change | Commit | 8x fps | 3x draws/s | 3x GS backend |
 |---|---|---|---|---|
-| Before (gpu mode, a draw per mesh) | 6d4e848 | 37.8 | 110,789 | 71% |
-| Meshes of one state share a draw | e625ba1 | 38.9 | 51,248 | 56% |
-| Meshes wholly off screen not drawn | cac9414 | 39.0 | 46,014 | 55% |
-| Snapshots copy only what is read | 4f2f822 | standing: 41.7 -> 43.4 (the walk window not run) | | |
-| Source-alpha blends in one pass (dual-source) | d1c6a8c | 44.2 | 38,397 | 56% |
-| Upscaled texture taps without integer divides | 000e310 | 48.8 | 38,393 | 56% |
-| Upscaled taps read directly inside a clamp | 1a8b8b8 | 55.9 | 38,404 | 55% |
-| The fast path for CT24 and CT16 views too | 4e48219 | (timed: 53.5 -> 55.4) | | |
-| A texture at its own size: each axis wraps once | 24792e0 | 59.9 (the 60 fps cap) | 38,393 | 53% |
-| The blur buffers at scale 2, pages moved between scales on the GPU | "The blur buffers at scale 2" | 59.9; GPU busy 99% -> 84%, 185 -> 160 W | 38,555 | 49% |
+| Before (gpu mode, a draw per mesh) | a455d58 | 37.8 | 110,789 | 71% |
+| Meshes of one state share a draw | a4ebde8 | 38.9 | 51,248 | 56% |
+| Meshes wholly off screen not drawn | 74a0fac | 39.0 | 46,014 | 55% |
+| Snapshots copy only what is read | 8a0d39d | standing: 41.7 -> 43.4 (the walk window not run) | | |
+| Source-alpha blends in one pass (dual-source) | 90f3bfe | 44.2 | 38,397 | 56% |
+| Upscaled texture taps without integer divides | b995389 | 48.8 | 38,393 | 56% |
+| Upscaled taps read directly inside a clamp | c058812 | 55.9 | 38,404 | 55% |
+| The fast path for CT24 and CT16 views too | ebc5196 | (timed: 53.5 -> 55.4) | | |
+| A texture at its own size: each axis wraps once | eb33090 | 59.9 (the 60 fps cap) | 38,393 | 53% |
+| The blur buffers at scale 2, pages moved between scales on the GPU | d911d1e | 59.9; GPU busy 99% -> 84%, 185 -> 160 W | 38,555 | 49% |
+
+The hashes are this repository's (the branch was rebased when it was
+merged); "Before" is the commit that recorded those figures in
+[VU1-NATIVE.md](VU1-NATIVE.md).
 
 The VU1's own mode (`0`) gets the GS-side ones as well (55.6 fps at 8x
 before the last two). At 3x the GPU's power went 61.3 -> 46.1 W over the
-day. At 8x the walk now holds 60 fps with the GPU still 99% busy, so the
+day. At 8x the walk now holds 60 fps with the GPU still 99% busy (before
+the blur buffers at scale 2, which took it to 84%), so the
 GPU timer, not the frame rate, measures what follows. At 3x both modes hold 60 fps; `gpu` keeps the VIF1
 thread at 18% of the wall against 45%, and the GS backend at 56%
 against 66%.
 
 Tried and dropped: a fragment shader without the alpha test's `discard`
 for draws whose test always passes, so the depth test could run first
-(GS-PERFORMANCE.md candidate 6). No change in frame rate (43.5 against
-43.4 fps); not committed.
+([GS-PERFORMANCE.md](GS-PERFORMANCE.md) candidate 6). No change in frame
+rate (43.5 against 43.4 fps); not committed.
 
 ## GPU time by label (DQ8_GFX_GPU_TIMES)
 
 Skipping categories cannot separate a draw's cost from the stalls around
 it, and read both wrong once (it said the passes were the cost; forcing
 three times as many cost 1 ms). `DQ8_GFX_GPU_TIMES=1` (patched SDL,
-`thirdparty/dq8-gfx/README.md`) times the GPU's work by label instead.
+[thirdparty/dq8-gfx/README.md](../thirdparty/dq8-gfx/README.md), `55c1e40`)
+times the GPU's work by label instead.
 It found textured full-target draws at about a sixth of an untextured
 one's rate a pixel: the shader's four taps for an upscaled target were
 mostly arithmetic (eight integer divides, then the wrap and sub-texel
@@ -134,8 +141,8 @@ memory's padding path.
    buffers are 1536x1536 at 8x, larger than the PS2's frame. At a scale of
    2 they would cost a sixteenth in fill and copies. The backend keeps
    every target at one scale, and these buffers alias others' pages, so
-   it is a change to the target cache (GS-PERFORMANCE.md candidates 1d
-   and 2).
+   it is a change to the target cache ([GS-PERFORMANCE.md](GS-PERFORMANCE.md)
+   candidates 1d and 2).
 3. **Shadow volumes, 1.1 ms.** 287 draws a frame, untextured, counted by
    alternate add and subtract blends; they cannot share draws without
    reordering a clamped count. Fill bound.
@@ -146,3 +153,5 @@ The alpha replays (dual-source now) were the one large cost that was a
 pure duplicate; the rest is work the frame does once. A GPU timer per pass
 (SDL 3.2 has no timestamp queries; it would be another patch to it) would
 say where the rest of the 20 ms goes better than skipping categories does.
+That patch is in now: `DQ8_GFX_GPU_TIMES` (`55c1e40`, "GPU time by label"
+above).

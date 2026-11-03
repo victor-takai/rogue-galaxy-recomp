@@ -43,11 +43,14 @@ release's known issues are in the [CHANGELOG](CHANGELOG.md).
 
 You need Windows 10 or 11 (64-bit), about 16 GB free, an internet connection
 and your own image of the disc: Rogue Galaxy, USA, SCUS-97490
-([`docs/DISC.md`](docs/DISC.md)).
+([`docs/DISC.md`](docs/DISC.md)). The image must be an uncompressed `.iso`,
+as Redump's (6,967,721,984 bytes); a compressed one (`.chd`, `.cso`) must
+be turned back into an `.iso` first.
 
 1. Download `RogueGalaxy-<version>.zip` from the [releases](../../releases)
    page (not "Source code").
-2. Extract it to a short folder, such as `C:\RogueGalaxy`.
+2. Extract it to a short path, such as `C:\`. The zip holds one folder,
+   `RogueGalaxy`, which becomes your game folder: `C:\RogueGalaxy`.
 3. Double-click `Install.bat` and choose your disc image.
 4. Wait about 20 minutes on a fast PC, up to an hour on a slower one: it
    downloads the build tools (about 300 MB) into the folder, extracts your
@@ -56,7 +59,9 @@ and your own image of the disc: Rogue Galaxy, USA, SCUS-97490
 
 If it stops, `install.log` says why; running `Install.bat` again continues
 where it stopped. If an antivirus removes the compiler, restore it and run
-it again. To uninstall, delete the folder (your saves are in `disc\mc0`).
+it again. To uninstall, delete the folder (your saves are in `disc\mc0`),
+and `%APPDATA%\RogueGalaxy\Recompiled`, which holds the settings and
+screenshots.
 
 ### Undub (optional)
 
@@ -64,7 +69,8 @@ To play with the Japanese voices and movies, you also need your own image of
 the Japanese Director's Cut (SCPS-17013). After `Install.bat`, double-click
 `Install-Undub.bat` and choose that image (or drop it onto the file). It copies
 the voices and movies, about 3 GB, into the folder. Then turn the undub on in
-the game: F1 > Settings > Language.
+the game ([F1 > Settings > Language](docs/OPTIONS.md#language)) and start
+it again.
 
 ### Update
 
@@ -89,7 +95,8 @@ then on `Update.bat` is in the folder.
 
 Updating into a fresh folder works too, but then the tools are downloaded,
 the disc extracted and everything built again, as the first time; copy
-`disc\mc0` (and `disc\mc1`) from the old folder to keep your saves.
+`disc\mc0` (and `disc\mc1`) from the old folder to keep your saves, and
+`disc\JA` to keep the undub.
 
 ## Controls
 
@@ -101,14 +108,17 @@ The game window takes a keyboard or a gamepad (PlayStation layout).
 | D-pad | Arrow keys |
 | ✕ / ○ / ▢ / △ | X or Space / C or Esc / Z / V |
 | L1 / R1 / L2 / R2 | Q / E / Left Shift / Right Shift |
+| L3 / R3 | R / F |
 | Start / Select | Enter / Tab |
 | Right stick | I J K L |
 
 **F1** (or the Guide button, or Back+Start) opens the menu: display, sound,
-controls, and the Game page with the options above. F11 or Alt+Enter
-toggles fullscreen, F12 takes a screenshot. The options are also on the
-game's own Settings screen (System > Settings, L1 and R1 to turn the page).
-See [docs/OPTIONS.md](docs/OPTIONS.md) for each one.
+controls, the Game page with the options above, Language (the undub) and
+Textures (texture packs). F11 or Alt+Enter toggles fullscreen, F12 takes a
+screenshot (F1 > Game > Open screenshots folder shows them). Most of the
+options are also on the game's own Settings screen (System > Settings, L1
+and R1 to turn the page). See [docs/OPTIONS.md](docs/OPTIONS.md) for each
+one and where it is.
 
 <p align="center"><img src="docs/images/menu-game.jpg" width="70%" alt="The F1 menu's Game page"></p>
 
@@ -127,20 +137,31 @@ See [docs/OPTIONS.md](docs/OPTIONS.md) for each one.
 - Fixes for the freezes, falls through the floor and graphics errors found
   so far
 
-**In progress**
+**Done since 0.1.0, in the next version** (the CHANGELOG's
+[Unreleased](CHANGELOG.md#unreleased) part)
 
 - Xbox buttons in the game's text
-- New options (weapon growth, minimap and compass size) and a notice when a
-  new version is out
+- New options: weapon growth, minimap and compass size, item limit 99, full
+  bag to storage, a seventh bag page
+- A notice when a new version is out, and `Update.bat`
+- The Japanese voices and movies (undub), from your own Japanese
+  Director's Cut
+- Texture packs, PCSX2's too
 - Fixes: the free camera getting the game stuck, a choppy walk in the later
   parts of Salgin
+
+**In progress**
+
 - Improving performance: the heaviest battles and some bosses still drop
   below 60 fps
+- Drawing the game with the PC's renderer instead of through the emulation
+  of the PS2's graphics chip, behind the Native renderer switch (off by
+  default)
 - A native Linux build, for Linux PCs and the Steam Deck (the Windows build
   through Proton is prepared but untested:
   [BUILDING.md](docs/BUILDING.md#steam-deck-untested))
-- The European release's languages and the Japanese voices, read from your
-  own disc of that version (being studied)
+- The European release's languages, read from your own disc of that version
+  (being studied)
 
 **Planned**
 
@@ -148,6 +169,8 @@ See [docs/OPTIONS.md](docs/OPTIONS.md) for each one.
 - Faster Factory scenes, as with the transporters
 
 ## More
+
+Every page, by who it is for: [docs/README.md](docs/README.md).
 
 - [CHANGELOG.md](CHANGELOG.md): what each release brings, and its known issues
 - [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md): how the project works, in plain

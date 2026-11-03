@@ -1,11 +1,14 @@
 # 60 fps logic: the game's time scale, and Red-tv's PAL patch mapped onto NTSC-U
 
-Static analysis of October 2026 for the `RG_FPS=60` mode (`src/scene_timing.cpp`):
+Static analysis of October 2026 for the 60 fps mode (the menu's Game > 60
+frames per second, on by default; `RG_FPS=60` or `RG_FPS=30` decides for one
+run; `src/scene_timing.cpp`):
 what the game scales by its time step, what it counts in frames, and what the
 one existing 60 fps patch for the game (Red-tv's PCSX2 pnach for the PAL
 release, SCES-54552, February 2026) changes, line by line, in NTSC-U terms.
-Section 4 is the list of what our mode still gets wrong and the hook each
-needs. The findings were made with `tools/mipsdis.py` (a small R5900
+Section 4 lists what our mode got wrong and the fix for each, with a table
+of the fixes by name; still open there: the pad's auto-repeat (2x) and the
+NPCs' chase speed. The findings were made with `tools/mipsdis.py` (a small R5900
 disassembler with the function names of `config/SCUS_974.90/functions_*.csv`);
 the PAL ELF was not available, so PAL addresses are matched by code shape and
 meaning, with the confidence stated for each.
@@ -61,7 +64,9 @@ scale = f;                              // (the "scale <= 2.0" test is always tr
 
 So with the flip waiting one vblank and the clamp below, f is 0.5..1.0 and the
 game runs at double speed unless the scale is forced to 0.5, which is what our
-hook (`src/scene_timing.cpp`) and Red-tv's two `3c033f00` writes both do.
+hook (`src/scene_timing.cpp`) and Red-tv's two `3c033f00` writes both do. (Our
+hook now sets frameTime/2, 0.5 at full rate, so a slow frame takes a larger
+step; `RG_TIME_SCALE=fixed` holds 0.5.)
 
 Lock/overlay users: `SceneOverlayModeOn_288340` = interval 1 + lock,
 `SceneOverlayModeOff_288300` = unlock + interval 2; called by
@@ -117,7 +122,7 @@ GfxEndFrame / PadUpdate, never calls TimeScaleUpdate), entered from
 | PAL patch | NTSC-U equivalent | what it does | confidence |
 |---|---|---|---|
 | `004A06D4 byte 01` | **0x491B54** (DrawEnv+0x24, DrawEnv 0x491B30 = DrawCtx 0x4918B0+0x280) | vsync interval the flip waits for; PCSX2 re-applies it every vsync, so it overrides `SystemHeapsInit_2020d0+0x8c` (2 at boot), `SceneOverlayModeOff` (2), the title overlay's 2 at 0x4EA9E8. Same field our `beforeFlip` writes (1, or 2 while a movie plays). The PAL bss is shifted by +0xEB80 here. | high |
-| `001ce06c word 0`, `001ce088 3c033f00`, `001ce098 3c033f00` | `GameSceneTimeScaleUpdate_1cebe0`: `lui v1,0x3f80` at 0x1CEC08 (+0x28, base restore), 0x1CEC18 (+0x38, default per-frame scale), 0x1CEC64 (+0x84, on-time threshold) | By meaning: default scale 0.5 and threshold 0.5 give `scale = 0.5 on time, frameTime/2 when slower` (exactly our RG_TIME_SCALE=game behaviour). The PAL spacing (+0x1C, +0x10) does not match NTSC-U (+0x10, +0x4C), so the PAL function is laid out differently; the nop'd one is most plausibly the base-restore `lui` (that path only runs after `SetTimeScale(x, n>0)`, which nothing in the main ELF issues: `SceneTimeScaleRestore_2882d0` passes -1, so a nop there is harmless). The instruction-level match cannot be settled without the PAL ELF. | medium (semantics), low (which word is which) |
+| `001ce06c word 0`, `001ce088 3c033f00`, `001ce098 3c033f00` | `GameSceneTimeScaleUpdate_1cebe0`: `lui v1,0x3f80` at 0x1CEC08 (+0x28, base restore), 0x1CEC18 (+0x38, default per-frame scale), 0x1CEC64 (+0x84, on-time threshold) | By meaning: default scale 0.5 and threshold 0.5 give `scale = 0.5 on time, frameTime/2 when slower` (exactly what our 60 fps mode does by default). The PAL spacing (+0x1C, +0x10) does not match NTSC-U (+0x10, +0x4C), so the PAL function is laid out differently; the nop'd one is most plausibly the base-restore `lui` (that path only runs after `SetTimeScale(x, n>0)`, which nothing in the main ELF issues: `SceneTimeScaleRestore_2882d0` passes -1, so a nop there is harmless). The instruction-level match cannot be settled without the PAL ELF. | medium (semantics), low (which word is which) |
 | `0020b6d4 3c023f80 -> 3c023f76` "player gravity" | `CharaUpdateMovement_20a7d0+0x17A4` = **0x20BF74**: `lui v0,0x3f80; mtc1; div.s f12 = 1.0/dt; VecScale(vel, vel, f12)` | the velocity un-scale after `CharaMoveCollideMaybe`; 0.96/dt damps the velocity (and the gravity it just accumulated) 4 % per frame. It is the only `lui v0,0x3f80` in the function on the velocity path (the other candidate, +0x1150 at 0x20B920, multiplies the slide deceleration). Delta +0x8A0. Why it is needed: section 3.4. | medium-high |
 | `0048cb84 41f00000 -> 42700000` (30 -> 60) | the frame-rate constant 30.0f is **rodata 0x45B078** (block after the "Scene Main" string: 0x45B070 0x3343, 0x45B078 30.0, 0x45B080 20.0 units/metre, 0x45B088 9.8) | seconds<->frames everywhere: `GetScaledGravity_23b170` (-2*9.8*20/30^2*dt), `CharaMoveCollideMaybe_234dc0` (+0x20c gravity, +0x914/+0x9c8 15-frame timers), `MoviePlayModal+0x324` (30-frame read-stall timer), `StatusEntryGetTime_3a60f0`, `CharaStatusFramesLeft_3b6c90`, `ScriptFnEventTimerSet_3d6ae0`, `EventFireIntervalTriggers_3e0220` (play time % 30), `MinimapUpdate_3295a0`, `LoadingScreenFrame_3435d0`, `HatenaMarkStep`, `InsectItemTickSatiety`, `UnitUpdate`, `PartyUpdate`, six DataTable param loaders, ... In NTSC-U no `30.0, 1.0, 1.0` run exists anywhere in the image and no code initialises such a trio in bss (searched `41f00000 3f800000 3f800000`, all 96 `lui 0x41f0` sites and their stores). Best hypothesis: the PAL trio is PAL-conversion state (fps + two 50/60 Hz scale factors) that NTSC-U does not have. Changing 30 -> 60 is not something our approach needs. | medium |
 | `0048cb8c 3f800000 -> 40000000` (3.0 in menus, 1.0 in FMV) and `0048cb88 3f800000 -> 3fe40000` | no NTSC-U counterpart found | the only global multipliers on the affected systems are 0x47D26C = 1.6 (throw gravity scale, `GetThrowGravity_3647b0`), 0x47D278 = 0.8 (NPC walk speed, below), 0x47DB34 = 0.98 (per-frame velocity friction), 0x47D464 = 1.1 (double-step threshold). Red-tv's descriptions ("timer, menu, object distance, speed", "gravity and object distance") match the frame-stepped systems in section 3.3/3.4, i.e. he used PAL-only globals as knobs for bugs we must fix per system. | unresolved |
@@ -217,11 +222,14 @@ The "double step" mode (+0x5E00) is never enabled in the main ELF. Our
   `CameraTargetFollowUpdate_307340` (battle, the right stick's left and
   right), `CameraFirstPersonUpdate_307f00` (R3, both sticks added, times
   `D_0047D614`) add a frame's worth each frame -> **2x turn**; scaled by the
-  step (`camera`, 2026-10-25). `CameraTargetFollowUpdate`'s tilt eases
+  frame's share, not the step's base (`camera`, 2026-10-25, in
+  `src/camera_view.cpp`: the orbit's input and the stick reads by their
+  return addresses). `CameraTargetFollowUpdate`'s tilt eases
   toward the stick's push times 15 degrees (+0x40 of its parameters, by
   +0x28 = 0.2 a frame): a held angle, left alone. `CameraDebugFreeUpdate_305c60`,
   the developers' free camera, moves 8 units a frame by the left stick and
-  turns by the right: its sticks take the frame's share (`camera`).
+  turns by the right: its sticks take the frame's share (`camera`,
+  `src/free_camera.cpp`).
 - Texture animations: `TexAnimSeqUpdate_163dd0` (a0 the sequence, f12 the
   step) gets the scene's step from the map (`MapTickAnims_1e1ac0`,
   `MapMgrAuxAreaTexAnimUpdate_1e1430`, through `TexGroupUpdateAnim_157ca0`)
@@ -288,7 +296,7 @@ is callee-saved and holds the step on the walking path), scales the
 velocity by the step before the move and divides it back after, since
 CharaUpdateMovement's own unscale divides by 1.0.
 
-## 4. Assessment against our mode (RG_FPS=60: env+0x24 = 1 before each flip, scale 0.5 / step 1 after each update, interval 2 during movies)
+## 4. Assessment against our mode (60 fps: env+0x24 = 1 before each flip, scale 0.5 at full rate / step 1 after each update, interval 2 during movies and the loading screen)
 
 *Done since (2026-10-18, `src/scene_timing.cpp` and `src/step_fixes.cpp`,
 off with `RG_STEP_FIXES=0`): neither strategy below as such. The interval
@@ -315,23 +323,48 @@ the battle results, and the other `TaskStepMenu*` thunks into NORMAL.BIN,
 actions and froze a skill on logic frames; `TaskTableRun` ignores a step's
 return) run on the frames that complete a whole step (`logicFrame`, a
 button press runs them at once), and the field modes that lock the scale
-(chests, talks, warps) take the half steps.*
+(chests, talks, warps) take the half steps. Except where a caller runs a
+script to its end inside one frame, `do {} while (SystemVmUpdate() != 1)`
+with no vsync wait (`AbilityModeRun`, three sites, after SystemVmCall
+0xBB8, 0x7D0 and 0xFA0; `AttackChainModeUpdate`): the frame never ends in
+such a loop, so a skipped call is skipped for good, and using a power hung
+the game (2026-10-20). Calls from those return addresses run every time,
+as a whole step.*
+
+The fixes, by their `RG_STEP_FIXES` name (all on by default; `0` or `none`
+turns them off, a comma list picks some; `src/scene_timing.h`):
+
+| Name | What takes the step | Where |
+|---|---|---|
+| `clock` | the play clock, the field minimap and name entry: `DrawEnvGetVsyncInterval` reads 2 for its three logic readers | `src/scene_timing.cpp` |
+| `movie` | scale 1.0 inside a movie (`MoviePlayModal`) | `src/scene_timing.cpp` |
+| `npc` | NPC walk factor and turn rates | `src/step_fixes.cpp` |
+| `judge` | projectiles and thrown objects (`HandleRegistryRefStepAll`) | `src/step_fixes.cpp` |
+| `gravity` | character gravity, terminal velocity and the air move's step | `src/step_fixes.cpp` |
+| `event` | scripts, the event player and the message windows, on the logic frames | `src/step_fixes.cpp` |
+| `menu` | the field's menus and HUD windows (the battle results among them), the chests and the items they burst, the doors' triangles, on the logic frames | `src/step_fixes.cpp` |
+| `ai` | the characters' AI, on the logic frames, its moves shared with the next frame | `src/step_fixes.cpp` |
+| `texture` | texture animations take the frame's share; layers held still stay still | `src/step_fixes.cpp` |
+| `camera` | the camera's turn by the stick, and the free camera, by the frame's share | `src/camera_view.cpp`, `src/free_camera.cpp` |
+
+Not under a name: while the loading screen is up the flip waits two
+vblanks, as for the movies (`src/loading_screen.cpp`).
 
 | Red-tv item | our mode | status | native equivalent |
 |---|---|---|---|
-| base speed (his vsync byte + two 0x3f00) | scale 0.5 written after every update; RG_TIME_SCALE=game reproduces his threshold change | covered | done (`scene_timing.cpp`) |
+| base speed (his vsync byte + two 0x3f00) | scale 0.5 written after every update, frameTime/2 when a frame runs long (his threshold change; `RG_TIME_SCALE=fixed` holds 0.5) | covered | done (`scene_timing.cpp`) |
 | title screen | TITLE.BIN runs its own overlay mode (interval 1 + lock, 0x4EAA00); `afterUpdate` honours the lock | covered; his fix was about PCSX2 re-applying the byte over the title's own writes | none |
-| NPC walking too far | not handled: `NpcObjUpdate` steps per frame | **broken** (2x walk/turn) | hook `NpcObjTableStepMaybe_2fae50` (or `TaskStepNpc_3127d0`) to run on every other 60 Hz frame while unlocked (accumulate the scene step and call when >= 1), or hook `NpcObjUpdate` and scale the 0x47D278 factor; the game has no dt here, so skipping frames keeps its exact semantics |
-| objects thrown too far | not handled: judge objects stepped with dt = 1.0 while launch gravity uses 0.5 | **broken** (2x speed, ~2x range) | hook `HandleRegistryRefStepAll_3147d0` from `TaskStepJudgeObject` and set FPR f12 = `GetTimeStep()` (scale x base) before calling the original; `ProjectileMoveStep` is already dt-correct, and the launch gravity then matches |
-| player gravity (0x3f76, 1.78) | not handled | **broken** (jumps about half height/time, falls 2x acceleration) | make the gravity added inside `CharaMoveCollideMaybe` be g*dt^2 so the un-scale yields `v += g*dt`: e.g. hook `GameSceneGetTimeStep` and return step^2 when `ra` == 0x234FD8 (the call at 0x234FD0) and, for held/thrown characters, the `GetThrowGravity` call at 0x234FB8 (ra 0x234FC0); plus the terminal clamp (0x235064 constant 0.5 -> 0.5*dt) if long falls matter. Red-tv's 0x3f76/0x20BF74 is an approximation of this |
-| timer at half speed | not handled: `PlayTimeStep` = interval(1) x 0.5 | **broken** (play clock and per-second event triggers at half speed) | hook `PlayTimeTick_3e6360` (a0 = GameData, f12 = tick) and double f12 while our 0.5 is in force (unlocked, not in a movie); or strategy B below |
-| input latency | pad sampled once per frame -> every 16 ms at 60 fps | better than original; field UI auto-repeat is 2x faster (frames) | optional: hook `PadIsRepeatTriggered` to run on alternate frames; low priority |
-| FMV (interval 2, multiplier 1.0) | movie hooks set interval 2 | covered for pacing; but `MoviePlayModal` never calls TimeScaleUpdate, so the scale stays at the last field value (0.5): audio fades (`StreamMgrUpdate`, `GameSceneSoundUpdate` via `EventCueStep`) run at half speed inside movies | write scene+0x5E0C = 1.0 in the `movieStart` hook (the next field update restores 0.5) |
+| NPC walking too far | before the fix: `NpcObjUpdate` steps per frame | fixed (`npc`); was **broken** (2x walk/turn) | hook `NpcObjTableStepMaybe_2fae50` (or `TaskStepNpc_3127d0`) to run on every other 60 Hz frame while unlocked (accumulate the scene step and call when >= 1), or hook `NpcObjUpdate` and scale the 0x47D278 factor; the game has no dt here, so skipping frames keeps its exact semantics |
+| objects thrown too far | before the fix: judge objects stepped with dt = 1.0 while launch gravity uses 0.5 | fixed (`judge`); was **broken** (2x speed, ~2x range) | hook `HandleRegistryRefStepAll_3147d0` from `TaskStepJudgeObject` and set FPR f12 = `GetTimeStep()` (scale x base) before calling the original; `ProjectileMoveStep` is already dt-correct, and the launch gravity then matches |
+| player gravity (0x3f76, 1.78) | before the fix: not handled | fixed (`gravity`); was **broken** (jumps about half height/time, falls 2x acceleration) | make the gravity added inside `CharaMoveCollideMaybe` be g*dt^2 so the un-scale yields `v += g*dt`: e.g. hook `GameSceneGetTimeStep` and return step^2 when `ra` == 0x234FD8 (the call at 0x234FD0) and, for held/thrown characters, the `GetThrowGravity` call at 0x234FB8 (ra 0x234FC0); plus the terminal clamp (0x235064 constant 0.5 -> 0.5*dt) if long falls matter. Red-tv's 0x3f76/0x20BF74 is an approximation of this |
+| timer at half speed | before the fix: `PlayTimeStep` = interval(1) x 0.5 | fixed (`clock`: the interval reads 2 there); was **broken** (play clock and per-second event triggers at half speed) | hook `PlayTimeTick_3e6360` (a0 = GameData, f12 = tick) and double f12 while our 0.5 is in force (unlocked, not in a movie); or strategy B below |
+| input latency | pad sampled once per frame -> every 16 ms at 60 fps | better than original; field UI auto-repeat is 2x faster (frames); still so, not hooked | optional: hook `PadIsRepeatTriggered` to run on alternate frames; low priority |
+| FMV (interval 2, multiplier 1.0) | movie hooks set interval 2 | covered for pacing; but `MoviePlayModal` never calls TimeScaleUpdate, so the scale stays at the last field value (0.5): audio fades (`StreamMgrUpdate`, `GameSceneSoundUpdate` via `EventCueStep`) ran at half speed inside movies; fixed (`movie`: scale 1.0 when `MoviePlayModal` starts) | write scene+0x5E0C = 1.0 in the `movieStart` hook (the next field update restores 0.5) |
 | FMV subtitles | cue timing is per movie frame | covered (nothing to do) | none; his fix is PAL-specific |
 | menu timers (3.0 in menus) | menus are overlay mode (interval 1, scale locked 1.0): `PlayTimeStep` ticks 1 x 1 = correct, `PauseStepUpdate` loops once, insect cage halves itself | covered | none |
-| field minimap | `MinimapUpdate` halves GetTimeStep at interval 1 -> 0.25 | **likely broken** (minimap scroll/fade at half speed); `TextEntrySetupState` similar | hook `DrawEnvGetVsyncInterval` is wrong (the game's own menus rely on 1); either hook `MinimapUpdate` to compensate or use strategy B |
-| giant bosses leave small arenas / enemy jumps too far (code cave) | not handled | **broken**, and not the gravity (2026-10-20, the gate fight's boss): the AI counts frames. `AiUpdate_2c05b0` runs once a frame per character, counts its timers in frames, and its script moves the character a step a call (`AiCmdCharaSetPosById_2c9ee0`: position + 29.8 units; `AiCmdMoveByLocalOffset_2c90f0`: a requested move CharaMoveCollideMaybe applies whole), while what ends the charge took as long: 54 steps at 60 fps against 27, out of the arena, held in the air | `ai` in `src/step_fixes.cpp`: AiUpdate on the logic frames as a whole step, the move it made shared half and half with the next frame, and the walk and run it holds (the character's flags, +0x568) held again on the frame in between: without that the party following its leader walked in little steps and stops (2026-10-21) |
-| backwards jump higher/longer | not handled | same | same |
+| field minimap | `MinimapUpdate` halves GetTimeStep at interval 1 -> 0.25 | fixed (`clock`: the interval reads 2 there, and for `TextEntrySetupState`); was **likely broken** (minimap scroll/fade at half speed) | hook `DrawEnvGetVsyncInterval` is wrong (the game's own menus rely on 1); either hook `MinimapUpdate` to compensate or use strategy B |
+| giant bosses leave small arenas / enemy jumps too far (code cave) | before the fix: not handled | fixed (`ai`); was **broken**, and not the gravity (2026-10-20, the gate fight's boss): the AI counts frames. `AiUpdate_2c05b0` runs once a frame per character, counts its timers in frames, and its script moves the character a step a call (`AiCmdCharaSetPosById_2c9ee0`: position + 29.8 units; `AiCmdMoveByLocalOffset_2c90f0`: a requested move CharaMoveCollideMaybe applies whole), while what ends the charge took as long: 54 steps at 60 fps against 27, out of the arena, held in the air | `ai` in `src/step_fixes.cpp`: AiUpdate on the logic frames as a whole step, the move it made shared half and half with the next frame, and the walk and run it holds (the character's flags, +0x568) held again on the frame in between: without that the party following its leader walked in little steps and stops (2026-10-21) |
+| backwards jump higher/longer | before the fixes: not handled | fixed (`gravity`, with the air path of 3.4, and `ai`) | same |
 | texture animations (scrolling layers, flip-books) | `TexAnimSeqUpdate_163dd0` takes a constant 1.0 a draw from most callers; a still axis (period 1) read 0.5 every other frame at half steps | **broken** until 2026-10-21 (2x, and the Monography Shot's platform drawn as tiles instead of circles) | `texture` in `src/step_fixes.cpp`: a 1.0 becomes the frame's share (the scene's per-frame scale), and after a part step the still layers are put back where whole steps leave them |
 | loading screen's story so far at 2x (lines and Press X) | the screen's own thread (`LoadingScreenThread_343510`: `LoadingScreenFrame`, then GfxEndFrame's flip) fades each line by a constant a frame (0x3445B4..0x344628) and its timer by 1/30 a frame | **broken** until 2026-10-20 night (every flip waited one vblank) | `src/loading_screen.cpp`: between `LoadingScreenStart_343240` and `LoadingScreenStop_3431e0` the flip waits two vblanks, as for the movies |
 
@@ -386,5 +419,9 @@ interval and need their own hooks.
   not traced in detail; NORMAL.BIN's six GetTimeStep sites (battle overlay)
   were not analysed; the event message/voice auto-advance timers
   (`MesWin*`, `EventVoiceTick`) were not checked for frame counting.
+  (Later: the message windows run on the logic frames, `event`, through
+  `MesMgrUpdateAll`; the battle results window, `menu`.)
 - Whether `TextEntrySetupState` and `MinimapDrawEntry` produce visible
   problems (they read the interval, but what they scale was not followed).
+  (Later: `TextEntrySetupState` reads 2, `clock`; `MinimapDrawEntry`
+  overwrites what it reads, section 4.)

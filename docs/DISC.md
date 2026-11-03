@@ -2,7 +2,8 @@
 
 ## Supported dump
 
-Only the NTSC-U release is supported for now.
+Only the NTSC-U release is supported for now. The Japanese Director's Cut
+can add its voices and movies to it ([below](#the-japanese-disc-undub)).
 
 | | |
 |---|---|
@@ -17,6 +18,21 @@ Per-file sizes and SHA-256 for all 124 files are in
 [`config/SCUS_974.90/hashes.json`](../config/SCUS_974.90/hashes.json).
 `python setup.py verify --iso <image> --full` checks a dump against them and
 against Redump without writing anything.
+
+`Install.bat` takes the image as an uncompressed `.iso` of exactly that
+size. A compressed one (`.chd`, `.cso`) must be turned back into an `.iso`
+first.
+
+## The Japanese disc (undub)
+
+The undub takes the voices and movies of the Japanese Director's Cut
+(SCPS-17013) from your own image of it. `Install-Undub.bat` (or
+`python setup.py extract-japanese --iso <image>`) copies them, about 3 GB,
+into `disc/JA`; a movie the US disc has the same bytes of is not copied. It
+checks the image's two voice indexes against
+[`config/SCUS_974.90/japanese.json`](../config/SCUS_974.90/japanese.json)
+and refuses another Japanese release: only the Director's Cut has voices
+that line up with the US game.
 
 ## Layers
 

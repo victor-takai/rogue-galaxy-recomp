@@ -696,14 +696,14 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "not let you skip, which can leave the story out of order.",
          false},
     };
-    // One switch for each pack found, on a page of their own in the menu (F1 > Textures).
+    // One switch for each pack found, on a page of their own in the menu (F1 > Settings > Textures).
     for (const rg::texturePack::PackInfo &pack : rg::texturePack::packs())
     {
         dq8::ui::GameOption option{"texture_pack_" + pack.key, "Pack: " + pack.name,
-                                   "Above 1x, the game's art is drawn from this pack's " +
-                                       std::to_string(pack.regions) +
-                                       " pictures, where it has them. Packs are read by name, a later one over an "
-                                       "earlier one, textures\\hd first.",
+                                   "The game's art is drawn from this pack's " + std::to_string(pack.regions) +
+                                       " pictures, where it has them: 2D art above 1x, a PCSX2 pack's 3D at any "
+                                       "scale. Packs are read by name, a later one over an earlier one, textures\\hd "
+                                       "first.",
                                    pack.enabled};
         option.page = "textures";
         host.gameOptions.push_back(std::move(option));

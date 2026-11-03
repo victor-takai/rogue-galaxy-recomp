@@ -386,7 +386,9 @@ where the stand-in's vertices would go, the strip's go instead, in
 `shaders/gs_native.vert`: the program's transform, its 12.4 and whole-Z
 fixed point, fog and color clamp, then the same outputs as `gs_draw.vert`,
 with the position homogeneous so the GPU clips where the program dropped
-triangles at its guard band or clipped them in software. The strip goes as
+triangles at its guard band or clipped them in software (the game sends the
+chunks the program clips to the VU1 instead, since the GPU's clipping across
+the eye plane differed on one driver). The strip goes as
 an indexed triangle list, in the order the GPU's strip would draw it, and
 its transform (matrix, fog, color cap, depth) as a `GsNativeMeshRecord` in a
 storage buffer that each vertex names (its `t`), so consecutive meshes of

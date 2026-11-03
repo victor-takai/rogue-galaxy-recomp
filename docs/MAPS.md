@@ -6,8 +6,8 @@ exclusive) named by `ghidra_output` in that image's recompiler config:
 
 | Image | Map | Recompiler config | Functions |
 |---|---|---|---|
-| `SCUS_974.90` | [`functions_main.csv`](../config/SCUS_974.90/functions_main.csv) | [`recomp/main.toml`](../config/SCUS_974.90/recomp/main.toml) | 17,726 |
-| `BIN/TITLE.BIN` | [`functions_title.csv`](../config/SCUS_974.90/functions_title.csv) | [`recomp/title.toml`](../config/SCUS_974.90/recomp/title.toml) | 111 |
+| `SCUS_974.90` | [`functions_main.csv`](../config/SCUS_974.90/functions_main.csv) | [`recomp/main.toml`](../config/SCUS_974.90/recomp/main.toml) | 17,733 |
+| `BIN/TITLE.BIN` | [`functions_title.csv`](../config/SCUS_974.90/functions_title.csv) | [`recomp/title.toml`](../config/SCUS_974.90/recomp/title.toml) | 114 |
 | `BIN/INSMENU.BIN` | [`functions_insmenu.csv`](../config/SCUS_974.90/functions_insmenu.csv) | [`recomp/insmenu.toml`](../config/SCUS_974.90/recomp/insmenu.toml) | 367 |
 | `BIN/NORMAL.BIN` | [`functions_normal.csv`](../config/SCUS_974.90/functions_normal.csv) | [`recomp/normal.toml`](../config/SCUS_974.90/recomp/normal.toml) | 676 |
 | `BIN/FACTORY.BIN` | [`functions_factory.csv`](../config/SCUS_974.90/functions_factory.csv) | [`recomp/factory.toml`](../config/SCUS_974.90/recomp/factory.toml) | 431 |
@@ -137,8 +137,11 @@ entry points stay translated, and so do `fflush`, `fseek` and `ftell` (DQ8 binds
 them, but the runtime's versions only know handles from its own `fopen`, and
 this game opens files with its own newlib).
 
-Not bound yet, and needing handlers in phase 3: `sceCdLayerSearchFile`
-(0x1297E0) and `sceCdReadDvdDualInfo` (0x12ACD0).
+Not bound: `sceCdLayerSearchFile` (0x1297E0) and `sceCdReadDvdDualInfo`
+(0x12ACD0). Phase 3 found they need no handler: they run as the game's own
+code, the dual-layer query gets no answer, so the game takes the disc for
+single-layer, and the extracted folder holds both layers' files
+([DISC.md](DISC.md)).
 
 There is no `[mmio]` table. ps2_analyzer's recorded only the page base
 (0x10000000) for 137 of its 190 sites, and an `[mmio]` entry overrides the
@@ -184,7 +187,9 @@ point, which is correct but larger and slower. In the main ELF 271 of the 277
 are not `switch` tables but indirect tail calls through a pointer loaded from
 memory (`lw t9, ...; jr t9`, C++ virtual calls and callbacks), and only 4 are
 tables, so `[jump_tables]` would not help much. Treating such a `jr` as an
-indirect call is a recompiler change, left for the performance phase.
+indirect call is a recompiler change, left for the performance phase. (Not
+done since: no patch in `patches/ps2recomp/` makes it, and such a `jr` still
+goes through the runtime's dispatcher.)
 
 The main ELF has no .bss section header, so ps2_recomp's bootstrap clears no
 .bss; the game's own entry code clears 0x00481080..0x00528200 before `main`,

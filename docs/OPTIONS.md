@@ -2,15 +2,23 @@
 
 <p align="center"><img src="images/menu-game.jpg" width="70%" alt="The F1 menu's Game page"></p>
 
-**F1** (or the Guide button, or Back+Start) opens the menu:
+**F1** opens a menu bar at the top of the window: Rogue Galaxy (About,
+Quit), Game (pause, fast-forward, mute, screenshots), Settings, View
+(fullscreen, the frame-rate counter) and Help. The Guide button, or
+Back+Start, opens the Settings window at once; L1 and R1 turn its pages.
+Settings has seven pages, written here as F1 > Settings > Game and so on:
 
-- **Display**: window or fullscreen, vertical sync, internal resolution,
-  aspect ratio, scaling filter, and **Borders**, what fills the sides of a
-  4:3 picture (black, the picture blurred, or your own image from the
-  `borders` folder).
+- **Display**: window or fullscreen, vertical sync, internal resolution
+  (2x by default), aspect ratio, scaling filter, **Borders**, what fills
+  the sides of a 4:3 picture (black, the picture blurred, or your own image
+  from the `borders` folder), integer scaling, and **Sharper picture**,
+  which drops the PS2's line blending (it only blurs on a monitor).
 - **Sound**: volume and muting.
 - **Controls**: controller and keyboard remapping, dead zones.
 - **Game**: the game options below.
+- **Language**: the undub, [below](#language).
+- **Textures**: a switch for each texture pack found
+  ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)).
 - **Interface**: the menu's size, notifications, pause and fast-forward,
   the frame-rate counter.
 
@@ -22,15 +30,18 @@
 | F6 | Free camera |
 | F11 or Alt+Enter | Fullscreen |
 | F12 | Screenshot |
+| Shift+F12 | Screenshot with the menu |
 
 ## Game options
+
+F1 > Settings > Game, in these sections:
 
 **Camera and view**
 
 | Option | |
 |---|---|
 | 60 frames per second | On by default; off, the game's own 30. From the next start. |
-| Widescreen | A wider view that fills the window, from 4:3 to 32:9. |
+| Widescreen | Off by default. A wider view, from 4:3 to 32:9; with Display > Aspect ratio on Auto (the default) it fills the window. |
 | Minimap size | 50% to 100% of the game's, toward its corner. |
 | Compass size | 50% to 100% of the game's, toward its corner. |
 | Field of view | 40 to 90 degrees (the game's is 52). |
@@ -67,27 +78,37 @@
 | Shop prices | 10% to 200%. |
 | Action gauge speed | 25% to 400%. |
 
-**Language** (its own page in Settings)
+**Rendering**
 
 | Option | |
 |---|---|
-| Undub (Japanese voices) | The voices in scenes and the movies come from your own Japanese Director's Cut (SCPS-17013) instead of the English ones; the text stays as it is. Needs that disc's files in `disc/JA`: double-click `Install-Undub.bat` (after `Install.bat`) and pick your Japanese disc image, or drop it onto the file; by hand, `python setup.py extract-japanese --iso "<your Japanese disc>"`. A few lines (63) have no Japanese voice and play silent. Takes effect at the next start. |
+| Native renderer | Off by default. For development: the work on drawing the game with the PC's renderer, instead of through the emulation of the PS2's graphics chip, goes behind it. It changes nothing yet. Takes effect at the next start. |
 
 **Developers**
 
 | Option | |
 |---|---|
-| Developer tools | What the developers left in the game. In the main menu: R3 shows every item (R1 + R3 as a list, Cross gives one), R1 + Select unlocks every help and info entry, Select fills the bestiary. R2 + Triangle on the Revelation Flow gives the items a cell needs. Triangle + R1 + R2, paused in a scene, skips it (this can break the story's order). |
+| Developer tools | What the developers left in the game. In the main menu: R3 shows every item (R1 + R3 as a list, Cross gives one). On the help pages and the info list, R1 + Select unlocks every entry; in the bestiary, Select fills it. R2 + Triangle on the Revelation Flow gives the items a cell needs. Triangle + R1 + R2, paused in a scene, skips it (this can break the story's order). |
 
 <p align="center">
   <img src="images/salgin-above.jpg" width="49%" alt="Salgin from above">
   <img src="images/dev-items.jpg" width="49%" alt="Developer tools: the list of every item">
 </p>
 
+## Language
+
+F1 > Settings > Language.
+
+| Option | |
+|---|---|
+| Undub (Japanese voices) | The voices in scenes and the movies come from your own Japanese Director's Cut (SCPS-17013) instead of the English ones; the text stays as it is. Needs that disc's files in `disc/JA`: double-click `Install-Undub.bat` (after `Install.bat`) and pick your Japanese disc image, or drop it onto the file; by hand, `python setup.py extract-japanese --iso "<your Japanese disc>"`. A few lines (63) have no Japanese voice and play silent. Takes effect at the next start. |
+
 ## In the game's own menu
 
-The same options are on the game's Settings screen (System > Settings in
-the main menu): L1 and R1 turn the page.
+Most of the same options, and Display > Borders, are on the game's Settings
+screen (System > Settings in the main menu): L1 and R1 turn the page.
+Controller's buttons, Check for new versions, Native renderer, the undub and
+the texture packs are in F1 alone.
 
 <p align="center">
   <img src="images/settings-switches.jpg" width="49%" alt="The game's Settings screen: the switches">
@@ -97,7 +118,9 @@ the main menu): L1 and R1 turn the page.
 ## Good to know
 
 - The window opens as you left it. Settings are saved in
-  `%APPDATA%\RogueGalaxy\Recompiled\settings.ini`.
+  `%APPDATA%\RogueGalaxy\Recompiled\settings.ini`, screenshots in
+  `%APPDATA%\RogueGalaxy\Recompiled\screenshots` (F1 > Game > Open
+  screenshots folder).
 - On a 144 Hz monitor 60 fps judders a little; 120 Hz or variable refresh
   looks smoother.
 - Each option also has an environment variable, for testing:

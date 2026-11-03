@@ -6,7 +6,7 @@
 *.part
 
 # The game's 2D art collected from the screen and its larger versions
-# (textures\RogueGalaxy-collect.bat): made from the disc, they stay local.
+# (debug\RogueGalaxy-collect.bat): made from the disc, they stay local.
 /textures/*/
 
 # Memory cards the runtime keeps next to the disc: the player's saves.

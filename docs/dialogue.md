@@ -9,6 +9,20 @@ Function addresses are for the US executable, named as in
 [RGDecomp](https://github.com/Dorgengoa/RGDecomp). Data addresses are
 guest addresses in the same executable.
 
+## What shipped
+
+The Japanese voices and movies, as the undub. `Install-Undub.bat` (through
+`tools/install/install-undub.ps1`) runs `python setup.py extract-japanese`.
+It checks that the image is the Japanese Director's Cut by its two voice
+indexes (`config/SCUS_974.90/japanese.json`), then copies the voice archives
+(`DATA0_1`, `DATA1_1`) and every movie whose bytes differ from the US one
+into `disc/JA`, about 3 GB. The menu's Settings > Language > "Undub
+(Japanese voices)" turns it on at the next start ([OPTIONS.md](OPTIONS.md)).
+`src/voice_language.cpp` then does what section 8 describes: the voice token
+reads `JA`, the voice archives are read from `JA/`, and a movie with a copy
+in `disc/JA/MOVIE` plays from there. The European text is not done. The rest
+of this file is the study.
+
 ## 1. Two language tokens in every path
 
 Paths are resolved by `PathLocalize` (0x1C28C0), which `ArchiveGetFileByPath`
@@ -169,19 +183,25 @@ them: a movie carries its own sound.
 - **For the Japanese dub:** the same-size group needs only the Japanese file played
   in place of the US one (the picture is the same, and it has no baked-in
   subtitles to clash). For the other group, the Japanese file has the Japanese
-  picture too (titles, credits); the choice is the player's.
+  picture too (titles, credits); the choice is the player's. (Shipped: no
+  choice per movie. Every movie that differs is copied, and with the undub on
+  all of them play from the Japanese disc, titles and credits included.)
 
 ## 8. What the two requests need
 
 - **Voices from the Japanese disc:** make `!` read `JA`, and resolve the
   `wav/ja/...` files from the player's own Japanese `DATA*_1` archives (a
   second archive set, not merged into the US ones). The 63 names that exist
-  only in the US set need a fall back (to English, or to silence). Tested: with the voice token set to `JA` and the Japanese `DATA*_1`
+  only in the US set need a fall back (to English, or to silence); they play
+  silent. Tested: with the voice token set to `JA` and the Japanese `DATA*_1`
   archives in the disc folder, the Japanese voices play in a voiced scene, 44.1 kHz
-  included (`src/voice_language.cpp`, `RG_VOICE_LANG=JA`).
+  included (`src/voice_language.cpp`, `RG_VOICE_LANG=JA`). This is now the
+  menu's Undub switch; `RG_VOICE_LANG` stays as a developer's switch.
   Movies are separate (section 7): the loose `MOVIE\*.MVI` of the Japanese disc
   play in place of the US ones, file by file.
-- **Proposed way to mount the Japanese voices.** The runtime does not read an ISO: it
+- **How the Japanese voices are mounted** (proposed, then shipped this way;
+  `setup.py extract-japanese` writes the second folder, `disc/JA`, about 3 GB
+  with the movies). The runtime does not read an ISO: it
   serves `cdrom0:` from a folder and registers each file the game asks for under a
   pseudo sector number (`registerCdFile`, `sceCdSearchFile`). So the same model as
   the US disc works: setup extracts the player's Japanese `DATA0_1` and `DATA1_1`
@@ -190,8 +210,8 @@ them: a movie carries its own sound.
   Movies work the same way (`MOVIE\*.MVI` resolved to the second folder). The 63
   US-only lines then have no file; the first step is to leave them silent and check
   that the game tolerates a missing voice, the second is a retry on `en` if both
-  archive sets can be mounted.
-  Done as an experiment without touching the runtime: `CdDataSetNamesInit`
+  archive sets can be mounted. (They are left silent; the retry is not done.)
+  Done without touching the runtime: `CdDataSetNamesInit`
   (0x1C31A0) fills the two archive names of a layer (`DATA%d_0`, `DATA%d_1`, 32
   byte slots); renaming the second to `JA/DATA%d_1` makes the game look for
   `JA/DATA<layer>_1.HD6` and `.DAT`, and the disc folder serves `disc/JA/`.
@@ -203,7 +223,8 @@ them: a movie carries its own sound.
   accent codes added to the US executable's tag lookup and layout code.
 - Both need the player's own discs read at run time and a language setting; the
   chosen language and the disc paths have to reach the hook that fills the two
-  tokens.
+  tokens. (For the voices, the disc is read once, at install, into `disc/JA`,
+  and the setting is the Undub switch.)
 
 ## 9. Not yet studied
 
@@ -215,7 +236,9 @@ them: a movie carries its own sound.
   language (the labels in the sample did) and what else differs between the US
   and PAL scripts.
 - Which sound a movie plays: whether the game picks the file by name only, so a
-  Japanese `.MVI` can be handed over by the file layer (not tried).
+  Japanese `.MVI` can be handed over by the file layer (not tried). (Later:
+  done where the game queues the file, `SoundStreamQueueOpen` (0x1C0360), in
+  `src/voice_language.cpp`; the movie plays with its own sound.)
 - The `.mwv` codec itself (the stream player takes 44.1 kHz without trouble).
 - Menu and help text: which of the `?` files the US build opens at which
   moments.

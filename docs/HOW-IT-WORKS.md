@@ -14,7 +14,8 @@ This project works differently. Before the game is built, a tool called a
 recompiler ([PS2Recomp](https://github.com/ran-j/PS2Recomp)) reads the game's
 program once and translates every one of its functions into C++, the
 language Windows programs are written in. That C++ is then compiled into
-`roguegalaxy.exe`, an ordinary Windows program. The game's own logic runs as
+`roguegalaxy.exe`, an ordinary Windows program (it builds on Linux too,
+[BUILDING.md](BUILDING.md)). The game's own logic runs as
 it did on the PS2, but as native code.
 
 That is why it is called a static recompilation: "static" because the
@@ -57,15 +58,18 @@ the code and the issues.
 
 ## Hooks: how the game gets changed
 
-Every feature this project adds, from the 60 fps mode and widescreen to the
-options in the F1 menu, is a **hook**: a function of ours put in place of
-one of the game's functions. When the game calls that function, ours runs
-instead, and it can change the result, do something extra, or call the
-game's own version. The hooks live in `src/`, one file per feature
-(`src/instant_text.cpp` is the instant text option, for example).
+Most of what this project changes in the game, from the 60 fps mode and
+widescreen to the game options in the F1 menu, is a **hook**: a function of
+ours put in place of one of the game's functions. When the game calls that
+function, ours runs instead, and it can change the result, do something
+extra, or call the game's own version. The hooks live in `src/`, one file
+per feature (`src/instant_text.cpp` is the instant text option, for
+example). The display options, such as the resolution, are not hooks: they
+belong to the part that draws the picture.
 
 The game's files are never modified, and an option can be turned off at any
-time. [HOOKS.md](HOOKS.md) is the guide to writing a hook.
+time (a few take effect at the next start). [HOOKS.md](HOOKS.md) is the
+guide to writing a hook.
 
 ## What happens when you press play
 

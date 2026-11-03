@@ -2,8 +2,9 @@
 
 **In short:** the game's code was translated into C++, one C++ function for
 each function of the game. A hook is a function of ours put in place of one
-of them, so the game runs ours when it calls that one. The options, the
-60 fps mode and widescreen all work that way. This page is for people who
+of them, so the game runs ours when it calls that one. Most of the options
+that change the game, the 60 fps mode and widescreen work that way; the
+display options live in the renderer instead. This page is for people who
 write C++ for the project.
 
 Changes to how the game behaves go into `src/` as hooks: host C++ functions
@@ -20,6 +21,12 @@ Every function of the main executable is a C++ function in
 `(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)`: `ctx` holds the
 registers (`getRegU32(ctx, 4)` is a0, 5 is a1, 2 is v0, 29 is sp, 31 is ra),
 and guest memory is `rdram + (address & 0x1FFFFFFF)`.
+
+About 200 SDK and libc functions are bound to the runtime instead (the
+`stubs` list in `config/SCUS_974.90/recomp/main.toml`). Their file calls
+the runtime's version, not the game's code: `Rand_133710_0x133710.cpp` is
+`ctx->pc = ra` and a call to `ps2_stubs::rand`. The runtime's version can
+behave unlike the game's: rand did (`src/libc_rand.h`).
 
 **Calls go through a table.** A `jal` or `jalr` becomes a call to
 `runtime->dispatchGuestBranch`, which finds the target in the function table.
@@ -140,7 +147,10 @@ python tools/mipsdis.py disc/SCUS_974.90 config/SCUS_974.90/functions_main.csv c
 ```
 
 lists every `jal` and `j` to an address (a `j` means hooking that caller
-instead), and `build/generated/main/` has their code. A caller that loops on
+instead), and `build/generated/main/` has their code. Calls through a
+register (`jalr`: function pointers, task tables) are not listed, though
+they go through the table; `RG_TRACE` shows them at run time by their `ra`
+([DEVELOPMENT.md](DEVELOPMENT.md#diagnosis)). A caller that loops on
 the result within one frame hangs when the hook skips it: the 60 fps mode
 froze on powers that way, at `do {} while (SystemVmUpdate() != 1)` in
 AbilityModeRun ([STATUS.md](STATUS.md), "Two freezes after round four", and

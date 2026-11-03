@@ -5,7 +5,9 @@ write it as C++ that builds a `GSNativeMesh` (or, for what is not a mesh,
 the packets), check it against the recording and the game, then draw it on
 the GPU. Every program the recordings hold went this way on 2026-10-28
 ("Status"); this is the recipe for the pieces still unseen. The plan
-around it is `docs/NATIVE-RENDERER.md` (phase 1).
+around it is [NATIVE-RENDERER.md](NATIVE-RENDERER.md) (phase 1).
+`RG_VU1_NATIVE` is off unless set, and does not follow the F1 menu's
+"Native renderer" switch (`src/native_renderer.h`), which nothing reads yet.
 
 ## What a program is
 
@@ -54,8 +56,11 @@ that differs), and replays in the oracle like any recording: what differed at
 a boss fight comes back as data. The `[vu1native]` line counts the
 differences by program and kind (position, Z, fog, color, UV, STQ, ADC or a
 register, vertex count). It is cheap to leave on (a program is known by 64 bytes at each
-slot's start), and a later session skips what an earlier one sampled. The
-field walk gave 22 files, 12 MB; battles, events, menus and other planets
+slot's start), and a later session skips what an earlier one sampled.
+Checking is not: each checked chunk costs the VU1's run, the native build
+and two decodes, and checking every one halved a boss fight's frame rate,
+so `harvest-play.sh` checks one chunk in 16 (`RG_VU1_NATIVE_CHECK_EVERY`).
+The field walk gave 22 files, 12 MB; battles, events, menus and other planets
 are where the missing pieces are. Every file replays exactly
 (`rg_vu1_oracle build/harvest/*.vu1r --candidate all`), and the census and
 the oracle's `--inventory` read the directory as one recording.
@@ -63,7 +68,11 @@ the oracle's `--inventory` read the directory as one recording.
 ## The loop
 
 Everything runs in a build of this branch (`cmake --build build/game
---target roguegalaxy rg_vu1_oracle`) on Linux; `disc/` holds the game.
+--target roguegalaxy rg_vu1_oracle`) on Linux; `disc/` holds the game. The
+branch is in main now; the oracle is not in the default build, and its own
+use is in [tools/vu1/oracle/README.md](../tools/vu1/oracle/README.md). The
+scripts are Linux-only (Wayland, `pgrep`, `/sys/class/drm`); on Windows the
+variables go in `debug\RogueGalaxy.bat` ([DEVELOPMENT.md](DEVELOPMENT.md)).
 
 1. **Get samples.** The harvest directory (above), or a whole scene:
    `tools/vu1/oracle/capture.sh NAME [FROM_LIST] [LISTS]` records every VU1
@@ -98,8 +107,9 @@ Everything runs in a build of this branch (`cmake --build build/game
    beside `kCommon`. A piece that changes the per-vertex arithmetic (lighting
    from normals, skinning) extends `GSNativeMesh` (patch 0021: the vertex
    or the header), `gsNativeMeshPoint` (the CPU's arithmetic, shared by the
-   packet path and the fallback) and `shaders/gs_native.vert` (the GPU's),
-   in step.
+   packet path and the fallback) and
+   `thirdparty/dq8-gfx/src/gfx/backends/sdlgpu/shaders/gs_native.vert` (the
+   GPU's), in step.
 7. **Write it.** `readChunk` in `src/vu1_native.cpp` reads the chunk into a
    `GSNativeMesh`; `declineChunk` names every case not done (a flag branch the
    coverage never reached is declined, never guessed).
@@ -114,7 +124,9 @@ Everything runs in a build of this branch (`cmake --build build/game
    (30 fps mode, deterministic), `tools/bench/cmpvram.py A B` counts bytes,
    `tools/bench/vram2png.py OUT.png A.txt.vram B.txt.vram` draws both and the
    difference. Accepted so far: `skip` within a few pixels of `0`, `gpu`
-   within about 0.05% of pixels off by more than 8 levels.
+   within about 0.05% of pixels off by more than 8 levels. In `gpu` mode,
+   `DQ8_GFX_NATIVE_CPU=1` expands the meshes on the CPU instead and
+   `DQ8_GFX_NATIVE_NO_CULL=1` draws the meshes wholly off screen too.
 10. **Measure it.** `tools/vu1/oracle/native-perf.sh NAME MODE SCALE`: frame
     rate, the GS backend's and the VIF1 thread's share of the wall, GPU busy
     and power over the last 25 s of the walk.
@@ -130,7 +142,7 @@ Quadwords (16 bytes); `TOP` is the chunk's buffer (VIF TOP, `XTOP`).
 | `TOP+1` | x the UVs' offset, y the colors' offset (from `TOP+2`) |
 | `TOP+2...` | Positions (int16 xyz), then normals, UVs (int16 xy), colors (int16 xyzw), one quad a vertex each |
 | 0 | GIF tag of the output's header (A+D for PRIM and PRMODE) |
-| 4-7, 8-11, 24-27, 60-63 | Viewport, projection, view, model (`bc49172`) |
+| 4-7, 8-11, 24-27, 60-63 | Viewport, projection, view, model (`4e14705`) |
 | 16, 17, 18 | Guard band: 109 = 17 with xy times 16.xy (0.999 with clipping), 110 = 18 |
 | 19 | GIF tag (yzw) of the FOGCOL packet |
 | 39 | Color clamp |
@@ -175,7 +187,7 @@ Quadwords (16 bytes); `TOP` is the chunk's buffer (VIF TOP, `XTOP`).
 | C | 0x10e0-0x14a0 | `2460e5281034f152` | `91f542d0`'s lighting times each vertex's color / 32768 * 256 (87.y & 0x100 declined) |
 | F | 0x39d0-0x3b70 | `150031ee1534d185` | Sphere map: UV = (normal through quads 24-26 times 64-66, xy, + 1) / 2 (`SphereMap`) |
 | B | 0x0960-0x0b38 | `6e42dac662887054` | The overlay sprites (the `:960` rows), run by an MSCAL of their own (`drawsAtCall`): 32-pixel columns over the bounds in quads 98/99, one pixel wider, within quads 140/141, with the tag at 144 in buffers 145 and 165. Packets only; leaves 144-169 as the VU1 does |
-| D | 0x1900-0x20c8 | `a786efabfa469ada` | Guard band and backfaces; its own triangle-list path is declined. Also the name of its compiled routine, the VIF1 thread's busiest (`docs/STATUS.md`) |
+| D | 0x1900-0x20c8 | `a786efabfa469ada` | Guard band and backfaces; its own triangle-list path is declined. Also the name of its compiled routine, the VIF1 thread's busiest ([STATUS.md](STATUS.md)) |
 | D | 0x1900-0x1c38 | `126a58a39a8f944a` | Guard band; strips and lists |
 | D | 0x1900-0x1bc0 | `4b7b81f2fe1beeef` | No culling; strips and lists |
 | D | 0x1900-0x21e0 | `93cfd2f5a1056991` | Guard band and backfaces with `b8ea8ed5`'s depth and bounds; its triangle lists are declined |
@@ -185,6 +197,9 @@ Quadwords (16 bytes); `TOP` is the chunk's buffer (VIF TOP, `XTOP`).
 E (clipping) is never ported: the GPU clips the mesh (`gs_native.vert`
 outputs homogeneous positions), so a clipping chunk goes to the GPU like any
 other. The packet paths (`1`, `skip`) leave clipping chunks to the VU1.
+Since `11b3890` (2026-10-30) `gpu` mode does too: the GPU's clipping of
+triangles across the eye plane differed from the VU1's on one driver, so
+the chunks that clip go to the VU1 in every mode (`src/vif1_thread.cpp`).
 
 ## Status (2026-10-28): every recorded program
 
@@ -194,11 +209,12 @@ Every program the recordings hold is native: the field walk
 and events among it). Each agrees with the VU1 at zero tolerance
 in the oracle, packets and VU1 memory; in-game `check` on the walk compared
 1,541,024 chunks, none different. In `gpu` mode the walk runs no VU1
-program at all.
+program at all (until `11b3890`; its clipping chunks run on the VU1 since,
+see above).
 
 | Kind (`Kind`) | Programs | Field vertices | Pieces | In `gpu` mode |
 |---|---|---|---|---|
-| Strips | 9f727028, cfb58657, 30da21d7, ... (most) | about 78% | A 07151c25; B plain or skinned; C vertex colors, one color, lit, lit vertex colors; D five; F scroll or sphere map | Mesh, the GPU transforms and clips |
+| Strips | 9f727028, cfb58657, 30da21d7, ... (most) | about 78% | A 07151c25; B plain or skinned; C vertex colors, one color, lit, lit vertex colors; D five; F scroll or sphere map | Mesh, the GPU transforms and clips (clipping chunks to the VU1 since `11b3890`) |
 | Outlines | 3dd4ba5d and 5 more | 17.1% | A 3f6df595, B 542b235c, C 3689bac9 | Packets |
 | Shadow volumes | 0f44ab11 and 11 more | 5.0% | A 821b638f, B 542b235c or a293001f, C dc8dbfe4 | Packets |
 | Overlay sprites (`:960`) | 4cb64ec1 and 28 more | 0.2% | B 6e42dac6 at its own MSCAL | Packets, VU1 memory |
@@ -210,7 +226,8 @@ Left to the VU1, chunk by chunk:
 
 - **Clipping** (slot E: 6e420ef8, and 860dd144 in the projected texture)
   in the packet modes (`check`, `1`, `skip`). The GPU path takes the strip
-  programs' clipping chunks and draws them clipped; it never needs E.
+  programs' clipping chunks and draws them clipped; it never needs E. (Since
+  `11b3890`, every mode leaves them to the VU1, `gpu` too.)
 - **Paths no recording took**: the triangle lists of the backface D pieces
   (a786efab, 93cfd2f5) and of the projected texture's C; 87.y & 0x100 in
   the vertex-color C pieces (70362be4, 2460e528).
@@ -242,10 +259,11 @@ mode):
   draws around them); the GS backend's share goes up with them.
 - At 8x every mode is GPU-bound (99% busy), and `gpu` is 3% slower: the
   extra draw calls cost there too. Fill and the post passes dominate
-  (`docs/GS-PERFORMANCE.md`).
+  ([GS-PERFORMANCE.md](GS-PERFORMANCE.md)).
 
 Then (2026-10-29) the meshes of one draw state share a draw call (their
-transforms in a storage buffer, `thirdparty/dq8-gfx/README.md`), and a
+transforms in a storage buffer,
+[thirdparty/dq8-gfx/README.md](../thirdparty/dq8-gfx/README.md)), and a
 mesh wholly off the scissor or behind the eye is not drawn. On the walk,
 per frame: 769 meshes of 25,000 vertices; 196 of them (7,000 vertices)
 off screen; 379 the same bytes as the frame before, none repeated within
@@ -300,7 +318,8 @@ In the game, the last 25 s of the walk in the 60 fps mode
   them through the GS front end costs about what the VU1 did.
 - At 8x every mode is GPU-bound (99% busy, 182 W, 39 fps): native strips
   draw the same pixels. What costs there is fill, the post passes above all
-  (`docs/GS-PERFORMANCE.md`), which is phase 3 of the plan, not this.
+  ([GS-PERFORMANCE.md](GS-PERFORMANCE.md)), which is phase 3 of the plan,
+  not this.
 - `gpu` mode issues a draw call per mesh (draws/s up 72%); see above for
   the merged draws.
 
