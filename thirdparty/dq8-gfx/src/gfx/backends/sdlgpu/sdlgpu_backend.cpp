@@ -3809,6 +3809,17 @@ struct SdlGpuBackend::Impl {
                               static_cast<unsigned long long>(stats.shadowsDrawn - previous.shadowsDrawn));
                 line += buf;
             }
+            // The larger pictures on the GPU (Rogue Galaxy: added).
+            static uint64_t previousStored = 0u, previousLetGo = 0u;
+            if (textureStats().largerStored != previousStored || textureStats().largerLetGo != previousLetGo) {
+                std::snprintf(buf, sizeof(buf), " | larger held %llu MiB, uploaded %llu, let go %llu",
+                              static_cast<unsigned long long>(textureStats().largerBytes >> 20u),
+                              static_cast<unsigned long long>(textureStats().largerStored - previousStored),
+                              static_cast<unsigned long long>(textureStats().largerLetGo - previousLetGo));
+                line += buf;
+                previousStored = textureStats().largerStored;
+                previousLetGo = textureStats().largerLetGo;
+            }
             // Draws blended in the shader from a snapshot (Rogue Galaxy: added).
             if (stats.destinationReads != previous.destinationReads) {
                 std::snprintf(buf, sizeof(buf), " | destination reads %llu",

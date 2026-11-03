@@ -47,6 +47,10 @@ struct RegionRequest {
     // hash of its palette as PCSX2 makes it, `width` and `height` are the
     // texture's size, and no pixels are given.
     bool whole = false;
+    // For a whole texture, the block formats the GPU samples itself
+    // (kRegionBc1 and the others, or'd): the host may answer with its
+    // picture's blocks as they are, which keeps them compressed on the GPU.
+    int blockFormats = 0;
 };
 
 // The texels of margin a border or shadow version has past the region on
@@ -60,11 +64,20 @@ constexpr int kRegionReady = 2;
 // Or'd onto kRegionReady: draw the picture from its own texels, not filtered
 // across them (a pack of pixel art made at a whole multiple of the original).
 constexpr int kRegionNearest = 4;
+// Or'd onto kRegionReady for a whole texture whose request lists the format
+// in blockFormats: `rgba` holds the picture's 4x4 blocks of that format, a
+// row of them after another, its width and height multiples of 4.
+constexpr int kRegionBc1 = 8;
+constexpr int kRegionBc2 = 16;
+constexpr int kRegionBc3 = 32;
+constexpr int kRegionBc7 = 64;
+constexpr int kRegionBlocks = kRegionBc1 | kRegionBc2 | kRegionBc3 | kRegionBc7;
 
 // Fills `rgba` with the larger picture (alpha as the GS's), `width` by
 // `height`, a whole multiple of the region's size (with the border's margin
 // for a border or shadow version), 2 to 8, and answers kRegionReady (with
-// kRegionNearest, if it is to be drawn unfiltered); kRegionPending
+// kRegionNearest, if it is to be drawn unfiltered; with a kRegionBc* for
+// blocks); kRegionPending
 // while it is still making it (the region is drawn as it is meanwhile); or
 // kRegionNone, after which it is not asked about that content again.
 using RegionLookup = std::function<int(const RegionRequest &request, uint32_t &width, uint32_t &height,

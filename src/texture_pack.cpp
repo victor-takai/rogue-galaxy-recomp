@@ -111,7 +111,9 @@ struct Merged
 struct Image
 {
     uint32_t width = 0u, height = 0u;
+    // RGBA8, or a DDS's blocks as they are (`blocks` is their kRegionBc*).
     std::vector<uint8_t> rgba;
+    int blocks = 0;
     bool nearest = false;
 };
 struct Pending
@@ -119,7 +121,13 @@ struct Pending
     uint64_t key;
     uint64_t generation;
     Entry entry;
+    // The block formats the GPU samples itself, for a whole texture.
+    int blockFormats = 0;
 };
+
+// RG_TEXTURE_PACK_DECODE=1: every picture goes to the GPU decoded, as RGBA8
+// (to compare with its blocks).
+bool g_decodeAll = false;
 
 std::vector<Pack> g_packs; // after scan(), read-only except `enabled`, under g_mutex
 bool g_scanned = false;
@@ -538,7 +546,36 @@ const Entry *findEntry(const Merged &merged, const dq8::gfx::RegionRequest &requ
     return any != merged.wildcard.end() ? &any->second : nullptr;
 }
 
-bool decodePicture(const Entry &entry, Image &image)
+// A BC file's blocks as they are, when the GPU samples that format, the
+// alpha is the GS's already and the size is whole blocks.
+bool keepBlocks(const std::vector<uint8_t> &bytes, int blockFormats, Image &image)
+{
+    dds::Header header;
+    if (dds::parse(bytes.data(), bytes.size(), header))
+    {
+        return false;
+    }
+    int flag = 0;
+    switch (header.kind)
+    {
+    case dds::Kind::Bc1: flag = dq8::gfx::kRegionBc1; break;
+    case dds::Kind::Bc2: flag = dq8::gfx::kRegionBc2; break;
+    case dds::Kind::Bc3: flag = dq8::gfx::kRegionBc3; break;
+    case dds::Kind::Bc7: flag = dq8::gfx::kRegionBc7; break;
+    default: return false;
+    }
+    if (!(blockFormats & flag) || header.width % 4u || header.height % 4u || header.width > kLargestPicture ||
+        header.height > kLargestPicture || dds::blocks(bytes.data(), bytes.size(), header, image.rgba))
+    {
+        return false;
+    }
+    image.width = header.width;
+    image.height = header.height;
+    image.blocks = flag;
+    return true;
+}
+
+bool decodePicture(const Entry &entry, Image &image, int blockFormats)
 {
     std::vector<uint8_t> bytes;
     if (entry.zip)
@@ -559,6 +596,10 @@ bool decodePicture(const Entry &entry, Image &image)
     }
     if (hasExtension(entry.path, ".dds"))
     {
+        if (entry.rawAlpha && blockFormats && !g_decodeAll && keepBlocks(bytes, blockFormats, image))
+        {
+            return true;
+        }
         if (const char *error = dds::decode(bytes.data(), bytes.size(), image.width, image.height, image.rgba))
         {
             std::fprintf(stderr, "[rg] texture pack: %s: %s\n", entry.path.c_str(), error);
@@ -608,7 +649,7 @@ void reader()
             g_queue.pop_front();
         }
         Image image;
-        if (!decodePicture(job.entry, image))
+        if (!decodePicture(job.entry, image, job.blockFormats))
         {
             std::fprintf(stderr, "[rg] larger 2D art: cannot read %s\n", job.entry.path.c_str());
             image = Image{};
@@ -704,11 +745,11 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
             width = image.width;
             height = image.height;
             rgba = std::move(image.rgba);
-            return image.nearest ? dq8::gfx::kRegionReady | dq8::gfx::kRegionNearest : dq8::gfx::kRegionReady;
+            return dq8::gfx::kRegionReady | (image.nearest ? dq8::gfx::kRegionNearest : 0) | image.blocks;
         }
         if (g_asked.insert(key).second)
         {
-            g_queue.push_back(Pending{key, g_generation, *found});
+            g_queue.push_back(Pending{key, g_generation, *found, request.blockFormats});
             g_wake.notify_one();
         }
         return dq8::gfx::kRegionPending;
@@ -794,6 +835,10 @@ void setPackEnabled(const std::string &key, bool on)
 void install(dq8::gfx::SdlGpuBackend &backend)
 {
     std::error_code error;
+    if (const char *decode = std::getenv("RG_TEXTURE_PACK_DECODE"); decode && *decode == '1')
+    {
+        g_decodeAll = true;
+    }
     if (const char *dump = std::getenv("RG_TEXTURE_DUMP"); dump && *dump)
     {
         g_dumpDirectory = dump;

@@ -238,6 +238,7 @@ void GsTextureCache::releaseLarger() {
         }
     m_larger.clear();
     m_largerBytes = 0u;
+    m_stats.largerBytes = 0u;
 }
 
 void GsTextureCache::reset() {
@@ -435,10 +436,10 @@ void GsTextureCache::syncRegionGeneration() {
 }
 
 SDL_GPUTexture *GsTextureCache::storeLarger(uint64_t id, uint32_t factor, bool nearest, uint32_t width,
-                                            uint32_t height, std::string &error) {
+                                            uint32_t height, std::string &error, SDL_GPUTextureFormat format) {
     SDL_GPUTextureCreateInfo info{};
     info.type = SDL_GPU_TEXTURETYPE_2D;
-    info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    info.format = format;
     info.width = width;
     info.height = height;
     info.layer_count_or_depth = 1u;
@@ -450,15 +451,16 @@ SDL_GPUTexture *GsTextureCache::storeLarger(uint64_t id, uint32_t factor, bool n
         error = std::string("SDL_CreateGPUTexture(larger): ") + SDL_GetError();
         return nullptr;
     }
+    const uint64_t bytes = SDL_CalculateGPUTextureFormatSize(format, width, height, 1u);
     m_staging.swap(m_regionPixels);
-    if (!uploadRegion(texture, {0u, 0u, width, height}, error)) {
+    if (!uploadRegion(texture, {0u, 0u, width, height}, error, bytes)) {
         SDL_ReleaseGPUTexture(m_device.handle(), texture);
         return nullptr;
     }
     // Past the budget the least recently drawn go; a queued draw of one
     // lands first.
     constexpr uint64_t kLargerBudget = 512ull << 20u;
-    m_largerBytes += uint64_t(width) * height * 4u;
+    m_largerBytes += bytes;
     while (m_largerBytes > kLargerBudget && !m_larger.empty()) {
         auto oldest = m_larger.begin();
         for (auto it = m_larger.begin(); it != m_larger.end(); ++it)
@@ -468,8 +470,11 @@ SDL_GPUTexture *GsTextureCache::storeLarger(uint64_t id, uint32_t factor, bool n
         SDL_ReleaseGPUTexture(m_device.handle(), oldest->second.texture);
         m_largerBytes -= oldest->second.bytes;
         m_larger.erase(oldest);
+        ++m_stats.largerLetGo;
     }
-    m_larger[id] = {texture, factor, uint64_t(width) * height * 4u, ++m_largerClock, nearest};
+    m_larger[id] = {texture, factor, bytes, ++m_largerClock, nearest};
+    ++m_stats.largerStored;
+    m_stats.largerBytes = m_largerBytes;
     return texture;
 }
 
@@ -565,22 +570,54 @@ SDL_GPUTexture *GsTextureCache::wholeReplacement(const GSDrawState &state, uint3
     request.clut = entry.pcsx2Clut;
     request.width = key.width;
     request.height = key.height;
+    request.blockFormats = blockFormats();
     uint32_t width = 0u, height = 0u;
     const int reply = m_regionLookup(request, width, height, m_regionPixels);
-    const int answer = reply & ~kRegionNearest;
+    const int answer = reply & ~(kRegionNearest | kRegionBlocks);
     if (answer == kRegionPending)
         return nullptr;
+    // RGBA8, or the blocks of the one format the answer names.
+    SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    bool known = true;
+    switch (reply & kRegionBlocks) {
+    case 0: break;
+    case kRegionBc1: format = SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM; break;
+    case kRegionBc2: format = SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM; break;
+    case kRegionBc3: format = SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM; break;
+    case kRegionBc7: format = SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM; break;
+    default: known = false; break;
+    }
+    const bool blocks = (reply & kRegionBlocks) != 0;
     const uint32_t factor = width / key.width;
-    if (answer != kRegionReady || factor < 2u || factor > 8u || width != key.width * factor ||
-        height != key.height * factor || m_regionPixels.size() != size_t(width) * height * 4u) {
+    if (answer != kRegionReady || !known || (blocks && ((reply & request.blockFormats) == 0 || width % 4u ||
+                                                        height % 4u)) ||
+        factor < 2u || factor > 8u || width != key.width * factor || height != key.height * factor ||
+        m_regionPixels.size() != SDL_CalculateGPUTextureFormatSize(format, width, height, 1u)) {
         m_largerMissing.insert(id);
         return nullptr;
     }
     nearest = (reply & kRegionNearest) != 0;
-    SDL_GPUTexture *texture = storeLarger(id, factor, nearest, width, height, error);
+    SDL_GPUTexture *texture = storeLarger(id, factor, nearest, width, height, error, format);
     if (texture)
         scale = factor;
     return texture;
+}
+
+int GsTextureCache::blockFormats() {
+    if (m_blockFormats >= 0)
+        return m_blockFormats;
+    m_blockFormats = 0;
+    const std::pair<SDL_GPUTextureFormat, int> formats[] = {
+        {SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM, kRegionBc1},
+        {SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM, kRegionBc2},
+        {SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM, kRegionBc3},
+        {SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM, kRegionBc7},
+    };
+    for (const auto &[format, flag] : formats)
+        if (SDL_GPUTextureSupportsFormat(m_device.handle(), format, SDL_GPU_TEXTURETYPE_2D,
+                                         SDL_GPU_TEXTUREUSAGE_SAMPLER))
+            m_blockFormats |= flag;
+    return m_blockFormats;
 }
 
 GsTextureKey GsTextureCache::keyFor(const GSDrawState &state) {
@@ -893,11 +930,12 @@ void GsTextureCache::releaseUploadPool() {
 }
 
 bool GsTextureCache::uploadRegion(SDL_GPUTexture *texture, const GsRegion &region,
-                                  std::string &error) {
+                                  std::string &error, size_t bytes) {
     SDL_GPUDevice *device = m_device.handle();
     const uint32_t width = region.width();
     const uint32_t height = region.height();
-    const size_t bytes = static_cast<size_t>(width) * height * 4u;
+    if (bytes == 0u)
+        bytes = static_cast<size_t>(width) * height * 4u;
 
     SDL_GPUTransferBuffer *upload = takeUploadBuffer(bytes);
     if (!upload) {

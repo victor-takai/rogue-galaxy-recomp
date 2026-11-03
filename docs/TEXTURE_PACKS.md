@@ -38,7 +38,7 @@ times larger in each direction (`TEXELS_CLUT_WxH.png` of 24x24 texels is 48x48
 up to 192x192, at most 8192 a side). One file a region. A DDS is read as BC1,
 BC2, BC3 or BC7 (DXT1, DXT3, DXT5, or the DX10 header's formats) or as 8-bit
 RGBA, its first level only; it is decoded when read, so it saves disk, not
-memory. In the file name CLUT may be `any`: the picture answers for the
+memory (a PCSX2 pack's are kept compressed: see below). In the file name CLUT may be `any`: the picture answers for the
 content with every palette (a file for the exact palette wins over it).
 
 An optional `pack.json` beside them:
@@ -93,6 +93,14 @@ entries as 32-bit words: the picture of the palette's own hash is drawn, else
 any one of the texels' pictures. The alpha is read as the console's
 (0x80 opaque), as a PCSX2 pack keeps it.
 
+Its BC1, BC2, BC3 and BC7 pictures whose sides are multiples of 4 go to the
+GPU as they are and stay compressed there: a BC3 (DXT5) picture takes a
+quarter of the memory it would decoded. Walking through Salgin's town at 3x,
+a US pack's pictures took 36 MB instead of 146. A format the GPU does not
+sample is decoded as before, and `RG_TEXTURE_PACK_DECODE=1` decodes them all,
+to compare. The 2D art's pictures are always decoded: their alpha is halved
+and the texels a draw does not show are cleared, which blocks do not allow.
+
 `RG_TEXTURE_DUMP_WHOLE=DIR` writes each such texture the game builds, whole
 and in colour, as `TEX0HASH-CLUTHASH-BITS.pam` (RGBA, alpha as the GS's),
 to make a pack for the textures the game really uses. The two textures that
@@ -104,7 +112,7 @@ xxHash (`xxhash.h`, in `thirdparty/dq8-gfx`) is Yann Collet's, BSD 2-Clause.
 
 ## Not yet
 
-Changing the order of the packs from the menu; keeping a PCSX2 picture compressed on the GPU. Movies and render targets are never collected.
+Changing the order of the packs from the menu. Movies and render targets are never collected.
 
 ## Checking the readers
 
