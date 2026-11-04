@@ -11,9 +11,9 @@ thread of its own, music and sound effects, keyboard or gamepad. The
 heaviest field scene measured, a boss gate, holds 50 to 60, limited by the
 VU1 programs.
 Known gaps: a rare hang after the Story loading screen (below; possibly
-the checkpoint unwind that patch 0010 fixed, not confirmed). Release
-0.1.0 is the source with an installer that builds the game from the
-player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
+the checkpoint unwind that patch 0010 fixed, not confirmed). Each release
+(0.2.0 the latest) is the source with an installer that builds the game
+from the player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
 
 | Phase | Goal | State |
 |---|---|---|
@@ -22,19 +22,19 @@ player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
 | 2 | Build ELF + overlays into one executable; overlay-aware dispatch | done |
 | 3 | Boot to the title screen | done |
 | 4 | Field, battle, movies, sound | done |
-| 5 | Performance, widescreen, 60 fps, launcher | 60 fps mode by default (50-60 in the heaviest scenes), launcher, in-game menu, widescreen option, installer (0.1.0) |
+| 5 | Performance, widescreen, 60 fps, launcher | 60 fps mode by default (50-60 in the heaviest scenes), launcher, in-game menu, widescreen option, installer (0.1.0), `Update.bat` (0.2.0) |
 
 ## Where things stand (2026-11-03)
 
 - The whole game plays: field, battles, movies, sound. The 60 fps mode is
   on by default (Game > 60 frames per second); widescreen up to 32:9 and
   up to 8x internal resolution are menu options ([OPTIONS.md](OPTIONS.md)).
-- Release 0.1.0 is out (`Install.bat`). Since then, under Unreleased in
+- Release 0.2.0 is out. Since 0.1.0 (`Install.bat`), it brought, in
   [`CHANGELOG.md`](../CHANGELOG.md): `Update.bat`, the undub from the
   player's own Japanese disc (`Install-Undub.bat`, F1 > Settings > Language; see
   [dialogue.md](dialogue.md)), texture packs
-  ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)), the Xbox buttons in the text and
-  the inventory options.
+  ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)), the Xbox buttons in the text,
+  the inventory options and the F1 menu with only a controller.
 - Off by default, for development: the VU1 programs done natively
   (`RG_VU1_NATIVE`, [VU1-NATIVE.md](VU1-NATIVE.md)) and the menu's "Native
   renderer" switch, which nothing reads yet

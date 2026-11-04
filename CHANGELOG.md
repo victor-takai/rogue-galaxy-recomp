@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.2.0 (pre-release)
+
+`Update.bat`, the Japanese voices (undub), texture packs, the F1 menu with
+only a controller, and new game options. No game data is included.
+
+**Requires:** Windows 10/11 (64-bit), about 16 GB free, and your own image
+of Rogue Galaxy (USA, SCUS-97490).
+
+### Install
+
+1. Download **RogueGalaxy-0.2.0.zip** (not "Source code").
+2. Extract it to a short folder, such as `C:\RogueGalaxy`.
+3. Run `Install.bat` and pick your disc image.
+4. Wait about 20 minutes on a fast PC (up to an hour on a slower one), then
+   play with `Rogue Galaxy.exe`.
+
+### Update from 0.1.0
+
+0.1.0 has no `Update.bat`, so this once by hand: extract the zip where your
+game folder is, so that its `RogueGalaxy` folder merges into yours (let
+Windows replace the files), then run `Install.bat` again. It does not ask
+for the disc image, and your saves (`disc\mc0`) and settings stay. From
+0.2.0 on, `Update.bat` does it
+([README](README.md#update)).
+
+### New
+
 - `Update.bat`: brings an installed folder to the newest release and rebuilds
   only what changed, a few minutes in most cases. A rebuild also no longer
   redoes the compiled 3D programs when nothing changed (every rebuild used
@@ -49,6 +76,30 @@
 - A Native renderer switch (Game > Native renderer, off by default): the
   work on drawing the game with the PC's renderer goes behind it. It
   changes nothing yet.
+- The F1 menu works with only a controller: A (✕) goes into a page and B
+  (○) comes back, one level at a time and at last to the game; Y (△)
+  reaches the menu bar, L1 and R1 turn the pages, the right stick scrolls.
+  A strip along the bottom names the buttons for where the cursor is.
+  "Quit game", at the end of the page list, asks first. On Controls, X (▢)
+  clears a binding, and holding B cancels one being set.
+- F1 sometimes paused the game without showing the menu.
+
+### Known issues
+
+- Only the USA version is supported.
+- It has not been played from start to finish; most of the testing covers
+  the early game.
+- The heaviest scenes can dip to 50 fps. After the boss at the end of
+  Juraika, the frame rate halves at high internal resolutions (about 30 fps
+  at 4x).
+- A black screen after that boss was reported once
+  ([#17](https://github.com/victor-takai/rogue-galaxy-recomp/issues/17)) and
+  has not been seen again. If it happens to you, the log
+  (`build\last-run.log`) helps.
+- In widescreen, menus and text are stretched.
+- The Steam Deck, through Proton, is prepared but untested.
+- An antivirus may block the compiler during the install: restore it and
+  run `Install.bat` again.
 
 ## 0.1.0 (pre-release)
 

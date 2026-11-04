@@ -13,14 +13,15 @@ disc image; nothing of the game is distributed.
 - 60 fps, or the original 30
 - Widescreen, up to 32:9
 - Up to 8x internal resolution
-- An in-game menu (F1) for graphics, sound and controls
+- An in-game menu (F1) for graphics, sound and controls, also with only a
+  controller
 - Game options: camera, field of view, draw distance, instant text,
   encounter rate, experience, money, item drops, shop prices and more
   ([all of them](docs/OPTIONS.md))
 
 ## What to expect
 
-This is an early pre-release (0.1.0). The whole game is recompiled and
+This is an early pre-release (0.2.0). The whole game is recompiled and
 plays, but:
 
 - **It has not been played from start to finish.** Most of the testing
@@ -120,6 +121,10 @@ options are also on the game's own Settings screen (System > Settings, L1
 and R1 to turn the page). See [docs/OPTIONS.md](docs/OPTIONS.md) for each
 one and where it is.
 
+The menu works with only a controller too: ✕ goes into a page and ○ comes
+back (from the page list, to the game), △ reaches the menu bar, L1 and R1
+turn the pages. A strip along the bottom names the buttons.
+
 <p align="center"><img src="docs/images/menu-game.jpg" width="70%" alt="The F1 menu's Game page"></p>
 
 ## Roadmap
@@ -137,9 +142,9 @@ one and where it is.
 - Fixes for the freezes, falls through the floor and graphics errors found
   so far
 
-**Done since 0.1.0, in the next version** (the CHANGELOG's
-[Unreleased](CHANGELOG.md#unreleased) part)
+**Done, in 0.2.0** ([CHANGELOG](CHANGELOG.md#020-pre-release))
 
+- The F1 menu with only a controller
 - Xbox buttons in the game's text
 - New options: weapon growth, minimap and compass size, item limit 99, full
   bag to storage, a seventh bag page
@@ -148,7 +153,7 @@ one and where it is.
   Director's Cut
 - Texture packs, PCSX2's too
 - Fixes: the free camera getting the game stuck, a choppy walk in the later
-  parts of Salgin
+  parts of Salgin, F1 pausing without showing the menu
 
 **In progress**
 
