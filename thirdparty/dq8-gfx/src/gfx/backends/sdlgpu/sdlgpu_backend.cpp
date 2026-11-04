@@ -1136,6 +1136,11 @@ struct SdlGpuBackend::Impl {
         uint32_t width = 0u, height = 0u;
         SDL_GPUFence *prepared = nullptr, *displayed = nullptr;
         bool leased = false;
+        // Its picture is whole: the last preparation into it has finished.
+        // A slot can stay leased long after that, by a ticket waiting to be
+        // displayed (Rogue Galaxy's flip pacing keeps the frame of the
+        // last flip until the next vblank, which a pause holds back).
+        bool ready = false;
     };
     struct PresentationPool {
         std::mutex mutex;
@@ -1173,6 +1178,8 @@ struct SdlGpuBackend::Impl {
     SDL_GPUPresentMode appliedPresentMode = SDL_GPU_PRESENTMODE_VSYNC;
     SdlGpuBackend::GameWidescreenQuery widescreenQuery = nullptr;
     size_t lastDisplayedSlot = SIZE_MAX;
+    std::chrono::steady_clock::time_point refreshHeldSince{};
+    bool refreshHeldReported = false;
     // Anything shown, and the last frame the game itself presented.
     std::chrono::steady_clock::time_point lastShown{};
     std::chrono::steady_clock::time_point lastGameFrame{};
@@ -3883,6 +3890,7 @@ struct SdlGpuBackend::Impl {
         }
         auto result = std::make_shared<PreparedFrame>(presentationPool, selected);
         presentationPool->slots[selected].leased = true;
+        presentationPool->slots[selected].ready = false;
         return result;
     }
 
@@ -4338,24 +4346,47 @@ struct SdlGpuBackend::Impl {
     // none: paused, loading, or not started yet.
     void refreshWindow() {
         PresentationSlot *slot = nullptr;
+        bool tookLease = false;
         {
             std::lock_guard lock(presentationPool->mutex);
             if (presentationPool->closing)
                 return;
             if (lastDisplayedSlot < presentationPool->slots.size()) {
                 PresentationSlot &candidate = presentationPool->slots[lastDisplayedSlot];
-                // Leased means a new frame is on its way into it.
-                if (candidate.leased)
+                // Leased and not ready: a new frame is being prepared into it.
+                // Leased and ready: that frame is whole and waits for its
+                // vblank, perhaps for as long as the game is paused; it is
+                // the picture to show, the one coming next anyway (Rogue
+                // Galaxy: shown, where it used to leave the menu unseen).
+                if (candidate.leased && !candidate.ready) {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (refreshHeldSince == std::chrono::steady_clock::time_point{})
+                        refreshHeldSince = now;
+                    else if (!refreshHeldReported && now - refreshHeldSince > std::chrono::seconds(1)) {
+                        refreshHeldReported = true;
+                        std::fprintf(stderr, "[gfx] window refresh: slot %zu still being prepared after 1 s\n",
+                                     lastDisplayedSlot);
+                    }
                     return;
+                }
+                refreshHeldSince = {};
+                refreshHeldReported = false;
                 if (candidate.texture) {
+                    tookLease = !candidate.leased;
                     candidate.leased = true;
                     slot = &candidate;
                 }
             }
         }
+        // One prepared and not displayed yet: its drawing has to be done.
+        if (slot && !tookLease && slot->prepared &&
+            !SDL_WaitForGPUFences(device.handle(), true, &slot->prepared, 1)) {
+            std::fprintf(stderr, "[gfx] window refresh: SDL_WaitForGPUFences(prepared): %s\n", SDL_GetError());
+            return;
+        }
         std::string error;
         const bool shown = showInWindow(slot, error);
-        if (slot) {
+        if (slot && tookLease) {
             std::lock_guard lock(presentationPool->mutex);
             slot->leased = false;
             presentationPool->available.notify_one();
@@ -5244,6 +5275,10 @@ GSPresentationTicket SdlGpuBackend::PreparePresentation(const GSPresentationRequ
     prepared->gsActive = stage.gsActive;
     prepared->download = stage.download;
     prepared->frame = std::move(stage.frame);
+    {
+        std::lock_guard lock(prepared->pool->mutex);
+        slot.ready = true;
+    }
     return prepared;
 }
 
