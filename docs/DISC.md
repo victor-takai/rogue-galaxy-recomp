@@ -41,7 +41,9 @@ in `DATA0_0`, checked against the same file's `balance_pack`) with the
 Japanese numbers and the US strings, and `tables.txt`, which names the US
 table each replaces ([OPTIONS.md](OPTIONS.md#game-options), "Director's Cut
 balance"; `src/dc_balance.h`). Run again, it copies only the voices and
-movies not already there.
+movies not already there. `setup.py install` (so `Update.bat` too) makes the
+balance's tables for an undub installed without them, from the image
+`disc/JA/manifest.json` names, when it is still there.
 
 ## Layers
 

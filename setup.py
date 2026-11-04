@@ -822,6 +822,28 @@ def cmd_portable(args: argparse.Namespace) -> int:
     return 0
 
 
+def balance_for_undub(version: str, disc: Path) -> None:
+    """An undub installed before the Director's Cut balance existed gets its tables, from
+    the Japanese image it came from when that is still where it was; never stops the install."""
+    ja = disc / "JA"
+    if not (ja / "manifest.json").is_file() or (ja / "balance" / "tables.txt").is_file():
+        return
+    try:
+        image = json.loads((ja / "manifest.json").read_text(encoding="utf-8")).get("image")
+    except (OSError, ValueError):
+        image = None
+    if not image or not Path(image).is_file():
+        print("== the Director's Cut balance (an option) needs your Japanese disc once: run Install-Undub.bat")
+        return
+    print("== the Director's Cut balance, from the Japanese disc image the undub came from", flush=True)
+    try:
+        cmd_director_cut_balance(argparse.Namespace(version=version, iso=image, disc=str(disc)))
+    except SystemExit as stop:
+        print(f"   not made: {str(stop).rstrip('.')}; Install-Undub.bat makes it")
+    except (OSError, ValueError, KeyError) as error:
+        print(f"   not made: {error}; Install-Undub.bat makes it")
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     """Everything from a dump to a game: verify, extract, tools, recompile, build."""
     disc = ROOT / "disc"
@@ -841,6 +863,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         # not the disc's, the memory cards, stay as they are.
         if cmd_extract(argparse.Namespace(version=args.version, iso=args.iso, out=str(disc), force=True)):
             sys.exit("the extraction found problems; see above")
+    balance_for_undub(args.version, disc)
     cmd_tools(args)
     print("== recompile", flush=True)
     if cmd_recompile(argparse.Namespace(version=args.version, disc=str(disc), recomp=None)):

@@ -164,6 +164,13 @@ void charaGetStatF3C(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     const uint32_t functions = readWord(rdram, object);
     if (functions == kBossTable || functions == kBossPartTable)
     {
+        static bool told = false;
+        if (!told)
+        {
+            told = true;
+            std::fprintf(stderr, "[rg] Director's Cut balance: a %s, knockdown resistance %.2f, never knocked down\n",
+                         functions == kBossTable ? "boss" : "boss part", ctx->f[0]);
+        }
         ctx->f[0] = kNeverKnockedDown;
     }
 }

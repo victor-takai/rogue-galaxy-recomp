@@ -10,8 +10,9 @@
   Factory enemies weaker, the Area Masters stronger, bosses never knocked
   down (Game > Director's Cut balance, off by default, from the next start).
   The numbers come from your own Japanese Director's Cut disc:
-  `Install-Undub.bat` reads them; run it again if you already have the
-  undub (the voices it copied stay).
+  `Install-Undub.bat` reads them. With the undub already installed, the
+  update reads them from the image it came from, if that is still where it
+  was; otherwise run `Install-Undub.bat` again (the voices it copied stay).
 
 ## 0.2.0 (pre-release)
 
