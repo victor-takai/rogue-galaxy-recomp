@@ -21,10 +21,12 @@ direct_call_table = true
 
 # No PC store before instructions nothing observes it from (integer, FPU and
 # MMI arithmetic), nor delay-slot bookkeeping around them (patch 0037).
+# Measured on the scripted walk: about 3.6% less time in game code.
 lean_pc = true
 
 # Guest memory as __restrict in generated functions (patch 0037).
-# Experimental: off until tested on its own.
+# Measured 2026-11-04 on the scripted walk: no gain (each memory access
+# has a slow-path runtime call taking ctx, which forces the reloads anyway).
 restrict_rdram = false
 
 # SDK functions the runtime implements, as handler@address. Map names carry
