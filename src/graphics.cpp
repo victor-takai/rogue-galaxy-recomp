@@ -552,6 +552,8 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     dq8::ui::HostServices host;
     host.version = RG_APP_VERSION;
     host.revision = RG_REVISION;
+    // Steam sets SteamDeck=1 on the Deck, natively and under Proton.
+    host.steamDeck = env("SteamDeck", "0") == "1";
     // RG_MUTE=1 keeps the game silent whatever the menu's volume says.
     const bool mute = env("RG_MUTE", "0") != "0";
     host.setVolume = [mute](float volume) { ps2_native_iop::setVolume(mute ? 0.0f : volume); };
@@ -793,6 +795,12 @@ Setup::Setup(PS2Runtime &runtime)
         if (settings.windowWidth < 320 && env("SteamDeck", "0") == "1")
         {
             settings.fullscreen = true;
+        }
+        // Steam keeps the Deck's Steam button: View + Menu is the only way to
+        // the game's menu there, so it cannot be left off.
+        if (env("SteamDeck", "0") == "1")
+        {
+            settings.backStartOpensMenu = true;
         }
         uint32_t runScale = settings.resolutionScale;
         if (const std::string scale = env("RG_GS_SCALE", ""); !scale.empty())

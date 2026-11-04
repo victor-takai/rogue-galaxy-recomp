@@ -31,11 +31,12 @@ constexpr ImGuiWindowFlags kDialogFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWin
 
 ImVec4 color(ImU32 packed) { return ImGui::ColorConvertU32ToFloat4(packed); }
 
-// A round "x" in a window's corner.
+// A round "x" in a window's corner, for the mouse: keyboard and controller
+// close with Back, and the cursor would otherwise start on it.
 bool closeButton(const char *id) {
     const float size = ImGui::GetFrameHeight();
     const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const bool pressed = ImGui::InvisibleButton(id, ImVec2(size, size), ImGuiButtonFlags_EnableNav);
+    const bool pressed = ImGui::InvisibleButton(id, ImVec2(size, size));
     const ImVec2 center(pos.x + size * 0.5f, pos.y + size * 0.5f);
     ImDrawList *list = ImGui::GetWindowDrawList();
     if (ImGui::IsItemHovered())
@@ -107,6 +108,7 @@ std::string conflictWith(const gfx::PadConfig &config, PadInput input, bool keyb
 } // namespace
 
 void Overlay::drawSettingsWindow() {
+    ImGuiContext &g = *ImGui::GetCurrentContext();
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     const ImVec2 area = viewport->WorkSize;
     const ImVec2 size(std::min(area.x - em(2.0f), em(54.0f)), std::min(area.y - em(2.0f), em(37.0f)));
@@ -123,12 +125,46 @@ void Overlay::drawSettingsWindow() {
                                    ImGuiWindowFlags_NoScrollWithMouse;
     if (beginWindow("Settings##dq8", nullptr, flags)) {
         dialogHeader(Icon::Gear, "Settings", &m_settingsOpen);
+        // The controller's buttons along the bottom edge while one is in use.
+        const float hints = padInUse() ? ImGui::GetFrameHeight() + em(1.2f) : 0.0f;
+        const int count = static_cast<int>(SettingsPage::Count);
 
+        // The page list and the page are apart for keyboard and controller:
+        // the cursor stays in one until Right or A takes it into the page, and
+        // Left at the page's edge or Back brings it out. Moving along the
+        // list shows each page.
         const float navWidth = em(12.5f);
-        ImGui::BeginChild("##nav", ImVec2(navWidth, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-        for (int page = 0; page < static_cast<int>(SettingsPage::Count); ++page)
-            if (navItem(kPageNames[page], kPageIcons[page], m_page == static_cast<SettingsPage>(page)))
-                m_page = static_cast<SettingsPage>(page);
+        ImGui::BeginChild("##nav", ImVec2(navWidth, -hints), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+        m_listPane = ImGui::GetCurrentWindow();
+        const bool inList = g.NavWindow == m_listPane;
+        const bool follow = inList && g.NavCursorVisible && !m_focusList;
+        for (int page = 0; page < count; ++page) {
+            const auto which = static_cast<SettingsPage>(page);
+            if (navItem(kPageNames[page], kPageIcons[page], m_page == which)) {
+                m_page = which;
+                // Chosen with A or Enter rather than a click: on into it.
+                if (g.NavCursorVisible)
+                    m_focusPage = true;
+            } else if (follow && m_page != which && ImGui::IsItemFocused()) {
+                m_page = which;
+            }
+            if (m_focusList && m_page == which) {
+                ImGui::FocusItem();
+                if (padInUse())
+                    ImGui::SetNavCursorVisible(true);
+                m_focusList = false;
+            }
+        }
+        // A way out for a player with only a controller, asked first.
+        if (navItem("Quit game", Icon::Close, false))
+            m_quitAsk = true;
+        if (inList && !m_focusPage &&
+            (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, false))) {
+            // Nothing lies right of the list in it; the request would only
+            // find the page's items once the page has the focus.
+            ImGui::NavMoveRequestCancel();
+            m_focusPage = true;
+        }
         const float footer = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
         if (ImGui::GetContentRegionAvail().y > footer) {
             ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footer);
@@ -141,12 +177,23 @@ void Overlay::drawSettingsWindow() {
 
         ImGui::SameLine(0.0f, em(0.8f));
         const ImVec2 rule = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddLine(ImVec2(rule.x, rule.y), ImVec2(rule.x, rule.y + ImGui::GetContentRegionAvail().y),
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(rule.x, rule.y),
+                                            ImVec2(rule.x, rule.y + ImGui::GetContentRegionAvail().y - hints),
                                             IM_COL32(255, 255, 255, 34), 1.0f);
         ImGui::SetCursorScreenPos(ImVec2(rule.x + em(0.9f), rule.y));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        ImGui::BeginChild("##page", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+        // One window a page, so each keeps its own scroll and cursor.
+        ImGui::PushID(static_cast<int>(m_page));
+        ImGui::BeginChild("##page", ImVec2(0.0f, -hints), ImGuiChildFlags_None);
         ImGui::PopStyleVar();
+        m_pagePane = ImGui::GetCurrentWindow();
+        if (m_focusPage) {
+            // Back where it was in this page, or on its first item.
+            ImGui::FocusWindow(m_pagePane);
+            ImGui::NavInitWindow(m_pagePane, false);
+            ImGui::SetNavCursorVisible(true);
+            m_focusPage = false;
+        }
         // Leaves room for the scrollbar without the page touching it.
         ImGui::PushItemWidth(-em(0.6f));
         ImGui::Indent(em(0.1f));
@@ -164,18 +211,95 @@ void Overlay::drawSettingsWindow() {
         ImGui::PopItemWidth();
         ImGui::Dummy(ImVec2(0.0f, em(0.5f)));
         ImGui::EndChild();
-
-        // L1 and R1 turn the pages, as in the game's own menus.
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-            const int count = static_cast<int>(SettingsPage::Count);
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false))
-                m_page = static_cast<SettingsPage>((static_cast<int>(m_page) + count - 1) % count);
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false))
-                m_page = static_cast<SettingsPage>((static_cast<int>(m_page) + 1) % count);
+        ImGui::PopID(); // the ID stack is the settings window's again
+        const bool inPage = g.NavWindow == m_pagePane;
+        // Left with nothing further left in the page: back to the list.
+        if (inPage && g.NavMoveDir == ImGuiDir_Left && ImGui::NavMoveRequestButNoResultYet()) {
+            ImGui::NavMoveRequestCancel();
+            m_focusList = true;
         }
+
+        // L1 and R1 turn the pages, as in the game's own menus; not while a
+        // slider is held (they speed it up and slow it down) or a list is open.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() &&
+            !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+            const int turn = ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)   ? count - 1
+                             : ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1
+                                                                              : 0;
+            if (turn != 0) {
+                m_page = static_cast<SettingsPage>((static_cast<int>(m_page) + turn) % count);
+                // The cursor stays on its side: in the new page, or on its entry.
+                if (inPage)
+                    m_focusPage = true;
+                else
+                    m_focusList = true;
+            }
+        }
+        if (hints > 0.0f)
+            drawPadHints(hints);
     }
     ImGui::End();
     ImGui::PopStyleVar();
+}
+
+void Overlay::drawPadHints(float height) {
+    const ImGuiContext &g = *ImGui::GetCurrentContext();
+    const SDL_GamepadType type = displayedControllerType();
+    struct Hint {
+        SDL_GamepadButton first;
+        SDL_GamepadButton second; // SDL_GAMEPAD_BUTTON_INVALID for none
+        const char *text;
+    };
+    constexpr SDL_GamepadButton kNone = SDL_GAMEPAD_BUTTON_INVALID;
+    std::vector<Hint> hints;
+    const bool inPage = g.NavWindow && m_pagePane && g.NavWindow->RootWindowForNav == m_pagePane;
+    if (ImGui::IsAnyItemActive()) {
+        hints = {{SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, "Adjust"},
+                 {SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Done"}};
+    } else if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+        hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Choose"}, {SDL_GAMEPAD_BUTTON_EAST, kNone, "Close"}};
+    } else if (g.NavLayer == ImGuiNavLayer_Menu) {
+        hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Open"}, {SDL_GAMEPAD_BUTTON_EAST, kNone, "Back"}};
+    } else if (inPage) {
+        hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Select"}, {SDL_GAMEPAD_BUTTON_EAST, kNone, "Back"}};
+        if (m_page == SettingsPage::Controls)
+            hints.push_back({SDL_GAMEPAD_BUTTON_WEST, kNone, "Clear a binding"});
+        hints.push_back({SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, "Page"});
+        hints.push_back({SDL_GAMEPAD_BUTTON_NORTH, kNone, "Top bar"});
+    } else {
+        hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Open"},
+                 {SDL_GAMEPAD_BUTTON_EAST, kNone, "Back to the game"},
+                 {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, "Page"},
+                 {SDL_GAMEPAD_BUTTON_NORTH, kNone, "Top bar"}};
+    }
+
+    ImDrawList *list = ImGui::GetWindowDrawList();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float right = at.x + ImGui::GetContentRegionAvail().x;
+    list->AddLine(ImVec2(at.x, at.y), ImVec2(right, at.y), IM_COL32(255, 255, 255, 34), 1.0f);
+    const float chip = std::floor(ImGui::GetFrameHeight() * 0.8f);
+    // A clear gap under the rule; what is left goes below the buttons.
+    const float y = std::floor(at.y + em(0.8f));
+    float x = at.x;
+    for (const Hint &hint : hints) {
+        float width = 0.0f;
+        for (const SDL_GamepadButton button : {hint.first, hint.second})
+            if (button != kNone)
+                width += bindingChipWidth(gfx::PadBinding::button(button), type, chip) + em(0.25f);
+        const ImVec2 text = ImGui::CalcTextSize(hint.text);
+        if (x + width + text.x > right)
+            break;
+        for (const SDL_GamepadButton button : {hint.first, hint.second}) {
+            if (button == kNone)
+                continue;
+            const gfx::PadBinding binding = gfx::PadBinding::button(button);
+            drawBindingChip(list, binding, type, ImVec2(x, y), chip);
+            x += bindingChipWidth(binding, type, chip) + em(0.25f);
+        }
+        list->AddText(ImVec2(x + em(0.15f), std::floor(y + (chip - text.y) * 0.5f)), palette::kTextMuted, hint.text);
+        x += em(0.15f) + text.x + em(1.3f);
+    }
+    ImGui::Dummy(ImVec2(0.0f, height - ImGui::GetStyle().ItemSpacing.y));
 }
 
 void Overlay::drawDisplayPage() {
@@ -337,9 +461,13 @@ void Overlay::drawInterfacePage() {
         settingRow("Hide the idle mouse cursor");
         if (toggle("cursor", &m_settings.hideIdleCursor))
             markDirty();
-        settingRow("Back + Start opens the menu", "The Guide button (Xbox, PS, Home) always does.");
-        if (toggle("backstart", &m_settings.backStartOpensMenu))
-            markDirty();
+        // Not on a Steam Deck: Steam keeps its own button, so View + Menu is
+        // the only way to the menu there.
+        if (!m_host.steamDeck) {
+            settingRow("Back + Start opens the menu", "The Guide button (Xbox, PS, Home) always does.");
+            if (toggle("backstart", &m_settings.backStartOpensMenu))
+                markDirty();
+        }
         endSettings();
     }
 
@@ -359,7 +487,9 @@ void Overlay::drawInterfacePage() {
                 }
             }
             if (canChangeSpeed()) {
-                settingRow("Fast-forward speed", "F4 switches between it and normal speed. Music keeps its tempo.",
+                settingRow("Fast-forward speed",
+                           "F4, or Game > Fast-forward in the top bar, switches between it and normal speed. "
+                           "Music keeps its tempo.",
                            "Experimental");
                 static constexpr float kSpeeds[] = {2.0f, 3.0f, 4.0f, 0.0f};
                 static constexpr const char *kSpeedNames[] = {"2\xC3\x97", "3\xC3\x97", "4\xC3\x97", "Unlimited"};
@@ -574,7 +704,11 @@ void Overlay::drawControlsPage() {
         ImGui::TextUnformatted("Test your bindings");
         ImGui::PushTextWrapPos(0.0f);
         mutedText("%s", "Press anything: the pad lights up with what the game would read.");
-        mutedText("%s", "Click a binding to change it; right-click to clear it.");
+        if (padInUse())
+            mutedText("%s on a binding changes it; %s clears it.", padButtonName(SDL_GAMEPAD_BUTTON_SOUTH).c_str(),
+                      padButtonName(SDL_GAMEPAD_BUTTON_WEST).c_str());
+        else
+            mutedText("%s", "Click a binding to change it; right-click to clear it.");
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
     }
@@ -656,7 +790,11 @@ void Overlay::drawBindingTable(bool keyboard) {
                 if (ImGui::InvisibleButton("##bind", ImVec2(cellWidth, chip), ImGuiButtonFlags_EnableNav))
                     beginBindingCapture(input, keyboard, slot);
                 const bool over = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                // Cleared by a right-click, or X (Square) or Delete on the cursor.
+                const bool clear = ImGui::IsItemFocused() && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) ||
+                                                             ImGui::IsKeyPressed(ImGuiKey_Delete, false) ||
+                                                             ImGui::IsKeyPressed(ImGuiKey_Backspace, false));
+                if (clear || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                     gfx::PadConfig config = m_settings.pad;
                     config.slots(input, keyboard)[slot] = {};
                     setPadConfig(config);
@@ -793,12 +931,19 @@ void Overlay::drawShortcuts() {
             ImGui::TableSetupColumn("keys", ImGuiTableColumnFlags_WidthFixed, em(7.5f));
             ImGui::TableSetupColumn("what", ImGuiTableColumnFlags_WidthFixed, em(15.0f));
             static constexpr const char *kGuide[] = {"Guide"}, *kBackStart[] = {"Back", "Start"},
-                                        *kShoulders[] = {"L1", "R1"}, *kBack[] = {"B / Circle"};
-            shortcutRow(kGuide, 1, "Open or close the menu");
-            if (m_settings.backStartOpensMenu)
+                                        *kViewMenu[] = {"View", "Menu"}, *kShoulders[] = {"L1", "R1"},
+                                        *kBack[] = {"B / Circle"}, *kTop[] = {"Y / Triangle"},
+                                        *kClear[] = {"X / Square"};
+            if (m_host.steamDeck)
+                shortcutRow(kViewMenu, 2, "Open or close the menu");
+            else if (m_settings.backStartOpensMenu)
                 shortcutRow(kBackStart, 2, "Open or close the menu");
+            if (!m_host.steamDeck)
+                shortcutRow(kGuide, 1, "Open or close the menu");
             shortcutRow(kShoulders, 2, "Previous and next settings page", "/");
             shortcutRow(kBack, 1, "Back, in the menu");
+            shortcutRow(kTop, 1, "To the top bar and back");
+            shortcutRow(kClear, 1, "Clear a binding (Controls)");
             ImGui::EndTable();
         }
     }
