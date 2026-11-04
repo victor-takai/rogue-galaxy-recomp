@@ -54,7 +54,7 @@ struct SdlGpuDisplayOptions {
     SdlGpuSides sides = SdlGpuSides::Black;
     // FSR 1's sharpening, 0 to 100 (Rogue Galaxy: added): 100 is RCAS at 0
     // stops (the sharpest), 0 at 2 stops.
-    int fsrSharpness = 90;
+    int fsrSharpness = 70;
     bool operator==(const SdlGpuDisplayOptions &) const = default;
 };
 
