@@ -106,6 +106,7 @@ void apply(Settings &s, const std::string &section, const std::string &key, cons
         else if (key == "aspect") parseNamed(kAspects, value, s.display.aspect);
         else if (key == "filter") parseNamed(kFilters, value, s.display.filter);
         else if (key == "sides") parseNamed(kSides, value, s.display.sides);
+        else if (key == "fsr_sharpness") parseNumber(value, s.display.fsrSharpness, 0, 100);
         else if (key == "integer_scale") parseBool(value, s.display.integerScale);
         else if (key == "remove_line_blend") parseBool(value, s.display.removeLineBlend);
         else if (key == "present") parseNamed(kPresentModes, value, s.display.presentMode);
@@ -172,6 +173,7 @@ std::string serializeSettings(const Settings &s) {
     out << "\n[display]\nscale = " << s.resolutionScale << "\naspect = " << nameOf(kAspects, s.display.aspect)
         << "\nfilter = " << nameOf(kFilters, s.display.filter)
         << "\nsides = " << nameOf(kSides, s.display.sides)
+        << "\nfsr_sharpness = " << s.display.fsrSharpness
         << "\ninteger_scale = " << flag(s.display.integerScale)
         << "\nremove_line_blend = " << flag(s.display.removeLineBlend)
         << "\npresent = " << nameOf(kPresentModes, s.display.presentMode) << "\n\n"

@@ -390,6 +390,15 @@ void Overlay::drawDisplayPage() {
             markDirty();
         }
 
+        // Rogue Galaxy: added (`fsr_sharpness` in the file).
+        if (m_settings.display.filter == gfx::SdlGpuFilter::Fsr) {
+            settingRow("FSR sharpness", "How much FSR 1 sharpens the enlarged picture.");
+            if (ImGui::SliderInt("##fsrsharpness", &m_settings.display.fsrSharpness, 0, 100, "%d%%")) {
+                m_backend.setDisplayOptions(m_settings.display);
+                markDirty();
+            }
+        }
+
         // Rogue Galaxy: added (`sides` in the file).
         static constexpr const char *kSidesHelp[] = {
             "What fills the window beside a 4:3 picture: black bars.",

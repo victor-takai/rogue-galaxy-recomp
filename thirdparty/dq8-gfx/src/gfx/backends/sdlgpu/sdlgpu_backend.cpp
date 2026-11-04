@@ -4065,10 +4065,8 @@ struct SdlGpuBackend::Impl {
         // picture is not enlarged, or when the passes cannot be made.
         if (displayOptions.filter == SdlGpuFilter::Fsr && (rect.width > width || rect.height > height) &&
             ensureScratch(fsrTexture, rect.width, rect.height, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM)) {
-            static const float sharpness = [] {
-                const char *v = std::getenv("RG_FSR_SHARPNESS");
-                return v ? std::clamp(static_cast<float>(std::atof(v)), 0.0f, 2.0f) : 0.2f;
-            }();
+            const float sharpness =
+                float(100 - std::clamp(displayOptions.fsrSharpness, 0, 100)) / 50.0f;
             const uint32_t region[4] = {from.x, from.y, from.width, from.height};
             const uint32_t whole[4] = {0u, 0u, rect.width, rect.height};
             const uint32_t to[4] = {rect.x, rect.y, rect.width, rect.height};
