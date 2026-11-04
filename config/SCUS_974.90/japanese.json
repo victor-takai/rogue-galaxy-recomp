@@ -5,5 +5,10 @@
     "DATA0_1.HD6": "6c15e7baa6248655fda244b6ad5cb74e8c51f1188f53525df46153be9448815f",
     "DATA1_1.HD6": "3ee133c7de5c83a01417947b04071a20aa98d1580041b6ca83efb218d9709c27"
   },
-  "voice_files": ["DATA0_1.HD6", "DATA0_1.DAT", "DATA1_1.HD6", "DATA1_1.DAT"]
+  "voice_files": ["DATA0_1.HD6", "DATA0_1.DAT", "DATA1_1.HD6", "DATA1_1.DAT"],
+  "balance_pack": {
+    "comment": "The param pack the Director's Cut balance's tables come from (setup.py director-cut-balance), as read through DATA0_0.HD6: its sha256.",
+    "name": "rc\\param\\param_2_ja.pac",
+    "sha256": "33f1f071678258db964632b42f4e87b58083733a89eeb25a0de679d233b04aaf"
+  }
 }

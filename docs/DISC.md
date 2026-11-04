@@ -34,6 +34,15 @@ checks the image's two voice indexes against
 and refuses another Japanese release: only the Director's Cut has voices
 that line up with the US game.
 
+The same run then writes the Director's Cut's battle balance into
+`disc/JA/balance` (`python setup.py director-cut-balance --iso <image>`
+alone): four tables of the Japanese param pack (`rc\param\param_2_ja.pac`
+in `DATA0_0`, checked against the same file's `balance_pack`) with the
+Japanese numbers and the US strings, and `tables.txt`, which names the US
+table each replaces ([OPTIONS.md](OPTIONS.md#game-options), "Director's Cut
+balance"; `src/dc_balance.h`). Run again, it copies only the voices and
+movies not already there.
+
 ## Layers
 
 The image holds two ISO9660 volumes:

@@ -73,6 +73,12 @@ the voices and movies, about 3 GB, into the folder. Then turn the undub on in
 the game ([F1 > Settings > Language](docs/OPTIONS.md#language)) and start
 it again.
 
+The same step reads the Director's Cut's battle balance, which the US
+release did not get: smaller groups of enemies, more money, some enemies
+weaker and others stronger. Turn it on in F1 > Settings > Game > [Director's
+Cut balance](docs/OPTIONS.md#game-options) if you want it; the voices can
+stay English.
+
 ### Update
 
 The game says at start when a newer version is out, and F1 > Rogue Galaxy >

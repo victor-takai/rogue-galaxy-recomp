@@ -4,13 +4,16 @@
     python setup.py verify   --iso "Rogue Galaxy (USA).iso" [--full]
     python setup.py extract  --iso "Rogue Galaxy (USA).iso" [--out disc] [--force]
     python setup.py extract-japanese --iso "Rogue Galaxy - Director's Cut (Japan).iso" [--disc disc]
+    python setup.py director-cut-balance --iso "Rogue Galaxy - Director's Cut (Japan).iso" [--disc disc]
     python setup.py info     [--disc disc]
     python setup.py overlays  [--disc disc] [--out build/overlays]
     python setup.py check     [--disc disc]
     python setup.py recompile [--disc disc] [--recomp path/to/ps2_recomp]
 
 `extract-japanese` copies the voices and the movies that differ from the US
-ones out of the Japanese Director's Cut into disc/JA, for the Japanese dub.
+ones out of the Japanese Director's Cut into disc/JA, for the Japanese dub,
+then runs `director-cut-balance`, which writes that release's battle balance
+as tables for the US game into disc/JA/balance (tools/disc/balance.py).
 `verify` checks a dump against config/<version>/hashes.json without writing
 anything. `extract` unpacks both DVD layers into one tree (the runtime boots
 the ELF from that folder) and hashes every file while copying. `info` decodes
@@ -249,9 +252,20 @@ def cmd_extract_japanese(args: argparse.Namespace) -> int:
         total = sum(files[p][0].size for p in wanted)
         done = 0
         manifest = {"image": str(Path(args.iso).resolve()), "files": {}}
+        # Run again (for the balance's tables, say), a file copied whole before
+        # from this same disc, which the indexes above vouch for, stays.
+        before = {}
+        if (out / "manifest.json").is_file():
+            before = json.loads((out / "manifest.json").read_text(encoding="utf-8")).get("files", {})
         for path in wanted:
             entry = files[path][0]
             dest = out / path
+            old = before.get(path)
+            if old and old.get("size") == entry.size and dest.is_file() and dest.stat().st_size == entry.size:
+                manifest["files"][path] = old
+                done += entry.size
+                print(f"{done * 100 // max(total, 1):3d}%  {path} (already there)", flush=True)
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             part = dest.with_name(dest.name + ".part")
             h = hashlib.sha256()
@@ -263,6 +277,29 @@ def cmd_extract_japanese(args: argparse.Namespace) -> int:
             print(f"{done * 100 // max(total, 1):3d}%  {path}", flush=True)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"extracted {len(wanted)} files ({total / 2**30:.2f} GiB) to {out}")
+    return cmd_director_cut_balance(args)
+
+
+def cmd_director_cut_balance(args: argparse.Namespace) -> int:
+    """The Director's Cut's battle balance, as tables for the US game, into <disc>/JA/balance."""
+    from disc import balance
+
+    known = load_toml_json(config_dir(args.version) / "japanese.json")["balance_pack"]
+    disc = Path(args.disc)
+    if not (disc / "DATA0_0.HD6").is_file():
+        sys.exit(f"{disc} does not hold the extracted US disc: run `setup.py extract` first.")
+    with IsoImage(args.iso) as iso:
+        try:
+            pack = balance.japanese_pack(iso)
+        except (KeyError, ValueError):
+            pack = b""
+    if balance.pack_sha256(pack) != known["sha256"]:
+        sys.exit(
+            f"{args.iso} is not the Japanese Director's Cut (SCPS-17013): its {known['name']} does not match."
+        )
+    for line in balance.build(pack, disc, disc / "JA" / "balance"):
+        print(line, flush=True)
+    print(f"the Director's Cut balance's tables are in {disc / 'JA' / 'balance'}")
     return 0
 
 
@@ -831,6 +868,14 @@ def main() -> int:
     p.add_argument("--iso", required=True)
     p.add_argument("--disc", default=str(ROOT / "disc"))
     p.set_defaults(func=cmd_extract_japanese)
+
+    p = sub.add_parser(
+        "director-cut-balance",
+        help="the Japanese Director's Cut's battle balance, as tables for the US game, into disc/JA/balance",
+    )
+    p.add_argument("--iso", required=True)
+    p.add_argument("--disc", default=str(ROOT / "disc"))
+    p.set_defaults(func=cmd_director_cut_balance)
 
     p = sub.add_parser("info", help="print SYSTEM.CNF and the MWo3 overlay table")
     p.add_argument("--disc", default=str(ROOT / "disc"))

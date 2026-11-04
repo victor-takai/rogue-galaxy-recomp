@@ -152,15 +152,16 @@ fullscreen there; Back + Start opens the menu (F1).
 |---|---|
 | `Install.bat`, `tools/install/` | The Windows installer: build tools into `toolchain\`, then `setup.py install` |
 | `Update.bat`, `tools/install/update.ps1` | Brings a folder `Install.bat` built to the newest release and rebuilds what changed (a git checkout uses `git pull` instead) |
-| `Install-Undub.bat`, `tools/install/install-undub.ps1` | The Japanese voices from your own Japanese disc, into `disc/JA` (`setup.py extract-japanese`) |
+| `Install-Undub.bat`, `tools/install/install-undub.ps1` | The Japanese voices from your own Japanese disc, into `disc/JA` (`setup.py extract-japanese`), and its battle balance into `disc/JA/balance` (`setup.py director-cut-balance`) |
 | `CHANGELOG.md` | What each release brings, and its known issues |
-| `setup.py` | `verify`, `extract`, `extract-japanese`, `info`, `overlays`, `check`, `recompile`, `tools`, `build`, `install`, `portable` (and `make-hashes`, `maps`, `vu1-manifest`, `vu-blocks-manifest` for maintainers) |
+| `setup.py` | `verify`, `extract`, `extract-japanese`, `director-cut-balance`, `info`, `overlays`, `check`, `recompile`, `tools`, `build`, `install`, `portable` (and `make-hashes`, `maps`, `vu1-manifest`, `vu-blocks-manifest` for maintainers) |
 | `CMakeLists.txt`, `src/` | The game executable: `main.cpp`, the hooks, one file per feature ([HOOKS.md](HOOKS.md)), the overlay manager (`src/overlay/`), the diagnosis tools (`src/debug/`: traces, watches, profiler, stall watch, GS census, self-test) and the Windows launcher, `Rogue Galaxy.exe` (`src/launcher/`) |
 | `cmake/framework_patches.cmake` | Applies `patches/ps2recomp/` to the framework, at configure and from `setup.py tools` |
 | `debug/` | Launchers for diagnosis: `RogueGalaxy.bat` (the game in a terminal), `-profile`, `-hitches`, `-capture` and `-collect` ([DEVELOPMENT.md](DEVELOPMENT.md)) |
 | `borders/` | An image you put here fills the window beside the 4:3 picture (`borders/README.txt`) |
 | `config/SCUS_974.90/` | `hashes.json` (known-good dump), `overlays.toml` (MWo3 table, loader hook), `funcmap.toml` (map sources and corrections), `functions_<image>.csv` (function maps), `recomp/<image>.toml` (ps2_recomp configs, SDK bindings), `vu1-programs.txt` and `vu-blocks.txt` (VU1 and VU0 microcode locations) |
 | `tools/disc/iso9660.py` | Read-only ISO9660 reader for dual-layer PS2 DVDs |
+| `tools/disc/archive.py`, `cfgbin.py`, `balance.py` | The game's archives (`.HD6` index, `.pac`), its compiled tables (`.cfg.bin`), and the Director's Cut balance's tables built from them |
 | `tools/mwo3/mwo3.py` | MWo3 overlay header parser, ELF cross-check, overlay-to-ELF wrapper |
 | `tools/funcmap/` | Function-map builder and the checks behind `setup.py check` |
 | `tools/bench/` | `walk.sh NAME [SCALE] [FPS]`: the scripted Salgin walk on the pad clock, for speed (3x, 60 fps mode, the `[gfx]` intervals before the logged frame) and for regressions (1x, 30 fps mode, `cmpvram.py` against a reference frame made with the same save); `PROFILE=1` samples the threads as well. It needs the maintainer's input scripts in `build/run/` and saves in `disc/mc0`, which are not in the repository |

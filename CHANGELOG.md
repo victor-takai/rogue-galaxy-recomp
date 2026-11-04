@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### New
+
+- Director's Cut balance: battles with the balance of the Japanese
+  Director's Cut, which the US release did not get: smaller groups of
+  enemies, more money from many of them, the Rosencaster and Starship
+  Factory enemies weaker, the Area Masters stronger, bosses never knocked
+  down (Game > Director's Cut balance, off by default, from the next start).
+  The numbers come from your own Japanese Director's Cut disc:
+  `Install-Undub.bat` reads them; run it again if you already have the
+  undub (the voices it copied stay).
+
 ## 0.2.0 (pre-release)
 
 `Update.bat`, the Japanese voices (undub), texture packs, the F1 menu with

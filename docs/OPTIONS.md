@@ -95,6 +95,7 @@ F1 > Settings > Game, in these sections:
 | Weapon growth | 100% to 1000%: each battle fills a weapon's gauge (15 to full), then its attributes, by 1 point, or more. |
 | Shop prices | 10% to 200%. |
 | Action gauge speed | 25% to 400%. |
+| Director's Cut balance | Off by default. Battles with the balance of the Japanese Director's Cut (SCPS-17013), which the US release did not get: 85 of the 374 groups of enemies are smaller (the Cactulus group in Rosa comes 2 to 3 instead of 4 to 5), 75 enemies leave about 1.5 times the money, the regular enemies of Rosencaster and the Starship Factory and three story fights (Giant, Attack Walker, Gale) are weaker, the 10 Area Masters stronger, bigger enemies harder to knock down, bosses never knocked down, and three boss attacks lose their poison or paralysis. Experience, the party and the weapons stay as they are, and the damage formula is the same in both. Needs that disc's numbers in `disc/JA/balance`: `Install-Undub.bat` with your Japanese disc image writes them (by hand, `python setup.py director-cut-balance --iso "<your Japanese disc>"`). The enemies' own attacks, which the Director's Cut also changed, stay the US ones. Takes effect at the next start. |
 
 **Rendering**
 
@@ -125,8 +126,8 @@ F1 > Settings > Language.
 
 Most of the same options, and Display > Borders, are on the game's Settings
 screen (System > Settings in the main menu): L1 and R1 turn the page.
-Controller's buttons, Check for new versions, Native renderer, the undub and
-the texture packs are in F1 alone.
+Controller's buttons, Check for new versions, Director's Cut balance, Native
+renderer, the undub and the texture packs are in F1 alone.
 
 <p align="center">
   <img src="images/settings-switches.jpg" width="49%" alt="The game's Settings screen: the switches">

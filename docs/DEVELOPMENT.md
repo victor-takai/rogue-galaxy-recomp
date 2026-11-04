@@ -95,6 +95,7 @@ Most of these set an option of the F1 menu for one run, without saving it.
 | `RG_WEAPON_GROWTH=N` | What a won battle adds to each weapon's gauge and then attributes, percent of the game's 1, in whole steps (the menu's "Weapon growth") |
 | `RG_SHOP_PRICES=N` | What shops ask for their items, percent of the game's (the menu's "Shop prices") |
 | `RG_ACTION_GAUGE=N` | How fast the party's action gauge fills, percent of the game's (the menu's "Action gauge speed") |
+| `RG_DIRECTOR_CUT_BALANCE=1` | The Japanese Director's Cut's battle balance, from the tables in `disc/JA/balance`; `0` turns it off whatever the menu says (the menu's "Director's Cut balance"; `src/dc_balance.h`). Logs `[rg] Director's Cut balance: <table>` for each table it replaces |
 | `RG_FREE_CAMERA=1` | Starts with the free camera on (the menu's "Free camera"; `src/free_camera.h`) |
 | `RG_INSTANT_TEXT=1` | Text in the message windows a page at a time (the menu's "Instant text"; `src/instant_text.h`) |
 | `RG_INSTANT_RECAP=1` | The loading screen's story so far appears whole at once, then Press X (the menu's "Show the loading recap at once") |

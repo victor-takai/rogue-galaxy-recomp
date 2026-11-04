@@ -135,6 +135,16 @@ class IsoImage:
         self._f.seek(entry.lba * SECTOR)
         return self._f.read(entry.size)
 
+    def read_range(self, entry: Entry, offset: int, size: int) -> bytes:
+        """`size` bytes of `entry` from `offset`, such as one file of a DATA archive."""
+        if offset < 0 or size < 0 or offset + size > entry.size:
+            raise ValueError(f"{entry.path}: {size} bytes at {offset} pass its end ({entry.size})")
+        self._f.seek(entry.lba * SECTOR + offset)
+        data = self._f.read(size)
+        if len(data) != size:
+            raise IOError(f"image ends inside {entry.path}")
+        return data
+
     def iter_chunks(self, entry: Entry) -> Iterator[bytes]:
         left = entry.size
         pos = entry.lba * SECTOR
