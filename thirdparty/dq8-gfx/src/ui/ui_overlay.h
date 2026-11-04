@@ -19,6 +19,7 @@
 #include <vector>
 
 struct ImGuiContext;
+struct ImGuiWindow;
 
 namespace dq8::ui {
 
@@ -89,6 +90,10 @@ struct HostServices {
     // A newer release than this build, its version and page, empty while
     // none is known: the About window says so (Rogue Galaxy: added).
     std::function<std::pair<std::string, std::string>()> newerRelease;
+    // A Steam Deck, whose Steam button belongs to Steam: Back + Start is the
+    // only way to the menu there, so it cannot be turned off, and the menu
+    // names the Deck's buttons (Rogue Galaxy: added).
+    bool steamDeck = false;
 };
 
 // Game: Rogue Galaxy's own switches (added).
@@ -156,6 +161,19 @@ private:
         bool keyboard = false;
         int slot = 0;
         double startedAt = 0.0;
+        // B on a controller binds B when tapped and cancels when held: the
+        // pad has no Esc.
+        double backDownAt = -1.0;
+    };
+    // Where keyboard and controller navigation stood before this frame's
+    // input, which Back (B, Esc) is judged by: ImGui's own handling of it
+    // has already moved things by the time the frame is drawn.
+    struct NavBefore {
+        ImGuiWindow *window = nullptr;
+        bool menuLayer = false;
+        bool itemActive = false;
+        bool popupOpen = false;
+        bool modalOpen = false;
     };
     struct ScriptStep {
         uint64_t frame = 0u;
@@ -175,8 +193,21 @@ private:
     bool hotkey(const SDL_KeyboardEvent &key);
     bool gamepadShortcut(const SDL_GamepadButtonEvent &button);
     bool captureEvent(const SDL_Event &event);
-    bool backOut();
+    // Back, one level at a time; `pad` when it came from the controller's B.
+    void backOut(bool pad);
     void toggleMenu(bool fromController);
+    void toggleBarFocus();
+    // The controllers' state for ImGui, read here instead of by its SDL
+    // backend: the left stick moves the cursor as the D-pad does, and the
+    // right stick scrolls.
+    void feedGamepad();
+    void rememberNavigation();
+    bool padInUse() const { return m_lastInputPad; }
+    // A controller button as the controller in use labels it ("B", "Circle").
+    std::string padButtonName(SDL_GamepadButton button) const;
+    // The row of button hints along the settings window's bottom edge.
+    void drawPadHints(float height);
+    void drawQuitPrompt();
 
     // Frame side.
     void updateScale();
@@ -260,6 +291,20 @@ private:
     bool m_hostPaused = false;
     bool m_fastForward = false;
     bool m_gamepadNavHeld = false;
+    // The settings window's two halves, the page list and the page, which
+    // the cursor moves between by Right / A and Left / B (the windows
+    // themselves; ImGui keeps them for the life of the context).
+    ImGuiWindow *m_listPane = nullptr;
+    ImGuiWindow *m_pagePane = nullptr;
+    bool m_focusList = false;
+    bool m_focusPage = false;
+    bool m_quitAsk = false;
+    bool m_cancelQuit = false;
+    NavBefore m_navBefore;
+    // The last input was a controller's, so the hints show its buttons.
+    bool m_lastInputPad = false;
+    // The left stick's directions as D-pad presses: left, right, up, down.
+    std::array<bool, 4> m_stickHeld{};
     bool m_keyboardBindings = false;
     int m_selectBindings = -1;
     gfx::PadInput m_hoveredInput = gfx::PadInput::Count;

@@ -117,6 +117,9 @@ void Overlay::runStep(const ScriptStep &step, uint64_t frame) {
         openShortcuts();
     } else if (command == "stats") {
         m_statsOpen = on;
+    } else if (command == "pad") {
+        // The menu as a controller player sees it, hints and all.
+        m_lastInputPad = on;
     } else if (command == "capture") {
         for (size_t input = 0; input < gfx::kPadInputCount; ++input)
             if (first == gfx::padInputKey(static_cast<gfx::PadInput>(input)))
