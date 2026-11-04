@@ -214,6 +214,14 @@ public:
                    uint32_t width, uint32_t height, SDL_GPUTexture *source, uint32_t sourceWidth,
                    uint32_t sourceHeight, bool blur, float brightness, std::string &error);
 
+    // One FSR 1 pass (present_fsr.frag; Rogue Galaxy: added): `rcas` false,
+    // EASU from `source`'s region (x, y, width, height) up to the viewport
+    // `to` of `target`; true, RCAS of a source the viewport's size, at
+    // `sharpness` stops (0 the sharpest). Recorded into `commands`.
+    bool drawFsr(SDL_GPUCommandBuffer *commands, SDL_GPUTexture *target, SDL_GPUTextureFormat format,
+                 const uint32_t to[4], SDL_GPULoadOp loadOp, SDL_GPUTexture *source, const uint32_t region[4],
+                 bool rcas, float sharpness, std::string &error);
+
     // Work recorded ahead of the next submission (Rogue Galaxy: added). A
     // texture upload, a target's patches, a page import, an 8-bit expansion,
     // a reinterpretation or a clear was each a command buffer submission of
@@ -289,6 +297,8 @@ private:
     SDL_GPUGraphicsPipeline *m_displayPipeline = nullptr;
     // drawSides': its pipeline for the window's format, and a bilinear sampler.
     SDL_GPUGraphicsPipeline *m_sidesPipeline = nullptr;
+    SDL_GPUGraphicsPipeline *m_fsrPipelines[2] = {}; // by the format below: RGBA8, the window's
+    SDL_GPUTextureFormat m_fsrFormats[2] = {SDL_GPU_TEXTUREFORMAT_INVALID, SDL_GPU_TEXTUREFORMAT_INVALID};
     SDL_GPUTextureFormat m_sidesFormat = SDL_GPU_TEXTUREFORMAT_INVALID;
     SDL_GPUSampler *m_linearSampler = nullptr;
     SDL_GPUGraphicsPipeline *m_index8Pipeline = nullptr;

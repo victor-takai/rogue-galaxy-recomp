@@ -22,6 +22,7 @@ enum class SdlGpuFilter : uint8_t {
     Sharp,   // nearest to a whole multiple, then smooth to the final size
     Smooth,  // bilinear
     Nearest, // nearest neighbour
+    Fsr,     // AMD FSR 1 (EASU then RCAS) when enlarging; Smooth otherwise (Rogue Galaxy: added)
 };
 
 // What fills the window beside a picture that does not reach its edges
