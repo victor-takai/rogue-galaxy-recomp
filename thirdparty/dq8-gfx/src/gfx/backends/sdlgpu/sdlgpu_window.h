@@ -52,6 +52,9 @@ struct SdlGpuDisplayOptions {
     // undrawn or half drawn, which a television's overscan hid.
     uint32_t crop = 0u;
     SdlGpuSides sides = SdlGpuSides::Black;
+    // FSR 1's sharpening, 0 to 100 (Rogue Galaxy: added): 100 is RCAS at 0
+    // stops (the sharpest), 0 at 2 stops.
+    int fsrSharpness = 90;
     bool operator==(const SdlGpuDisplayOptions &) const = default;
 };
 
