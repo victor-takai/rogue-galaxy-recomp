@@ -169,7 +169,7 @@ fullscreen there; Back + Start opens the menu (F1).
 | `tools/profile/report.py` | Reads the profiles `RG_PROFILE` writes ([DEVELOPMENT.md](DEVELOPMENT.md)) |
 | `tools/vu1/` | Study of the VU1 programs: disassembler, census, captures, and the oracle the native ones are checked against ([VU1-NATIVE.md](VU1-NATIVE.md)) |
 | `tools/texture_pack/` | Making the larger 2D art from what `debug\RogueGalaxy-collect.bat` collected (`make-pack.bat`), and checks of the game's zip and DDS readers ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)) |
-| `tools/release/source_zip.py` | The release's source archive, with the submodules |
+| `tools/release/` | `source_zip.py`: the release's source archive, with the submodules; `release_notes.py VERSION`: the release page's text, from that version's section of the CHANGELOG |
 | `thirdparty/PS2Recomp` | Framework submodule; `patches/ps2recomp/` holds our changes to it, applied on configure ([`patches/README.md`](../patches/README.md)) |
 | `thirdparty/dq8-gfx` | SDL3 GPU GS backend and in-game menu from DQ8-Recompiled (GPL-3.0), see its README |
 | `thirdparty/imgui` | Dear ImGui submodule (MIT), which the menu draws with |
