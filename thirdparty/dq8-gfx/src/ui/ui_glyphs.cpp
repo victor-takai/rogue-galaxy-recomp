@@ -2,10 +2,14 @@
 
 #include "ui/ui_style.h"
 
+#include <imgui_internal.h> // ImTextCharFromUtf8
+
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 namespace dq8::ui {
 namespace {
@@ -22,12 +26,109 @@ enum Direction { kUp, kDown, kLeft, kRight };
 
 float stroke(float size) { return std::max(1.5f, size * 0.09f); }
 
-void label(ImDrawList *list, ImVec2 center, float fontSize, ImU32 color, const char *text) {
+// Where the ink of a coverage profile starts and ends, in texels from its
+// first: the half-coverage crossings, between texel centres, so a flat top
+// a row only partly covered lands where it really is.
+std::pair<float, float> inkSpan(const std::vector<float> &profile) {
+    const float peak = *std::max_element(profile.begin(), profile.end());
+    const float half = peak * 0.5f;
+    size_t lo = 0, hi = profile.size() - 1;
+    while (profile[lo] < half)
+        ++lo;
+    while (profile[hi] < half)
+        --hi;
+    const float before = lo > 0 ? profile[lo - 1] : 0.0f;
+    const float after = hi + 1 < profile.size() ? profile[hi + 1] : 0.0f;
+    const float start = static_cast<float>(lo) - 0.5f + (half - before) / std::max(1e-6f, profile[lo] - before);
+    const float end = static_cast<float>(hi) + 0.5f + (profile[hi] - half) / std::max(1e-6f, profile[hi] - after);
+    return {start, end};
+}
+
+// A glyph's ink in its quad's coordinates, read from the atlas; its quad
+// is the rasterised box rounded out to whole pixels, up to half a pixel
+// larger on one side. False when the atlas keeps no pixels.
+bool glyphInk(const ImFontGlyph &glyph, ImVec4 &ink) {
+    const ImTextureData *texture = ImGui::GetFont()->OwnerAtlas->TexData;
+    if (!texture || !texture->Pixels || texture->Width <= 0 || texture->Height <= 0)
+        return false;
+    const int x0 = static_cast<int>(std::lround(glyph.U0 * texture->Width));
+    const int x1 = static_cast<int>(std::lround(glyph.U1 * texture->Width));
+    const int y0 = static_cast<int>(std::lround(glyph.V0 * texture->Height));
+    const int y1 = static_cast<int>(std::lround(glyph.V1 * texture->Height));
+    if (x1 <= x0 || y1 <= y0 || x1 > texture->Width || y1 > texture->Height)
+        return false;
+    const int alpha = texture->Format == ImTextureFormat_Alpha8 ? 0 : 3;
+    std::vector<float> columns(static_cast<size_t>(x1 - x0)), rows(static_cast<size_t>(y1 - y0));
+    float total = 0.0f;
+    for (int y = y0; y < y1; ++y)
+        for (int x = x0; x < x1; ++x) {
+            // The strongest coverage of each row and column, not their sum: an
+            // A's point or a Y's stem is narrow but as solid as the rest.
+            const float a = texture->Pixels[(static_cast<size_t>(y) * texture->Width + x) * texture->BytesPerPixel + alpha];
+            float &column = columns[static_cast<size_t>(x - x0)];
+            float &row = rows[static_cast<size_t>(y - y0)];
+            column = std::max(column, a);
+            row = std::max(row, a);
+            total += a;
+        }
+    if (total <= 0.0f)
+        return false;
+    const auto [left, right] = inkSpan(columns);
+    const auto [top, bottom] = inkSpan(rows);
+    const float sx = (glyph.X1 - glyph.X0) / static_cast<float>(x1 - x0);
+    const float sy = (glyph.Y1 - glyph.Y0) / static_cast<float>(y1 - y0);
+    ink = ImVec4(glyph.X0 + left * sx, glyph.Y0 + top * sy, glyph.X0 + right * sx, glyph.Y0 + bottom * sy);
+    return true;
+}
+
+// Centred by the letters' own ink, not by the line box: that one carries
+// room for descenders and side bearings, which left a Y high and off to a
+// side in its circle. Descenders are left out, so "Options" sits like "Menu".
+struct Placed {
+    ImVec2 at;     // where the text is drawn, on whole pixels as ImGui draws it
+    ImVec2 shift;  // how far that moved it from the exact centre
+    bool visible = false;
+};
+
+Placed place(ImVec2 center, float fontSize, const char *text) {
     ImFont *font = ImGui::GetFont();
-    const ImVec2 extent = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
-    list->AddText(font, fontSize,
-                  ImVec2(std::floor(center.x - extent.x * 0.5f), std::floor(center.y - extent.y * 0.5f)),
-                  color, text);
+    ImFontBaked *baked = font->GetFontBaked(fontSize);
+    const float scale = fontSize / baked->Size;
+    const float baseline = IM_ROUND(baked->Ascent) * scale;
+    float pen = 0.0f, left = FLT_MAX, right = -FLT_MAX, top = FLT_MAX, bottom = -FLT_MAX;
+    for (const char *at = text, *end = text + std::strlen(text); at < end;) {
+        unsigned int code = 0;
+        at += ImTextCharFromUtf8(&code, at, end);
+        const ImFontGlyph *glyph = baked->FindGlyph(static_cast<ImWchar>(code));
+        if (!glyph)
+            continue;
+        if (glyph->Visible) {
+            ImVec4 ink(glyph->X0, glyph->Y0, glyph->X1, glyph->Y1);
+            glyphInk(*glyph, ink);
+            left = std::min(left, pen + ink.x * scale);
+            right = std::max(right, pen + ink.z * scale);
+            top = std::min(top, ink.y * scale);
+            // A descender counts to the baseline; the overshoot of a round
+            // or flat letter's foot counts as it is.
+            const float foot = ink.w * scale;
+            bottom = std::max(bottom, foot > baseline + fontSize * 0.1f ? baseline : foot);
+        }
+        pen += glyph->AdvanceX * scale;
+    }
+    Placed placed;
+    if (left > right)
+        return placed; // nothing to see, a space
+    const ImVec2 exact(center.x - (left + right) * 0.5f, center.y - (top + bottom) * 0.5f);
+    placed.at = ImVec2(std::round(exact.x), std::round(exact.y));
+    placed.shift = ImVec2(placed.at.x - exact.x, placed.at.y - exact.y);
+    placed.visible = true;
+    return placed;
+}
+
+void label(ImDrawList *list, ImVec2 center, float fontSize, ImU32 color, const char *text) {
+    const Placed placed = place(center, fontSize, text);
+    if (placed.visible)
+        list->AddText(ImGui::GetFont(), fontSize, placed.at, color, text);
 }
 
 float labelWidth(float fontSize, const char *text) {
@@ -549,6 +650,9 @@ float bindingChipWidth(const PadBinding &binding, SDL_GamepadType type, float he
 
 void drawBindingChip(ImDrawList *list, const PadBinding &binding, SDL_GamepadType type, ImVec2 min,
                      float height, float alpha) {
+    // On whole pixels: a ring drawn half a pixel over with its letter
+    // snapped back reads as a letter off to one side.
+    min = ImVec2(std::floor(min.x), std::floor(min.y));
     const Chip chip = describe(binding, type);
     const float width = bindingChipWidth(binding, type, height);
     const ImVec2 max(min.x + width, min.y + height);
@@ -585,11 +689,17 @@ void drawBindingChip(ImDrawList *list, const PadBinding &binding, SDL_GamepadTyp
         list->AddCircle(c, height * 0.5f - 0.5f, edge, 0, 1.0f);
         faceSymbol(list, chip.face, c, height, withAlpha(faceColor(chip.face), alpha));
         break;
-    case ChipKind::Letter:
-        list->AddCircleFilled(c, height * 0.5f, fill);
-        list->AddCircle(c, height * 0.5f - 0.5f, withAlpha(chip.color, 0.7f * alpha), 0, 1.5f);
-        label(list, c, font, withAlpha(chip.color, alpha), chip.text.c_str());
+    case ChipKind::Letter: {
+        // The letter lands on whole pixels, up to half a pixel off; a ring
+        // drawn smooth can follow it there, so it sits dead centre.
+        const Placed placed = place(c, font, chip.text.c_str());
+        const ImVec2 ring(c.x + placed.shift.x, c.y + placed.shift.y);
+        list->AddCircleFilled(ring, height * 0.5f, fill);
+        list->AddCircle(ring, height * 0.5f - 0.5f, withAlpha(chip.color, 0.7f * alpha), 0, 1.5f);
+        if (placed.visible)
+            list->AddText(ImGui::GetFont(), font, placed.at, withAlpha(chip.color, alpha), chip.text.c_str());
         break;
+    }
     case ChipKind::Dpad:
         dpad(list, c, height * 0.92f, chip.direction, text, IM_COL32(255, 255, 255, static_cast<int>(52 * alpha)));
         break;

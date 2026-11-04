@@ -573,6 +573,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     dq8::ui::HostServices host;
     host.version = RG_APP_VERSION;
     host.revision = RG_REVISION;
+    host.steamDeck = onSteamDeck();
     // RG_MUTE=1 keeps the game silent whatever the menu's volume says.
     const bool mute = env("RG_MUTE", "0") != "0";
     host.setVolume = [mute](float volume) { ps2_native_iop::setVolume(mute ? 0.0f : volume); };
@@ -826,6 +827,9 @@ Setup::Setup(PS2Runtime &runtime)
             {
                 settings.fullscreen = true;
             }
+            // Steam keeps the Steam button: View + Menu is the only way to
+            // the game's menu, so it cannot be left off.
+            settings.backStartOpensMenu = true;
         }
         uint32_t runScale = settings.resolutionScale;
         if (const std::string scale = env("RG_GS_SCALE", ""); !scale.empty())

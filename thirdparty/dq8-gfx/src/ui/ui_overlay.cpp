@@ -77,13 +77,19 @@ bool Overlay::initialize(SDL_Window *window, SDL_GPUTextureFormat format, std::s
     // Settings are ours; ImGui keeps no files.
     io.IniFilename = nullptr;
     io.LogFilename = nullptr;
+    // Back never leaves the cursor nowhere: a controller has no mouse to
+    // find it again with.
+    io.ConfigNavEscapeClearFocusItem = false;
+    // Holding X would bring up ImGui's window switcher.
+    m_context->ConfigNavWindowingWithGamepad = false;
     loadFonts();
     if (!ImGui_ImplSDL3_InitForSDLGPU(window)) {
         error = "Dear ImGui could not attach to the window";
         return false;
     }
     m_platformReady = true;
-    ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_AutoAll);
+    // No controllers for the backend: feedGamepad() reads them instead.
+    ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, nullptr, 0);
     ImGui_ImplSDLGPU3_InitInfo info;
     info.Device = m_backend.gpuDevice();
     info.ColorTargetFormat = format;
@@ -95,7 +101,14 @@ bool Overlay::initialize(SDL_Window *window, SDL_GPUTextureFormat format, std::s
     m_rendererReady = true;
     updateScale();
     loadScript();
-    notify("Press F1, or Guide on a controller, for the menu", Icon::Info, 6.0);
+    // Guide is often the system's (Steam, the Xbox Game Bar), so Back + Start
+    // is named first.
+    if (m_host.steamDeck)
+        notify("Press View + Menu for the game's menu", Icon::Info, 6.0);
+    else if (m_settings.backStartOpensMenu)
+        notify("Press F1, or Back + Start on a controller, for the menu", Icon::Info, 6.0);
+    else
+        notify("Press F1, or Guide on a controller, for the menu", Icon::Info, 6.0);
     return true;
 }
 
@@ -204,6 +217,7 @@ void Overlay::openSettings(SettingsPage page) {
     setMenuOpen(true);
     m_settingsOpen = true;
     m_focusSettings = true;
+    m_focusList = true;
     m_page = page;
 }
 
@@ -231,11 +245,38 @@ void Overlay::toggleMenu(bool fromController) {
     }
     setMenuOpen(true);
     if (fromController) {
-        // A controller cannot reach the menu bar easily; start in the window.
+        // A controller starts in the window, on the page list.
         m_settingsOpen = true;
         m_focusSettings = true;
+        m_focusList = true;
         m_gamepadNavHeld = true;
     }
+}
+
+// The top bar is a window of its own, which a controller reaches only by
+// holding X and cycling windows; this takes it there, and back.
+void Overlay::toggleBarFocus() {
+    ImGuiContext &g = *ImGui::GetCurrentContext();
+    ImGuiWindow *bar = ImGui::FindWindowByName("##MainMenuBar");
+    if (!bar)
+        return;
+    const bool inBar = g.NavWindow && g.NavWindow->RootWindowForNav == bar;
+    const bool inPopup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    if (inBar || inPopup) {
+        ImGui::ClosePopupsExceptModals();
+        g.NavLayer = ImGuiNavLayer_Main;
+        if (m_settingsOpen) {
+            m_focusSettings = true;
+            m_focusList = true;
+        } else {
+            ImGui::FocusWindow(nullptr);
+        }
+        return;
+    }
+    ImGui::FocusWindow(bar);
+    g.NavLayer = ImGuiNavLayer_Menu;
+    ImGui::NavInitWindow(bar, true);
+    ImGui::SetNavCursorVisible(true);
 }
 
 void Overlay::notify(std::string text, Icon kind, double seconds) {
@@ -326,18 +367,26 @@ bool Overlay::handleEvent(const SDL_Event &event) {
     }
     case SDL_EVENT_MOUSE_MOTION:
         m_lastMouseMotion = now();
+        m_lastInputPad = false;
         break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        m_lastInputPad = false;
+        break;
+    // Back (Esc, B) reaches ImGui like any key, and drawFrame() takes it
+    // from there, knowing where the cursor was.
     case SDL_EVENT_KEY_DOWN:
+        m_lastInputPad = false;
         if (!event.key.repeat && hotkey(event.key))
-            return true;
-        if (event.key.scancode == SDL_SCANCODE_ESCAPE && m_menuOpen && backOut())
             return true;
         break;
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        m_lastInputPad = true;
         if (gamepadShortcut(event.gbutton))
             return true;
-        if (event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST && m_menuOpen && backOut())
-            return true;
+        break;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+        if (std::abs(static_cast<int>(event.gaxis.value)) > 16000)
+            m_lastInputPad = true;
         break;
     default:
         break;
@@ -429,10 +478,18 @@ bool Overlay::captureEvent(const SDL_Event &event) {
             m_capture.active = false;
         return true;
     case SDL_EVENT_KEY_UP:
+        return true;
     case SDL_EVENT_GAMEPAD_BUTTON_UP:
+        // A tap of B binds it; a hold cancels (drawCapturePrompt()).
+        if (event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST && m_capture.backDownAt >= 0.0) {
+            m_capture.backDownAt = -1.0;
+            finish(gfx::PadBinding::button(SDL_GAMEPAD_BUTTON_EAST));
+        }
         return true;
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-        if (event.gbutton.button != SDL_GAMEPAD_BUTTON_GUIDE)
+        if (event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST)
+            m_capture.backDownAt = now();
+        else if (event.gbutton.button != SDL_GAMEPAD_BUTTON_GUIDE)
             finish(gfx::PadBinding::button(static_cast<SDL_GamepadButton>(event.gbutton.button)));
         return true;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
@@ -448,18 +505,157 @@ bool Overlay::captureEvent(const SDL_Event &event) {
     }
 }
 
-bool Overlay::backOut() {
-    if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
-        return false;
-    if (m_aboutOpen)
+namespace {
+bool inside(const ImGuiWindow *window, const ImGuiWindow *pane) {
+    for (; window && pane; window = window->ParentWindow)
+        if (window == pane)
+            return true;
+    return false;
+}
+} // namespace
+
+// ImGui has already done its part of Back by now (ended a slider's
+// adjustment, closed a combo or a menu, left the top bar's layer); this is
+// the rest, judged by where the cursor was before it.
+void Overlay::backOut(bool pad) {
+    const NavBefore &before = m_navBefore;
+    if (before.itemActive)
+        return;
+    if (before.modalOpen) {
+        m_cancelQuit = true; // the only modal Back reaches: the capture prompt takes its own input
+        return;
+    }
+    if (before.popupOpen)
+        return;
+    if (before.menuLayer) {
+        // Out of the top bar, back to the window.
+        if (m_settingsOpen) {
+            m_focusSettings = true;
+            m_focusList = true;
+        }
+        return;
+    }
+    if (m_aboutOpen) {
         m_aboutOpen = false;
-    else if (m_shortcutsOpen)
+        return;
+    }
+    if (m_shortcutsOpen) {
         m_shortcutsOpen = false;
-    else if (m_settingsOpen)
+        return;
+    }
+    if (m_settingsOpen && inside(before.window, m_pagePane)) {
+        m_focusList = true;
+        return;
+    }
+    // From the page list: a controller goes back to the game; Esc closes
+    // the window first, leaving the top bar, as it always has.
+    if (m_settingsOpen && !pad)
         m_settingsOpen = false;
     else
         setMenuOpen(false);
-    return true;
+}
+
+void Overlay::rememberNavigation() {
+    const ImGuiContext &g = *m_context;
+    m_navBefore.window = g.NavWindow;
+    m_navBefore.menuLayer = g.NavLayer == ImGuiNavLayer_Menu;
+    m_navBefore.itemActive = g.ActiveId != 0;
+    m_navBefore.popupOpen = !g.OpenPopupStack.empty();
+    m_navBefore.modalOpen = false;
+    for (const ImGuiPopupData &popup : g.OpenPopupStack)
+        if (popup.Window && (popup.Window->Flags & ImGuiWindowFlags_Modal))
+            m_navBefore.modalOpen = true;
+
+    // Past a slider, a list and the top bar, Back is backOut()'s alone.
+    // ImGui's own, inside a child window, puts the cursor on the child as a
+    // whole for a frame (a bright frame around the page or the list) before
+    // backOut() moves it on. Owned keys still read as pressed with
+    // IsKeyPressed(key, repeat), which asks for any owner.
+    if (m_menuOpen && !m_capture.active && !m_navBefore.itemActive && !m_navBefore.popupOpen &&
+        !m_navBefore.menuLayer) {
+        static const ImGuiID kBackOwner = ImHashStr("dq8 back");
+        ImGui::SetKeyOwner(ImGuiKey_Escape, kBackOwner);
+        ImGui::SetKeyOwner(ImGuiKey_GamepadFaceRight, kBackOwner);
+    }
+}
+
+// The same buttons as ImGui's SDL backend gives it, from every controller,
+// with the left stick pressing the D-pad (past half way, let go under a
+// third) and the right stick in the left stick's place, which ImGui scrolls
+// with.
+void Overlay::feedGamepad() {
+    ImGuiIO &io = ImGui::GetIO();
+    std::vector<SDL_Gamepad *> gamepads;
+    for (const auto &controller : m_backend.padInput().controllers())
+        if (SDL_Gamepad *gamepad = SDL_GetGamepadFromID(controller.id))
+            gamepads.push_back(gamepad);
+    if (gamepads.empty()) {
+        io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
+        m_stickHeld = {};
+        return;
+    }
+    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+    const auto button = [&](SDL_GamepadButton which) {
+        return std::any_of(gamepads.begin(), gamepads.end(),
+                           [&](SDL_Gamepad *gamepad) { return SDL_GetGamepadButton(gamepad, which); });
+    };
+    const auto axis = [&](SDL_GamepadAxis which) {
+        // The one pushed furthest.
+        float value = 0.0f;
+        for (SDL_Gamepad *gamepad : gamepads) {
+            const float v = static_cast<float>(SDL_GetGamepadAxis(gamepad, which)) / 32767.0f;
+            if (std::fabs(v) > std::fabs(value))
+                value = v;
+        }
+        return std::clamp(value, -1.0f, 1.0f);
+    };
+    static constexpr std::pair<ImGuiKey, SDL_GamepadButton> kButtons[] = {
+        {ImGuiKey_GamepadStart, SDL_GAMEPAD_BUTTON_START},
+        {ImGuiKey_GamepadBack, SDL_GAMEPAD_BUTTON_BACK},
+        {ImGuiKey_GamepadFaceLeft, SDL_GAMEPAD_BUTTON_WEST},
+        {ImGuiKey_GamepadFaceRight, SDL_GAMEPAD_BUTTON_EAST},
+        {ImGuiKey_GamepadFaceUp, SDL_GAMEPAD_BUTTON_NORTH},
+        {ImGuiKey_GamepadFaceDown, SDL_GAMEPAD_BUTTON_SOUTH},
+        {ImGuiKey_GamepadL1, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER},
+        {ImGuiKey_GamepadR1, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER},
+        {ImGuiKey_GamepadL3, SDL_GAMEPAD_BUTTON_LEFT_STICK},
+        {ImGuiKey_GamepadR3, SDL_GAMEPAD_BUTTON_RIGHT_STICK},
+    };
+    for (const auto &[key, which] : kButtons)
+        io.AddKeyEvent(key, button(which));
+
+    // The left stick by its larger axis, so a diagonal push moves one way.
+    const float x = axis(SDL_GAMEPAD_AXIS_LEFTX), y = axis(SDL_GAMEPAD_AXIS_LEFTY);
+    const bool horizontal = std::fabs(x) >= std::fabs(y);
+    const float push[4] = {horizontal ? -x : 0.0f, horizontal ? x : 0.0f, horizontal ? 0.0f : -y,
+                           horizontal ? 0.0f : y};
+    for (size_t direction = 0; direction < 4; ++direction)
+        m_stickHeld[direction] = push[direction] > (m_stickHeld[direction] ? 0.33f : 0.5f);
+    static constexpr std::pair<ImGuiKey, SDL_GamepadButton> kDpad[] = {
+        {ImGuiKey_GamepadDpadLeft, SDL_GAMEPAD_BUTTON_DPAD_LEFT},
+        {ImGuiKey_GamepadDpadRight, SDL_GAMEPAD_BUTTON_DPAD_RIGHT},
+        {ImGuiKey_GamepadDpadUp, SDL_GAMEPAD_BUTTON_DPAD_UP},
+        {ImGuiKey_GamepadDpadDown, SDL_GAMEPAD_BUTTON_DPAD_DOWN},
+    };
+    for (size_t direction = 0; direction < 4; ++direction)
+        io.AddKeyEvent(kDpad[direction].first, button(kDpad[direction].second) || m_stickHeld[direction]);
+
+    const auto analog = [&](ImGuiKey key, float value) {
+        constexpr float kDeadZone = 0.25f;
+        const float past = std::max(0.0f, value - kDeadZone) / (1.0f - kDeadZone);
+        io.AddKeyAnalogEvent(key, past > 0.0f, past);
+    };
+    analog(ImGuiKey_GamepadL2, axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
+    analog(ImGuiKey_GamepadR2, axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
+    const float rx = axis(SDL_GAMEPAD_AXIS_RIGHTX), ry = axis(SDL_GAMEPAD_AXIS_RIGHTY);
+    analog(ImGuiKey_GamepadLStickLeft, -rx);
+    analog(ImGuiKey_GamepadLStickRight, rx);
+    analog(ImGuiKey_GamepadLStickUp, -ry);
+    analog(ImGuiKey_GamepadLStickDown, ry);
+}
+
+std::string Overlay::padButtonName(SDL_GamepadButton button) const {
+    return bindingLabel(gfx::PadBinding::button(button), displayedControllerType());
 }
 
 void Overlay::render(SDL_GPUCommandBuffer *commands, SDL_GPUTexture *target, uint32_t, uint32_t) {
@@ -470,8 +666,10 @@ void Overlay::render(SDL_GPUCommandBuffer *commands, SDL_GPUTexture *target, uin
     runScript();
     updateScale();
     updateNavigation();
+    rememberNavigation();
     ImGui_ImplSDLGPU3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    feedGamepad();
     ImGui::NewFrame();
     drawFrame();
     ImGui::Render();
@@ -529,8 +727,20 @@ void Overlay::updateNavigation() {
 
 void Overlay::drawFrame() {
     if (m_closePopups) {
-        ImGui::ClosePopupsExceptModals();
+        // All of them: a Quit question left open would stay on ImGui's
+        // popup stack and take Back's next press.
+        if (!ImGui::GetCurrentContext()->OpenPopupStack.empty())
+            ImGui::ClosePopupToLevel(0, false);
         m_closePopups = false;
+    }
+    const ImGuiIO &io = ImGui::GetIO();
+    if (m_menuOpen && !m_capture.active) {
+        const bool padBack = (io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) &&
+                             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+        const bool keyBack = (io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) &&
+                             ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        if (padBack || keyBack)
+            backOut(padBack);
     }
     collectSavedScreenshots();
     sampleFrameRate();
@@ -546,6 +756,10 @@ void Overlay::drawFrame() {
             m_pendingScale = 0u;
         }
     }
+    // Y (the pad's top face button) moves between the top bar and the window.
+    if (m_menuOpen && !m_capture.active && !m_navBefore.modalOpen &&
+        (io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))
+        toggleBarFocus();
     if (m_menuOpen)
         drawMenuBar();
     if (m_settingsOpen)
@@ -556,6 +770,7 @@ void Overlay::drawFrame() {
         drawShortcuts();
     if (m_statsOpen)
         drawStats();
+    drawQuitPrompt();
     drawCapturePrompt();
     drawFps();
     drawSpeedBadge();
@@ -598,11 +813,8 @@ void Overlay::drawMenuBar() {
             if (menuItem("Keyboard shortcuts"))
                 m_shortcutsOpen = true;
             ImGui::Separator();
-            if (menuItem("Quit", kQuitShortcut)) {
-                SDL_Event quit{};
-                quit.type = SDL_EVENT_QUIT;
-                SDL_PushEvent(&quit);
-            }
+            if (menuItem("Quit", kQuitShortcut))
+                m_quitAsk = true;
             ImGui::EndMenu();
         }
         if (beginMenu("Game")) {
@@ -720,10 +932,55 @@ void Overlay::drawStatus() {
     keycap("F1");
 }
 
+// Quit, from the page list or the top bar, asked first: a stray press would
+// lose what was not saved. B or Esc answers no.
+void Overlay::drawQuitPrompt() {
+    constexpr const char *kName = "Quit?##quit";
+    if (m_quitAsk) {
+        ImGui::OpenPopup(kName);
+        m_quitAsk = false;
+    }
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(1.6f), em(1.2f)));
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
+    if (ImGui::BeginPopupModal(kName, nullptr, flags)) {
+        decorateWindow();
+        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.2f);
+        ImGui::TextUnformatted("Quit Rogue Galaxy?");
+        ImGui::PopFont();
+        mutedText("Progress since your last save is lost.");
+        ImGui::Dummy(ImVec2(0.0f, em(0.6f)));
+        // Cancel first: it is where the cursor starts.
+        const ImVec2 buttonSize(em(7.0f), 0.0f);
+        if (ImGui::Button("Cancel", buttonSize) || m_cancelQuit)
+            ImGui::CloseCurrentPopup();
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("Quit", buttonSize)) {
+            SDL_Event quit{};
+            quit.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&quit);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    m_cancelQuit = false;
+    ImGui::PopStyleVar();
+}
+
 void Overlay::drawCapturePrompt() {
     constexpr const char *kName = "##capture";
     if (m_capture.active && now() - m_capture.startedAt > kCaptureSeconds)
         m_capture.active = false;
+    // B held on a controller cancels; a tap binds it (captureEvent()).
+    if (m_capture.active && m_capture.backDownAt >= 0.0 && now() - m_capture.backDownAt > 0.6) {
+        m_capture.active = false;
+        m_capture.backDownAt = -1.0;
+        m_gamepadNavHeld = true;
+    }
     if (m_capture.active && !ImGui::IsPopupOpen(kName))
         ImGui::OpenPopup(kName);
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -748,7 +1005,11 @@ void Overlay::drawCapturePrompt() {
             ImGui::Text("Press %s for %s", m_capture.keyboard ? "a key" : "a button",
                         gfx::padInputName(m_capture.input));
             ImGui::PopFont();
-            mutedText("%s", m_capture.keyboard ? "Any key works, even Esc." : "On the controller; Esc cancels.");
+            if (m_capture.keyboard)
+                mutedText("%s", "Any key works, even Esc.");
+            else
+                mutedText("On the controller. Hold %s or press Esc to cancel.",
+                          padButtonName(SDL_GAMEPAD_BUTTON_EAST).c_str());
             ImGui::EndGroup();
 
             // Time left, as a gold line draining away.
@@ -899,7 +1160,9 @@ void Overlay::drawPauseBanner() {
         ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.35f);
         ImGui::TextUnformatted("Paused");
         ImGui::PopFont();
-        mutedText("%s", background && !m_userPaused ? "Until the window is focused again" : "Press F2 to resume");
+        mutedText("%s", background && !m_userPaused ? "Until the window is focused again"
+                        : padInUse()                ? "Menu > Game > Pause resumes"
+                                                    : "Press F2 to resume");
         ImGui::EndGroup();
     }
     ImGui::End();
