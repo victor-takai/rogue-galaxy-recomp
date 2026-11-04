@@ -6,6 +6,24 @@
 Quit), Game (pause, fast-forward, mute, screenshots), Settings, View
 (fullscreen, the frame-rate counter) and Help. The Guide button, or
 Back+Start, opens the Settings window at once; L1 and R1 turn its pages.
+
+With only a controller (the menu names its buttons as the controller does:
+A and ✕ are the same button, B and ○, X and ▢, Y and △):
+
+- In the page list, A or Right goes into the page; moving along the list
+  shows each page.
+- B comes back one level at a time: out of a slider, a list or the menu
+  bar, then from the page to the page list, and from the page list to the
+  game.
+- Y reaches the menu bar at the top. L1 and R1 turn the pages, the left
+  stick moves like the D-pad and the right stick scrolls.
+- A strip along the bottom of the window names the buttons for where the
+  cursor is.
+- "Quit game", at the end of the page list, asks first, as does the menu
+  bar's Quit.
+- On Controls, X clears a binding. While one is being set, a tap of B binds
+  B and holding it cancels.
+
 Settings has seven pages, written here as F1 > Settings > Game and so on:
 
 - **Display**: window or fullscreen, vertical sync, internal resolution
