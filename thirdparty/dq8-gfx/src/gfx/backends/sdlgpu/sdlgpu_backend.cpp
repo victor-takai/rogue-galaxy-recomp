@@ -1195,7 +1195,7 @@ struct SdlGpuBackend::Impl {
         uint32_t width = 0u, height = 0u;
         SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_INVALID;
     };
-    ScratchTexture sharpTexture, compositeTexture, captureTexture;
+    ScratchTexture sharpTexture, compositeTexture, captureTexture, fsrTexture;
     // What fills the window beside the picture (Rogue Galaxy: added): the
     // picture halved down to a small copy for the blurred sides, and the
     // player's image, loaded each time that choice is made.
@@ -4060,6 +4060,30 @@ struct SdlGpuBackend::Impl {
         uint32_t width = from.width;
         uint32_t height = from.height;
         SDL_GPUFilter filter = SDL_GPU_FILTER_LINEAR;
+        // FSR 1 (Rogue Galaxy: added): EASU up to the window's size into a
+        // scratch, then RCAS from it into the window. Smooth when the
+        // picture is not enlarged, or when the passes cannot be made.
+        if (displayOptions.filter == SdlGpuFilter::Fsr && (rect.width > width || rect.height > height) &&
+            ensureScratch(fsrTexture, rect.width, rect.height, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM)) {
+            static const float sharpness = [] {
+                const char *v = std::getenv("RG_FSR_SHARPNESS");
+                return v ? std::clamp(static_cast<float>(std::atof(v)), 0.0f, 2.0f) : 0.2f;
+            }();
+            const uint32_t region[4] = {from.x, from.y, from.width, from.height};
+            const uint32_t whole[4] = {0u, 0u, rect.width, rect.height};
+            const uint32_t to[4] = {rect.x, rect.y, rect.width, rect.height};
+            std::string error;
+            if (device.drawFsr(commands, fsrTexture.texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, whole,
+                               SDL_GPU_LOADOP_DONT_CARE, source, region, false, 0.0f, error) &&
+                device.drawFsr(commands, target, SDL_GetGPUSwapchainTextureFormat(device.handle(), window), to,
+                               loadOp, fsrTexture.texture, whole, true, sharpness, error))
+                return;
+            static bool told = false;
+            if (!told) {
+                told = true;
+                std::fprintf(stderr, "[present] FSR 1 unavailable, smooth instead: %s\n", error.c_str());
+            }
+        }
         if (displayOptions.filter == SdlGpuFilter::Nearest) {
             filter = SDL_GPU_FILTER_NEAREST;
         } else if (displayOptions.filter == SdlGpuFilter::Sharp) {

@@ -26,7 +26,8 @@ constexpr Named<SdlGpuAspect> kAspects[] = {
     {SdlGpuAspect::Auto, "auto"}, {SdlGpuAspect::Standard, "4:3"}, {SdlGpuAspect::Wide, "16:9"},
     {SdlGpuAspect::Native, "native"}, {SdlGpuAspect::Stretch, "stretch"}};
 constexpr Named<SdlGpuFilter> kFilters[] = {
-    {SdlGpuFilter::Sharp, "sharp"}, {SdlGpuFilter::Smooth, "smooth"}, {SdlGpuFilter::Nearest, "nearest"}};
+    {SdlGpuFilter::Sharp, "sharp"}, {SdlGpuFilter::Smooth, "smooth"}, {SdlGpuFilter::Nearest, "nearest"},
+    {SdlGpuFilter::Fsr, "fsr"}};
 constexpr Named<gfx::SdlGpuSides> kSides[] = {
     {gfx::SdlGpuSides::Black, "black"}, {gfx::SdlGpuSides::Blurred, "blurred"}, {gfx::SdlGpuSides::Image, "image"}};
 constexpr Named<SDL_GPUPresentMode> kPresentModes[] = {
