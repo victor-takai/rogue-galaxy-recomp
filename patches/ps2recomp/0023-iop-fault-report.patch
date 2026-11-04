@@ -1,0 +1,162 @@
+diff --git a/ps2xIOP/src/lle/cpu.cpp b/ps2xIOP/src/lle/cpu.cpp
+index 75350a9..0a3714b 100644
+--- a/ps2xIOP/src/lle/cpu.cpp
++++ b/ps2xIOP/src/lle/cpu.cpp
+@@ -143,6 +143,7 @@ namespace ps2x::iop::lle
+                 case 0x2B: set(rd, r[rs] < r[rt] ? 1u : 0u); break;                          // SLTU
+                 default:
+                     m_faultPc = pc;
++                    m_faultOp = op;
+                     return StopReason::Fault;
+                 }
+                 break;
+@@ -227,6 +228,7 @@ namespace ps2x::iop::lle
+             case 0x2F: case 0x33: break;                                                     // CACHE, PREF
+             default:
+                 m_faultPc = pc;
++                m_faultOp = op;
+                 return StopReason::Fault;
+             }
+ 
+diff --git a/ps2xIOP/src/lle/cpu.h b/ps2xIOP/src/lle/cpu.h
+index 189890c..4128b5e 100644
+--- a/ps2xIOP/src/lle/cpu.h
++++ b/ps2xIOP/src/lle/cpu.h
+@@ -39,6 +39,7 @@ namespace ps2x::iop::lle
+ 
+         uint32_t syscallCode() const noexcept { return m_syscallCode; }
+         uint32_t faultPc() const noexcept { return m_faultPc; }
++        uint32_t faultOp() const noexcept { return m_faultOp; }
+         uint32_t cop0Status() const noexcept { return m_status; }
+         void setCop0Status(uint32_t status) noexcept { m_status = status; }
+ 
+@@ -46,6 +47,7 @@ namespace ps2x::iop::lle
+         Bus &m_bus;
+         uint32_t m_syscallCode = 0;
+         uint32_t m_faultPc = 0;
++        uint32_t m_faultOp = 0;
+         uint32_t m_status = 0;
+     };
+ }
+diff --git a/ps2xIOP/src/lle/iop.cpp b/ps2xIOP/src/lle/iop.cpp
+index b02d849..625d38c 100644
+--- a/ps2xIOP/src/lle/iop.cpp
++++ b/ps2xIOP/src/lle/iop.cpp
+@@ -1,6 +1,7 @@
+ #include "iop.h"
+ 
+ #include <algorithm>
++#include <cstdio>
+ #include <cstring>
+ 
+ namespace ps2x::iop::lle
+@@ -13,8 +14,18 @@ namespace ps2x::iop::lle
+         constexpr uint32_t kHeapBase = 0x10000u;
+         constexpr uint32_t kSpuDmaLines[2] = {36u, 40u}; // INUM_DMA_4, INUM_DMA_7
+         constexpr uint32_t kSpuLine = 9u;
++        // A handler that fails once fails at every call after (one log had
++        // 104,000 such lines): its first reports say where, then it is quiet.
++        constexpr uint32_t kHandlerReports = 3u;
+ 
+         uint32_t syscallWord(uint32_t code) { return 0x0000000Cu | (code << 6); }
++
++        std::string hex(uint32_t value)
++        {
++            char text[12];
++            std::snprintf(text, sizeof(text), "0x%08X", value);
++            return text;
++        }
+     }
+ 
+     Iop::Iop(EeLink &ee) : m_ee(ee), m_bus(*this), m_cpu(m_bus), m_spu2(*this)
+@@ -225,7 +236,15 @@ namespace ps2x::iop::lle
+             const StopReason reason = m_cpu.run(context, spent, limit);
+             if (reason != StopReason::Syscall)
+             {
+-                m_ee.log("[iop] handler at " + std::to_string(function) + " did not return");
++                uint32_t &reports = m_handlerFailures[function];
++                if (reports < kHandlerReports)
++                {
++                    ++reports;
++                    m_ee.log("[iop] handler at " + where(function) + " did not return: " +
++                             stopDetail(reason, context, spent));
++                    if (reports == kHandlerReports)
++                        m_ee.log("[iop] handler at " + hex(function) + " keeps failing; not reported again");
++                }
+                 break;
+             }
+             const uint32_t code = m_cpu.syscallCode();
+@@ -361,7 +380,8 @@ namespace ps2x::iop::lle
+                     break;
+                 if (reason == StopReason::Fault)
+                 {
+-                    m_ee.log("[iop] thread " + std::to_string(thread->id) + " stopped on an unsupported instruction");
++                    m_ee.log("[iop] thread " + std::to_string(thread->id) + " stopped: " +
++                             stopDetail(reason, thread->context, 0u));
+                     thread->dormant = true;
+                     reschedule();
+                     break;
+@@ -379,6 +399,31 @@ namespace ps2x::iop::lle
+         return ran;
+     }
+ 
++    std::string Iop::where(uint32_t address) const
++    {
++        const uint32_t physical = address & 0x1FFFFFFFu;
++        for (const Module &module : m_modules)
++        {
++            if (physical >= module.base && physical - module.base < module.size)
++            {
++                char offset[12];
++                std::snprintf(offset, sizeof(offset), "+0x%X", physical - module.base);
++                return hex(address) + " (" + module.name + offset + ")";
++            }
++        }
++        return hex(address) + (physical < kHeapBase ? " (kernel)" : " (no module)");
++    }
++
++    std::string Iop::stopDetail(StopReason reason, const CpuContext &c, uint64_t cycles) const
++    {
++        std::string text;
++        if (reason == StopReason::Fault)
++            text = "unsupported instruction " + hex(m_cpu.faultOp()) + " at " + where(m_cpu.faultPc());
++        else
++            text = "still running after " + std::to_string(cycles) + " cycles, at " + where(c.pc);
++        return text + ", ra " + where(c.gpr[31]) + ", sp " + hex(c.gpr[29]);
++    }
++
+     void Iop::settle()
+     {
+         deliverRequests();
+@@ -563,7 +608,7 @@ namespace ps2x::iop::lle
+             return module.id;
+         }
+         m_modules.push_back(module);
+-        m_ee.log("[iop] started " + irx.name + " at " + std::to_string(base));
++        m_ee.log("[iop] started " + irx.name + " at " + hex(base) + ", " + std::to_string(size) + " bytes");
+         return module.id;
+     }
+ }
+diff --git a/ps2xIOP/src/lle/iop.h b/ps2xIOP/src/lle/iop.h
+index e580688..434efac 100644
+--- a/ps2xIOP/src/lle/iop.h
++++ b/ps2xIOP/src/lle/iop.h
+@@ -183,6 +183,10 @@ namespace ps2x::iop::lle
+         uint32_t arg(CpuContext &c, unsigned index);
+         void ret(CpuContext &c, uint32_t value) { c.gpr[2] = value; }
+         std::string readString(uint32_t address, size_t limit = 256);
++        // An address as "0x00018C40 (module+0x1C40)", for the fault reports.
++        std::string where(uint32_t address) const;
++        // Why run() stopped short and where the code was, for the fault reports.
++        std::string stopDetail(StopReason reason, const CpuContext &c, uint64_t cycles) const;
+ 
+ #define PS2X_IOP_HANDLER(name) void name(CpuContext &c);
+ #include "kernel_handlers.inc"
+@@ -211,6 +215,7 @@ namespace ps2x::iop::lle
+         std::map<int32_t, CpuContext> m_saved;                 // server loop frames under a call
+         std::array<DmaChannel, 2> m_dma{};                    // channels 4 and 7
+         std::vector<Module> m_modules;
++        std::map<uint32_t, uint32_t> m_handlerFailures; // handler -> reports so far
+         std::map<uint32_t, uint32_t> m_allocations; // address -> size
+         int32_t m_nextId = 1;
+         int32_t m_current = 0;

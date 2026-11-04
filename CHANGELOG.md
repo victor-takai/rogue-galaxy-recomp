@@ -83,6 +83,9 @@ for the disc image, and your saves (`disc\mc0`) and settings stay. From
   "Quit game", at the end of the page list, asks first. On Controls, X (▢)
   clears a binding, and holding B cancels one being set.
 - F1 sometimes paused the game without showing the menu.
+- When the sound driver stops (the black screen of
+  [#17](https://github.com/victor-takai/rogue-galaxy-recomp/issues/17)),
+  the log says where and why, and no longer fills with the same line.
 
 ### Known issues
 
