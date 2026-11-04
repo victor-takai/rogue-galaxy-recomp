@@ -99,6 +99,16 @@ the disc extracted and everything built again, as the first time; copy
 `disc\mc0` (and `disc\mc1`) from the old folder to keep your saves, and
 `disc\JA` to keep the undub.
 
+### Saves from PCSX2
+
+The memory card is the folder `disc\mc0`, with one folder per save: the same
+layout as a PCSX2 folder memory card, so saves copy over as they are. In
+PCSX2's memory card settings, convert your card to a folder card (keep the
+original), then copy its `BASCUS-97490LV5RG_xx` folders, one per Rogue Galaxy
+save, into `disc\mc0`. Only saves from the USA release work (their folders
+start with `BASCUS-97490`). A folder with the same name replaces the save in
+that slot, so back up `disc\mc0` first.
+
 ## Controls
 
 The game window takes a keyboard or a gamepad (PlayStation layout).
