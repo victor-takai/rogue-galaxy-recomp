@@ -19,6 +19,14 @@ patch_cache = true
 # Main executable only: the overlays' tables are renamed globals.
 direct_call_table = true
 
+# No PC store before instructions nothing observes it from (integer, FPU and
+# MMI arithmetic), nor delay-slot bookkeeping around them (patch 0037).
+lean_pc = true
+
+# Guest memory as __restrict in generated functions (patch 0037).
+# Experimental: off until tested on its own.
+restrict_rdram = false
+
 # SDK functions the runtime implements, as handler@address. Map names carry
 # their address, so nothing binds by name alone: this list is the whole set.
 #
