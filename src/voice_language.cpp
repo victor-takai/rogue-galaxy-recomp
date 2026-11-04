@@ -9,6 +9,7 @@
 #include <string>
 
 #include "ps2_runtime.h"
+#include "return_hook.h"
 #include "scene_timing.h"
 
 namespace rg::voicelanguage
@@ -200,19 +201,27 @@ void streamMgrStartChan(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     g_originalStartChan(rdram, ctx, runtime);
 }
 
-// A scene's voice path is built here; with Japanese voices it is logged.
+// A scene's voice path is built here; with Japanese voices it is logged once
+// the path is complete. The original calls Sprintf and PathLocalize, so a safe
+// point can unwind it halfway: code placed after it would read a stale path.
+void afterEventVoiceMakePath(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t bufferAddress)
+{
+    const char *path = reinterpret_cast<const char *>(rdram + (bufferAddress & 0x1FFFFFFFu));
+    if (std::strncmp(path, "wav/", 4) == 0)
+    {
+        std::fprintf(stderr, "[rg] voice %s\n", path);
+    }
+}
+
 void eventVoiceMakePath(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     const uint32_t bufferAddress = getRegU32(ctx, 6);
-    g_originalMakePath(rdram, ctx, runtime);
-    if (g_japaneseVoices && bufferAddress != 0)
+    if (!g_japaneseVoices || bufferAddress == 0)
     {
-        const char *path = reinterpret_cast<const char *>(rdram + (bufferAddress & 0x1FFFFFFFu));
-        if (std::strncmp(path, "wav/", 4) == 0)
-        {
-            std::fprintf(stderr, "[rg] voice %s\n", path);
-        }
+        g_originalMakePath(rdram, ctx, runtime);
+        return;
     }
+    rg::hooks::callThen(g_originalMakePath, rdram, ctx, runtime, &afterEventVoiceMakePath, bufferAddress);
 }
 
 } // namespace
