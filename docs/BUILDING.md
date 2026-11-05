@@ -161,7 +161,7 @@ fullscreen there; Back + Start opens the menu (F1).
 | `borders/` | An image you put here fills the window beside the 4:3 picture (`borders/README.txt`) |
 | `config/SCUS_974.90/` | `hashes.json` (known-good dump), `overlays.toml` (MWo3 table, loader hook), `funcmap.toml` (map sources and corrections), `functions_<image>.csv` (function maps), `recomp/<image>.toml` (ps2_recomp configs, SDK bindings), `vu1-programs.txt` and `vu-blocks.txt` (VU1 and VU0 microcode locations) |
 | `tools/disc/iso9660.py` | Read-only ISO9660 reader for dual-layer PS2 DVDs |
-| `tools/disc/archive.py`, `cfgbin.py`, `balance.py` | The game's archives (`.HD6` index, `.pac`), its compiled tables (`.cfg.bin`), and the Director's Cut balance's tables built from them |
+| `tools/disc/archive.py`, `cfgbin.py`, `balance.py` | The game's archives (`.HD6` index, `.pac`), its compiled tables (`.cfg.bin`), and the Director's Cut balance's tables and enemy files built from them |
 | `tools/mwo3/mwo3.py` | MWo3 overlay header parser, ELF cross-check, overlay-to-ELF wrapper |
 | `tools/funcmap/` | Function-map builder and the checks behind `setup.py check` |
 | `tools/bench/` | `walk.sh NAME [SCALE] [FPS]`: the scripted Salgin walk on the pad clock, for speed (3x, 60 fps mode, the `[gfx]` intervals before the logged frame) and for regressions (1x, 30 fps mode, `cmpvram.py` against a reference frame made with the same save); `PROFILE=1` samples the threads as well. It needs the maintainer's input scripts in `build/run/` and saves in `disc/mc0`, which are not in the repository |

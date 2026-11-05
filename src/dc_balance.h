@@ -28,10 +28,23 @@ class PS2Runtime;
 // with index 1, which the classes 2501 (function table 0x474B20) and 2502
 // (0x4746C0) share with the others; it returns 10 for those two.
 //
+// The enemies' files and AI scripts: the Director's Cut changed 76 enemies'
+// chara\mob\*.chr (their attacks' reach, timing and kind in act.cfg, a few
+// models) and 98 chara\spt\*.stb (the AI, the party's too). They hold no text
+// and the US executable reads them as they are (the script machine and its
+// native calls are the same; the one flag it lacks, CATCH on two jellyfish,
+// it ignores), but most are larger than the US files. The same setup step
+// packs them into files.dat, each on sectors of its own, listed in files.idx
+// (archive path, first sector, size). DirTableFindFile (0x182F70, one
+// archive's index: a0 table, a1 the entry to fill, a2 the path) answers a
+// listed path with its place in files.dat (+4 sector, +8 size), whose
+// sector number comes from the runtime's sceCdSearchFile at the first lookup;
+// the game reads it like an archive's file, into a buffer of its size.
+//
 // The menu's game option `director_cut_balance`, or RG_DIRECTOR_CUT_BALANCE=1,
-// read at start. Without disc/JA/balance it stays off, with a line in the log.
-// Not included: the enemies' own attacks (their act.cfg in chara\mob\*.chr)
-// and their AI scripts, which the Director's Cut also changed.
+// read at start. Without disc/JA/balance it stays off, with a line in the log;
+// without files.idx, the tables and the boss rule only. The log names each
+// enemy file the first time it is served.
 namespace rg::dcbalance
 {
 

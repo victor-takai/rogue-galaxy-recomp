@@ -2,7 +2,7 @@
 #
 # Takes the Japanese voices and movies (the "undub") from the player's own
 # Japanese disc image, the Director's Cut (SCPS-17013), into disc\JA, and that
-# release's battle balance as tables into disc\JA\balance. Run again, it copies
+# release's battle balance into disc\JA\balance. Run again, it copies
 # only what is missing. It uses the Python that Install.bat downloaded into
 # toolchain\, so Install.bat has to have run first. Afterwards, in the game's
 # menu (F1): Settings > Language > Undub, Settings > Game > Director's Cut

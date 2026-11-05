@@ -686,8 +686,9 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "Battles with the balance of the Japanese Director's Cut, which the US release did not get: smaller "
          "groups of enemies, the Rosencaster and Starship Factory enemies and three story fights weaker, the Area "
          "Masters stronger, more money from many enemies, bigger enemies harder to knock down, bosses never "
-         "knocked down. The damage formula is the same. It needs that disc's numbers: run Install-Undub.bat in "
-         "the game's folder and pick your Japanese disc image. Takes effect the next time the game starts.",
+         "knocked down, and that release's enemy attacks and AI, the party's too. The damage formula is the "
+         "same. It needs that disc: run Install-Undub.bat in the game's folder and pick your Japanese disc "
+         "image. Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"japanese_voices", "Undub (Japanese voices)",
          "The voices in scenes and the movies come from your Japanese Director's Cut disc instead of the English "

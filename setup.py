@@ -13,7 +13,8 @@
 `extract-japanese` copies the voices and the movies that differ from the US
 ones out of the Japanese Director's Cut into disc/JA, for the Japanese dub,
 then runs `director-cut-balance`, which writes that release's battle balance
-as tables for the US game into disc/JA/balance (tools/disc/balance.py).
+for the US game into disc/JA/balance: four tables, and the enemies' files and
+AI scripts it changed (tools/disc/balance.py).
 `verify` checks a dump against config/<version>/hashes.json without writing
 anything. `extract` unpacks both DVD layers into one tree (the runtime boots
 the ELF from that folder) and hashes every file while copying. `info` decodes
@@ -281,11 +282,13 @@ def cmd_extract_japanese(args: argparse.Namespace) -> int:
 
 
 def cmd_director_cut_balance(args: argparse.Namespace) -> int:
-    """The Director's Cut's battle balance, as tables for the US game, into <disc>/JA/balance."""
+    """The Director's Cut's battle balance, as files for the US game, into <disc>/JA/balance."""
     from disc import balance
 
-    known = load_toml_json(config_dir(args.version) / "japanese.json")["balance_pack"]
+    config = load_toml_json(config_dir(args.version) / "japanese.json")
+    known, files = config["balance_pack"], config["balance_files"]["files"]
     disc = Path(args.disc)
+    out = disc / "JA" / "balance"
     if not (disc / "DATA0_0.HD6").is_file():
         sys.exit(f"{disc} does not hold the extracted US disc: run `setup.py extract` first.")
     with IsoImage(args.iso) as iso:
@@ -293,13 +296,19 @@ def cmd_director_cut_balance(args: argparse.Namespace) -> int:
             pack = balance.japanese_pack(iso)
         except (KeyError, ValueError):
             pack = b""
-    if balance.pack_sha256(pack) != known["sha256"]:
-        sys.exit(
-            f"{args.iso} is not the Japanese Director's Cut (SCPS-17013): its {known['name']} does not match."
-        )
-    for line in balance.build(pack, disc, disc / "JA" / "balance"):
+        if balance.pack_sha256(pack) != known["sha256"]:
+            sys.exit(
+                f"{args.iso} is not the Japanese Director's Cut (SCPS-17013): its {known['name']} does not match."
+            )
+        try:
+            report = balance.build_files(iso, files, out)
+        except ValueError as error:
+            sys.exit(f"{args.iso}: {error}.")
+    # tables.txt last: with it there, the balance is whole.
+    report += balance.build(pack, disc, out)
+    for line in report:
         print(line, flush=True)
-    print(f"the Director's Cut balance's tables are in {disc / 'JA' / 'balance'}")
+    print(f"the Director's Cut balance's files are in {out}")
     return 0
 
 
@@ -823,10 +832,12 @@ def cmd_portable(args: argparse.Namespace) -> int:
 
 
 def balance_for_undub(version: str, disc: Path) -> None:
-    """An undub installed before the Director's Cut balance existed gets its tables, from
-    the Japanese image it came from when that is still where it was; never stops the install."""
+    """An undub installed before the Director's Cut balance (or its enemy files) existed
+    gets them, from the Japanese image it came from when that is still where it was;
+    never stops the install."""
     ja = disc / "JA"
-    if not (ja / "manifest.json").is_file() or (ja / "balance" / "tables.txt").is_file():
+    whole = all((ja / "balance" / name).is_file() for name in ("tables.txt", "files.idx", "files.dat"))
+    if not (ja / "manifest.json").is_file() or whole:
         return
     try:
         image = json.loads((ja / "manifest.json").read_text(encoding="utf-8")).get("image")
@@ -894,7 +905,7 @@ def main() -> int:
 
     p = sub.add_parser(
         "director-cut-balance",
-        help="the Japanese Director's Cut's battle balance, as tables for the US game, into disc/JA/balance",
+        help="the Japanese Director's Cut's battle balance, as files for the US game, into disc/JA/balance",
     )
     p.add_argument("--iso", required=True)
     p.add_argument("--disc", default=str(ROOT / "disc"))
