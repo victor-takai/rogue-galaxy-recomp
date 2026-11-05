@@ -32,14 +32,24 @@ class PS2Runtime;
 // chara\mob\*.chr (their attacks' reach, timing and kind in act.cfg, a few
 // models) and 98 chara\spt\*.stb (the AI, the party's too). They hold no text
 // and the US executable reads them as they are (the script machine and its
-// native calls are the same; the one flag it lacks, CATCH on two jellyfish,
-// it ignores), but most are larger than the US files. The same setup step
+// native calls are the same), but most are larger than the US files. The same setup step
 // packs them into files.dat, each on sectors of its own, listed in files.idx
 // (archive path, first sector, size). DirTableFindFile (0x182F70, one
 // archive's index: a0 table, a1 the entry to fill, a2 the path) answers a
 // listed path with its place in files.dat (+4 sector, +8 size), whose
 // sector number comes from the runtime's sceCdSearchFile at the first lookup;
 // the game reads it like an archive's file, into a buffer of its size.
+//
+// The one flag the US executable lacks: CATCH, which two jellyfish (e482,
+// e484) get in their act.cfg, and which the Director's Cut also gives every
+// ENEMY_FLY: the low half's 0x8000 of the character flags word (chr+0x3D0,
+// rebuilt every frame), a bit the US leaves free. Its lock-on jump
+// (CharaJumpToTarget, 0x211070, the party's air combo) homes in on a target
+// with FLY; the Director's Cut's also on one with CATCH. Here
+// ParseFlagNames (0x1CA700) adds 0x8000 for those two names in the low half's
+// table (0x44C1F0), and a target with CATCH but not FLY gets FLY from the
+// return of the jump's lookup of it (ActionMgrFindById, 0x233B50, back at
+// 0x211150; the next instruction reads the flags) until the jump returns.
 //
 // The menu's game option `director_cut_balance`, or RG_DIRECTOR_CUT_BALANCE=1,
 // read at start. Without disc/JA/balance it stays off, with a line in the log;

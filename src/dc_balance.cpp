@@ -19,6 +19,7 @@
 #include <smmintrin.h>
 
 #include "ps2_runtime.h"
+#include "return_hook.h"
 #include "scene_timing.h"
 
 namespace rg::dcbalance
@@ -36,6 +37,15 @@ constexpr uint32_t kBossPartTable = 0x004746C0u;    // class 2502
 constexpr float kNeverKnockedDown = 10.0f;
 constexpr uint32_t kSectorSize = 2048u;
 constexpr const char *kFilesDat = "cdrom0:\\JA\\BALANCE\\FILES.DAT;1";
+// CATCH, the Director's Cut's character flag (see dc_balance.h).
+constexpr uint32_t kParseFlagNames = 0x001CA700u;     // (text, table, found), the names' values ORed
+constexpr uint32_t kCharaFlagsLowTable = 0x0044C1F0u; // the flags word's low half
+constexpr uint32_t kCharaJumpToTarget = 0x00211070u;  // act.cfg's lock-on jump
+constexpr uint32_t kActionMgrFindById = 0x00233B50u;  // its target's character...
+constexpr uint32_t kJumpTargetFound = 0x00211150u;    // ...returning here
+constexpr uint32_t kCharaFlags = 0x3D0u;              // u64, rebuilt every frame
+constexpr uint64_t kFly = 1ull << 51;                 // ENEMY_FLY's high half, 0x80000
+constexpr uint64_t kCatch = 0x8000u;                  // the low half's bit the US leaves free
 
 struct Table
 {
@@ -64,6 +74,10 @@ PS2Runtime *g_runtime = nullptr;
 PS2Runtime::RecompiledFunction g_runCfg = nullptr;
 PS2Runtime::RecompiledFunction g_getStatF3C = nullptr;
 PS2Runtime::RecompiledFunction g_findFile = nullptr;
+PS2Runtime::RecompiledFunction g_parseFlags = nullptr;
+PS2Runtime::RecompiledFunction g_jumpToTarget = nullptr;
+PS2Runtime::RecompiledFunction g_findAction = nullptr;
+uint32_t g_flyLent = 0; // the character given FLY for one lock-on jump's test
 
 uint32_t crc32(const uint8_t *data, size_t size)
 {
@@ -275,6 +289,133 @@ void dirTableFindFile(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     g_findFile(rdram, ctx, runtime);
 }
 
+uint64_t readDword(const uint8_t *rdram, uint32_t address)
+{
+    uint64_t value = 0;
+    std::memcpy(&value, rdram + (address & 0x1FFFFFFFu), sizeof(value));
+    return value;
+}
+
+void writeDword(uint8_t *rdram, uint32_t address, uint64_t value)
+{
+    std::memcpy(rdram + (address & 0x1FFFFFFFu), &value, sizeof(value));
+}
+
+// The flag names the Director's Cut's table gives the low half's 0x8000: CATCH
+// (new) and ENEMY_FLY (which also keeps FLY in the high half).
+constexpr uint32_t kHasCatch = 1u;
+
+void afterParseFlags(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t data)
+{
+    (void)rdram;
+    (void)runtime;
+    if (data & kHasCatch)
+    {
+        // OR into v0 as it is: the original's sign extension stays.
+        ctx->r[2] = _mm_or_si128(ctx->r[2], _mm_set_epi64x(0, static_cast<int64_t>(kCatch)));
+    }
+}
+
+// ParseFlagNames (0x1CA700): the names of a "A|B|C" text looked up in a table
+// of {name, value}, their values ORed; one the table lacks adds nothing. Its
+// callers with the low-half table pass no `found`, so only the value changes.
+void parseFlagNames(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t text = getRegU32(ctx, 4);
+    uint32_t data = 0;
+    if (text != 0 && getRegU32(ctx, 5) == kCharaFlagsLowTable)
+    {
+        // The parser's own words: letters, digits and '_'.
+        const char *p = reinterpret_cast<const char *>(rdram + (text & 0x1FFFFFFFu));
+        std::string word;
+        for (size_t i = 0; i < 256; ++i)
+        {
+            const char c = p[i];
+            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
+            {
+                word += c;
+                continue;
+            }
+            if (word == "CATCH" || word == "ENEMY_FLY")
+            {
+                data = kHasCatch;
+            }
+            word.clear();
+            if (c == '\0')
+            {
+                break;
+            }
+        }
+    }
+    if (data == 0)
+    {
+        g_parseFlags(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_parseFlags, rdram, ctx, runtime, &afterParseFlags, data);
+}
+
+// The lock-on jump (CharaJumpToTarget, 0x211070) takes its target's character
+// from ActionMgrFindById and homes in only when it has FLY; the Director's
+// Cut's version also when it has CATCH. Such a character gets FLY between the
+// lookup's return and the jump's end, the test's only read of it.
+void returnFly(uint8_t *rdram)
+{
+    if (g_flyLent != 0)
+    {
+        const uint32_t chara = g_flyLent;
+        g_flyLent = 0;
+        writeDword(rdram, chara + kCharaFlags, readDword(rdram, chara + kCharaFlags) & ~kFly);
+    }
+}
+
+void afterFindAction(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t data)
+{
+    (void)runtime;
+    (void)data;
+    returnFly(rdram); // one lent before and never taken back
+    const uint32_t chara = getRegU32(ctx, 2);
+    if (chara == 0)
+    {
+        return;
+    }
+    const uint64_t flags = readDword(rdram, chara + kCharaFlags);
+    if ((flags & kCatch) != 0 && (flags & kFly) == 0)
+    {
+        writeDword(rdram, chara + kCharaFlags, flags | kFly);
+        g_flyLent = chara;
+        static bool told = false;
+        if (!told)
+        {
+            told = true;
+            std::fprintf(stderr, "[rg] Director's Cut balance: a lock-on jump homes in on a CATCH target\n");
+        }
+    }
+}
+
+void actionMgrFindById(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (getRegU32(ctx, 31) != kJumpTargetFound)
+    {
+        g_findAction(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_findAction, rdram, ctx, runtime, &afterFindAction, 0u);
+}
+
+void afterJumpToTarget(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t data)
+{
+    (void)ctx;
+    (void)runtime;
+    (void)data;
+    returnFly(rdram);
+}
+
+void charaJumpToTarget(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    rg::hooks::callThen(g_jumpToTarget, rdram, ctx, runtime, &afterJumpToTarget, 0u);
+}
+
 void dataTableRunCfg(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     const uint32_t buffer = getRegU32(ctx, 5) & 0x1FFFFFFFu;
@@ -366,6 +507,14 @@ void install(PS2Runtime &runtime)
     {
         g_files.clear();
         std::fprintf(stderr, "[rg] Director's Cut balance: the enemies' attacks and AI stay the US ones "
+                             "(hook missing)\n");
+    }
+    // The jump's hook first: it is the one that takes FLY back.
+    if (!rg::timing::hookFunction(runtime, kParseFlagNames, &parseFlagNames, g_parseFlags) ||
+        !rg::timing::hookFunction(runtime, kCharaJumpToTarget, &charaJumpToTarget, g_jumpToTarget) ||
+        !rg::timing::hookFunction(runtime, kActionMgrFindById, &actionMgrFindById, g_findAction))
+    {
+        std::fprintf(stderr, "[rg] Director's Cut balance: lock-on jumps home in on flyers only, as in the US "
                              "(hook missing)\n");
     }
     std::fprintf(stderr,
