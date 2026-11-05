@@ -60,12 +60,12 @@ F1 > Settings > Game, in these sections:
 |---|---|
 | 60 frames per second | On by default; off, the game's own 30. From the next start. |
 | Widescreen | Off by default. A wider view, from 4:3 to 32:9; with Display > Aspect ratio on Auto (the default) it fills the window. |
-| Minimap size | 50% to 100% of the game's, toward its corner. |
-| Compass size | 50% to 100% of the game's, toward its corner. |
+| Minimap size | 0.5x to 1.0x the game's, toward its corner. |
+| Compass size | 0.5x to 1.0x the game's, toward its corner. |
 | Field of view | 40 to 90 degrees (the game's is 52). |
-| Camera distance | 70% to 160% of the game's. |
+| Camera distance | 0.7x to 1.6x the game's. |
 | Faster camera rotation | The camera turns twice as fast. |
-| Draw distance | 100% to 400% of the game's, from the next map loaded. |
+| Draw distance | 1.0x to 4.0x the game's, from the next map loaded. |
 | Controller's buttons | The buttons in the game's text follow an Xbox controller: A, B, X, Y, LB, RB, LT and RT, as bound in Controls. On by default. |
 | Free camera (F6) | The party stands still and the controller moves the camera. Start or F6 to leave. |
 
@@ -82,19 +82,20 @@ F1 > Settings > Game, in these sections:
 | Seventh bag page | The bag holds 280 items instead of 240; the transporter's storage keeps its 320. A save made with it loads without it too, the seventh page's items kept out of sight until it is back on. From the next start. |
 | Fast transporters | Transporter warps play up to twice as fast. |
 | Check for new versions | At each start, asks GitHub for this project's releases and says when a newer one is out (Rogue Galaxy > About links to it). On by default. |
-| Fast Revelation Flow | Revelation Flow animations play up to twice as fast. |
 
 **Battles and rewards**
 
+Each against the game's own, 1.0x.
+
 | Option | |
 |---|---|
-| Encounter rate | 0% (no random battles) to 300%. |
-| Experience from battles | 0% to 500%. |
-| Money from battles | 0% to 500%. |
-| Item drops | 0% to 1000%. |
-| Weapon growth | 100% to 1000%: each battle fills a weapon's gauge (15 to full), then its attributes, by 1 point, or more. |
-| Shop prices | 10% to 200%. |
-| Action gauge speed | 25% to 400%. |
+| Encounter rate | 0.0x (no random battles) to 3.0x. |
+| Experience from battles | 0.0x to 5.0x. |
+| Money from battles | 0.0x to 5.0x. |
+| Item drops | 0.0x to 10.0x. |
+| Weapon growth | 1.0x to 10.0x: each battle fills a weapon's gauge (15 to full), then its attributes, by 1 point, or more. |
+| Shop prices | 0.1x to 2.0x. |
+| Action gauge speed | 0.25x to 4.0x. |
 
 **Rendering**
 
@@ -124,7 +125,8 @@ F1 > Settings > Language.
 ## In the game's own menu
 
 Most of the same options, and Display > Borders, are on the game's Settings
-screen (System > Settings in the main menu): L1 and R1 turn the page.
+screen (System > Settings in the main menu): L1 and R1 turn the page, and
+a number's - and + buttons lower and raise it.
 Controller's buttons, Check for new versions, Native renderer, the undub and
 the texture packs are in F1 alone.
 
