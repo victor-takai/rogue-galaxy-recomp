@@ -35,10 +35,22 @@ from the player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
   [dialogue.md](dialogue.md)), texture packs
   ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)), the Xbox buttons in the text,
   the inventory options and the F1 menu with only a controller.
-- Off by default, for development: the VU1 programs done natively
-  (`RG_VU1_NATIVE`, [VU1-NATIVE.md](VU1-NATIVE.md)) and the menu's "Native
-  renderer" switch, which nothing reads yet
-  ([NATIVE-RENDERER.md](NATIVE-RENDERER.md)).
+- In progress:
+  - Performance: the heaviest battles and some bosses still drop below
+    60 fps.
+  - Drawing the game with the PC's renderer instead of through the
+    emulation of the PS2's graphics chip
+    ([NATIVE-RENDERER.md](NATIVE-RENDERER.md)). Off by default, for
+    development: the VU1 programs done natively (`RG_VU1_NATIVE`,
+    [VU1-NATIVE.md](VU1-NATIVE.md)) and the menu's "Native renderer"
+    switch, which nothing reads yet.
+  - A native Linux build, for Linux PCs and the Steam Deck (the Windows
+    build through Proton is prepared but untested:
+    [BUILDING.md](BUILDING.md#steam-deck-untested)).
+  - The European release's languages, read from the player's own disc of
+    that version: they work and are in an open pull request
+    ([#42](https://github.com/victor-takai/rogue-galaxy-recomp/pull/42)),
+    not yet in a release.
 - Taken out at the user's request: the menus in 4:3 on a wide screen
   (2026-10-28, never committed), Save anywhere and Sharp letters
   (2026-10-30, 3b09797; the sources are at b55f0ea).
@@ -1880,6 +1892,33 @@ letters' region replacements called. dq8-gfx's region replacements
 user here. The Xbox buttons in the text and the loading screen's cross
 are still redrawn into their pictures at the PS2's size. The sources as
 they were are in the history at b55f0ea.
+
+**Fast Revelation Flow taken out; multipliers for the percentages
+(2026-11-05).** The user found the Revelation Flow too quick with its
+switch on and asked whether its pace was right. A scripted placement
+(the gate's save, Jaster's board, the developers' giver,
+`RG_SCENE_TRACE=1`, from the zoom on the cell to the board's step back at
+0) took 4.09 s at 60 fps and 4.10 s at 30 with the switch off: the main
+menu runs at the game's own 60 Hz in both modes (60 frames presented a
+second), so that is the console's pace. With it on, 2.22 s, the twice
+the switch was made for (the first steps hurried a moment late). The user
+asked for the switch to go, as the chests' did: `fast_revelation`, the
+hook on RevelationBoardUpdate and `Scene::Revelation` with it. The F1
+menu's numbers set against the game's own (the slider format
+`kMultiplierFormat`) and the game's Settings screen show them as a
+multiplier, 1.0x, 1.25x, instead of a percentage (dq8-gfx's
+`ui/ui_multiplier.h` writes both; graphics.cpp hands it to the screen with
+each number's range); the settings file keeps
+the hundredths, so nothing set changes. Typing a value into those sliders
+(Ctrl+click) is off, as it would read hundredths. The user then asked for
+better words than Low and High on the Settings screen's numbers. Those
+words are pieces of the screen's picture (each widget's sprites come from
+the one picture its name finds, UiDrawWidgets), which holds only Low/High,
+On/Off, Stereo/Mono and Normal/Reversed. So a number's choices now end
+their sprite list after the button (the word's x set to -1) and get a text
+list of ours, "-" or "+" in the row names' font, white (their grey left
+the "-" hard to see), centred by widget flag 0x1000; the game's page gets
+its words and no texts back.
 
 **A launcher without the terminal (2026-10-23).** The user asked for
 RogueGalaxy.bat not to open a terminal. A batch file always opens one, and

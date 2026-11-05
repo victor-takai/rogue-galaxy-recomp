@@ -5,6 +5,7 @@
 
 #include "gfx/backends/sdlgpu/sdlgpu_backend.h"
 #include "ui/ui_glyphs.h"
+#include "ui/ui_multiplier.h"
 #include "ui/ui_settings.h"
 
 #include <array>
@@ -44,8 +45,8 @@ struct GameOption {
     bool defaultValue = false;
     // A number from minimum to maximum instead of a switch, when maximum is
     // the larger, shown as a slider labelled by `format` (printf, its %d the
-    // value), between - and + buttons that move it by `step`, and a Default
-    // button.
+    // value, or kMultiplierFormat), between - and + buttons that move it by
+    // `step`, and a Default button.
     int minimum = 0;
     int maximum = 0;
     int defaultNumber = 0;

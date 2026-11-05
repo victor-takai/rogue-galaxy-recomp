@@ -251,9 +251,7 @@ void applyGameOption(const std::string &key, bool on)
     else if (key == "faster_camera")
         rg::cameraview::setFasterTurn(on);
     else if (key == "fast_transporter")
-        rg::quickscenes::setEnabled(rg::quickscenes::Scene::Transporter, on);
-    else if (key == "fast_revelation")
-        rg::quickscenes::setEnabled(rg::quickscenes::Scene::Revelation, on);
+        rg::quickscenes::setFastTransporter(on);
 }
 
 void applyGameNumber(const std::string &key, int value)
@@ -576,6 +574,8 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     host.completedRenders = [] { return guestFlips(); };
     host.guestFrame = [] { return ps2PadCurrentGuestFrame(); };
     // The game's own switches, on the menu's Game page, in its sections.
+    // Numbers against the game's own (100) show as multipliers, 1.0x.
+    constexpr const char *kTimes = dq8::ui::kMultiplierFormat;
     host.gameOptions = {
         {"sixty_fps", "60 frames per second",
          "The game runs at 60 frames a second instead of its own 30, its logic still at the PS2's pace; movies "
@@ -586,27 +586,27 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "ratio on Auto the picture fills the window, whatever its shape, once a game is loaded.",
          false},
         {"minimap_size", "Minimap size",
-         "The map in the field's corner, against the game's size (100%), smaller toward its corner. The "
+         "The map in the field's corner, against the game's size (1.0x), smaller toward its corner. The "
          "transporter menu's map stays as it is.",
-         false, 50, 100, 100, "%d%%", 5},
+         false, 50, 100, 100, kTimes, 5},
         {"compass_size", "Compass size",
-         "The compass in the field's corner, against the game's size (100%), smaller toward its corner.", false, 50,
-         100, 100, "%d%%", 5},
+         "The compass in the field's corner, against the game's size (1.0x), smaller toward its corner.", false, 50,
+         100, 100, kTimes, 5},
         {"field_of_view", "Field of view",
          "How wide the camera sees while exploring and in battle, in degrees across a 4:3 picture (the game's is "
          "52); a wide picture adds to it. Scenes keep their own camera.",
          false, 40, 90, 52, "%d degrees", 2},
         {"camera_distance", "Camera distance",
-         "How far the camera stays from the party, against the game's (100%).",
-         false, 70, 160, 100, "%d%%", 5},
+         "How far the camera stays from the party, against the game's (1.0x).",
+         false, 70, 160, 100, kTimes, 5},
         {"faster_camera", "Faster camera rotation",
          "The stick turns the camera twice as fast, exploring, in battle and in the first-person view. Otherwise "
          "it turns at the game's speed, at 60 frames a second as at 30.",
          false},
         {"draw_distance", "Draw distance",
-         "How far away the scenery and the objects are still drawn, against the game's (100%), the fog thinned "
+         "How far away the scenery and the objects are still drawn, against the game's (1.0x), the fog thinned "
          "in step. Most of Salgin has no limit to raise; the open areas gain more. From the next map loaded.",
-         false, 100, 400, 100, "%d%%", 25},
+         false, 100, 400, 100, kTimes, 25},
         {"free_camera", "Free camera (F6)",
          "The camera leaves the party, which stands still, and the controller moves it: the left stick moves the "
          "point it looks at (Square held, faster; L2 held, up and down), the right stick turns it around that "
@@ -653,35 +653,31 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "made with it still loads without it: the seventh page's items are kept, hidden, until it is on again. "
          "Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
-        {"fast_revelation", "Fast Revelation Flow",
-         "Items going into a Revelation Flow cell, the zoom, the glow and the ability won, play at up to twice "
-         "the speed.",
-         false},
         {"encounter_rate", "Encounter rate",
-         "How often random battles come, against the game's (100%); 0% turns them off. The story's battles stay.",
-         false, 0, 300, 100, "%d%%", 10},
+         "How often random battles come, against the game's (1.0x); 0.0x turns them off. The story's battles stay.",
+         false, 0, 300, 100, kTimes, 10},
         {"battle_experience", "Experience from battles",
-         "The experience a won battle gives, against the game's (100%), up to the game's 9999 a battle.",
-         false, 0, 500, 100, "%d%%", 25},
+         "The experience a won battle gives, against the game's (1.0x), up to the game's 9999 a battle.",
+         false, 0, 500, 100, kTimes, 25},
         {"battle_money", "Money from battles",
-         "The money defeated enemies leave, against the game's (100%). Selling, chests and rewards stay as they are.",
-         false, 0, 500, 100, "%d%%", 25},
+         "The money defeated enemies leave, against the game's (1.0x). Selling, chests and rewards stay as they are.",
+         false, 0, 500, 100, kTimes, 25},
         {"item_drops", "Item drops",
-         "How likely defeated enemies are to leave each of their items, against the game's (100%): most have a 2 "
-         "to 10% chance, which 1000% makes 20 to 100%; 0% for none. A battle still gives three kinds of items at "
-         "most, as the game does.",
-         false, 0, 1000, 100, "%d%%", 50},
+         "How likely defeated enemies are to leave each of their items, against the game's (1.0x): most have a 2 "
+         "to 10% chance, which 10.0x makes 20 to 100%; 0.0x for none. A battle still gives three kinds of items "
+         "at most, as the game does.",
+         false, 0, 1000, 100, kTimes, 50},
         {"weapon_growth", "Weapon growth",
-         "How fast weapons grow in won battles, against the game's (100%): each battle fills a weapon's gauge by "
-         "1 (15 to full), then raises one of its attributes by 1, which 300% makes 3.",
-         false, 100, 1000, 100, "%d%%", 100},
+         "How fast weapons grow in won battles, against the game's (1.0x): each battle fills a weapon's gauge by "
+         "1 (15 to full), then raises one of its attributes by 1, which 3.0x makes 3.",
+         false, 100, 1000, 100, kTimes, 100},
         {"shop_prices", "Shop prices",
-         "What shops ask for their items, against the game's (100%). Below 100% nothing sells for more than it "
+         "What shops ask for their items, against the game's (1.0x). Below 1.0x nothing sells for more than it "
          "costs, so buying and selling back makes no money.",
-         false, 10, 200, 100, "%d%%", 10},
+         false, 10, 200, 100, kTimes, 10},
         {"action_gauge", "Action gauge speed",
-         "How fast the party's action gauge fills again in battle, against the game's (100%).",
-         false, 25, 400, 100, "%d%%", 25},
+         "How fast the party's action gauge fills again in battle, against the game's (1.0x).",
+         false, 25, 400, 100, kTimes, 25},
         {"director_cut_balance", "Director's Cut balance",
          "Battles with the balance of the Japanese Director's Cut, which the US release did not get: smaller "
          "groups of enemies, the Rosencaster and Starship Factory enemies and three story fights weaker, the Area "
@@ -734,7 +730,8 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         if (option.number())
         {
             rg::settingspages::setRange(option.key, option.minimum, option.maximum, option.step,
-                                        option.defaultNumber);
+                                        option.defaultNumber,
+                                        option.format == kTimes ? &dq8::ui::multiplierText : nullptr);
         }
     }
     // And Display > Borders: Black, Blurred, Image.
