@@ -64,6 +64,13 @@ the European disc (SCES-54552).
 
 The voices stay as they are (English, or Japanese with the undub).
 
+It is experimental: played in Spanish and tested in all four languages up to
+the first scenes, but the rest of the story has not been seen in them yet. If
+something looks wrong (text, a menu, the picture), open an
+[issue](https://github.com/victor-takai/rogue-galaxy-recomp/issues) with a
+screenshot and the game's log. Picking English again brings the game back as
+it was.
+
 ## Update
 
 The game tells you at start when a new version is out, and F1 > Rogue

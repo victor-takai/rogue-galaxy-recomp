@@ -48,9 +48,10 @@ from the player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
     build through Proton is prepared but untested:
     [BUILDING.md](BUILDING.md#steam-deck-untested)).
   - The European release's languages, read from the player's own disc of
-    that version: they work and are in an open pull request
-    ([#42](https://github.com/victor-takai/rogue-galaxy-recomp/pull/42)),
-    not yet in a release.
+    that version ([#42](https://github.com/victor-takai/rogue-galaxy-recomp/pull/42)):
+    they work, marked experimental, and are not yet in a release; played
+    in Spanish and tested in all four up to the first scenes, the rest of
+    the story still to be seen in them.
 - Taken out at the user's request: the menus in 4:3 on a wide screen
   (2026-10-28, never committed), Save anywhere and Sharp letters
   (2026-10-30, 3b09797; the sources are at b55f0ea).

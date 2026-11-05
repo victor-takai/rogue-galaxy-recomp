@@ -17,7 +17,7 @@ image; nothing of the game is distributed.
 - In-game menu (F1)
 - [New game settings](docs/OPTIONS.md)
 - Japanese voices and movies (undub)
-- Text in French, German, Spanish or Italian
+- Text in French, German, Spanish or Italian (experimental)
 - [Texture packs](docs/TEXTURE_PACKS.md), PCSX2's included
 
 ## What to expect
