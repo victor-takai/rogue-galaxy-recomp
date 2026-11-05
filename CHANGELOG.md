@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The options set against the game's own (encounter rate, experience,
+  money, item drops, weapon growth, shop prices, action gauge, camera and
+  draw distance, minimap and compass size) show as multipliers, 1.0x for
+  the game's, instead of percentages. What you set stays as it was.
+- On the game's Settings screen, the numbers' buttons read - and +
+  instead of Low and High.
+- Fast Revelation Flow is gone: the Revelation Flow plays at the
+  console's pace again.
+
 ## 0.2.0 (pre-release)
 
 `Update.bat`, the Japanese voices (undub), texture packs, the F1 menu with

@@ -575,8 +575,18 @@ void Overlay::drawGameOptions(const std::string &page, const char *emptyText, co
             ImGui::SameLine();
             ImGui::SetNextItemWidth(std::max(button * 3.0f, ImGui::GetContentRegionAvail().x - button -
                                                                 reset - style.ItemSpacing.x * 2.0f));
-            ImGui::SliderInt("##value", &next, option.minimum, option.maximum,
-                             option.format.empty() ? "%d" : option.format.c_str());
+            // A multiplier's text has its value written in already: the
+            // slider prints it as it is (no % in it), and typing a value in
+            // is off, as what it would read is hundredths.
+            const bool multiplier = option.format == kMultiplierFormat;
+            char text[16];
+            const char *format = option.format.empty() ? "%d" : option.format.c_str();
+            if (multiplier) {
+                multiplierText(value, text, sizeof(text));
+                format = text;
+            }
+            ImGui::SliderInt("##value", &next, option.minimum, option.maximum, format,
+                             multiplier ? ImGuiSliderFlags_NoInput : ImGuiSliderFlags_None);
             ImGui::SameLine();
             if (ImGui::Button("+", ImVec2(button, 0.0f)))
                 next = value + option.step;

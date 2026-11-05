@@ -179,7 +179,7 @@ int run(int argc, char **argv)
     rg::mapchests::install(runtime);
     rg::freecamera::install(runtime);
     rg::settingspages::install(runtime);
-    rg::quickscenes::install(runtime);
+    rg::quickscenes::install();
     // Read here, after the menu's settings and before anything native sets
     // itself up, so the whole run sees one answer.
     if (rg::nativerenderer::enabled())

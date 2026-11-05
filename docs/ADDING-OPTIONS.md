@@ -90,7 +90,7 @@ The fields, in order:
 | `label` | What the menu shows |
 | `help` | The tooltip: what it does, and what it leaves alone |
 | `defaultValue` | A switch's value until the player changes it |
-| `minimum`, `maximum`, `defaultNumber`, `format`, `step` | A number instead of a switch, when `maximum` is larger than `minimum`: a slider labelled by `format` (`"%d%%"`), - and + buttons that move it by `step`, and a Default button |
+| `minimum`, `maximum`, `defaultNumber`, `format`, `step` | A number instead of a switch, when `maximum` is larger than `minimum`: a slider labelled by `format`, - and + buttons that move it by `step`, and a Default button. `format` is `kTimes` for a number set against the game's own (in hundredths, 100 the game's, shown as 1.0x), otherwise printf's (`"%d degrees"`) |
 | `remembered` | `false` for a switch that is off at every start and that something besides the menu flips (the free camera, F6): the menu shows what `host.gameOptionState` says |
 | `restart` | `true` when it takes effect at the next start |
 | `page` | Empty for Game, `"language"` for Language |
@@ -99,8 +99,8 @@ A number looks like this:
 
 ```cpp
 {"camera_distance", "Camera distance",
- "How far the camera stays from the party, against the game's (100%).",
- false, 70, 160, 100, "%d%%", 5},
+ "How far the camera stays from the party, against the game's (1.0x).",
+ false, 70, 160, 100, kTimes, 5},
 ```
 
 **Where it shows.** The Game page lists the options in the table's order.
@@ -122,7 +122,7 @@ The game's System > Settings has three extra pages of the menu's options
 lists in `src/settings_pages.cpp` puts the option there too:
 
 ```cpp
-{"instant_text", "Instant Text", Kind::Switch, ""},
+{"instant_text", "Instant Text", Kind::Switch},
 ```
 
 - `kSwitches` takes switches, `kNumbers` numbers, `kScenes` the rest
@@ -131,8 +131,8 @@ lists in `src/settings_pages.cpp` puts the option there too:
   holds more. `kNumbers` is full.
 - The label is in Title Case, short, and says "(Next Start)" for a
   `restart` option.
-- A number's range, step and default come from the menu's table; nothing to
-  repeat.
+- A number's range, step, default and the way it reads (1.0x for `kTimes`)
+  come from the menu's table; nothing to repeat. Its choices read - and +.
 - Changes made there go back through the F1 menu, which saves and applies
   them as its own.
 
