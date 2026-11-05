@@ -93,5 +93,10 @@ if ($code -ne 0) {
 }
 
 Write-Host ""
-Write-Host "Done. In the game, press F1: Settings > Language turns on the undub, and Settings > Game >" -ForegroundColor Green
-Write-Host "Director's Cut balance the Japanese battle balance. Both take effect at the next start." -ForegroundColor Green
+if (Test-Path -LiteralPath (Join-Path $Root "disc\JA\balance\tables.txt")) {
+    Write-Host "Done. In the game, press F1: Settings > Language turns on the undub, and Settings > Game >" -ForegroundColor Green
+    Write-Host "Director's Cut balance the Japanese battle balance. Both take effect at the next start." -ForegroundColor Green
+} else {
+    Write-Host "Done. In the game, press F1: Settings > Language turns on the undub, from the next start." -ForegroundColor Green
+    Write-Host "The Director's Cut battle balance (an option) was not made; the reason is above."
+}

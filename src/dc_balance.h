@@ -53,8 +53,9 @@ class PS2Runtime;
 //
 // The menu's game option `director_cut_balance`, or RG_DIRECTOR_CUT_BALANCE=1,
 // read at start. Without disc/JA/balance it stays off, with a line in the log;
-// without files.idx, the tables and the boss rule only. The log names each
-// enemy file the first time it is served.
+// without files.idx, the tables, the boss rule and CATCH on every ENEMY_FLY
+// (the Japanese executable's, not its files'; the jellyfish get theirs from
+// the files). The log names each enemy file the first time it is served.
 namespace rg::dcbalance
 {
 

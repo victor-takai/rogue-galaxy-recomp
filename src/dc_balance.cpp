@@ -102,11 +102,38 @@ uint32_t crc32(const uint8_t *data, size_t size)
     return c ^ 0xFFFFFFFFu;
 }
 
+// Guest addresses from the game's registers, checked against main RAM: one
+// outside it (the scratchpad, a bad pointer) reads 0, writes nothing.
+bool inRam(uint32_t address, uint32_t size)
+{
+    const uint32_t at = address & 0x1FFFFFFFu;
+    return at <= PS2_RAM_SIZE && size <= PS2_RAM_SIZE - at;
+}
+
 uint32_t readWord(const uint8_t *rdram, uint32_t address)
 {
     uint32_t value = 0;
-    std::memcpy(&value, rdram + (address & 0x1FFFFFFFu), sizeof(value));
+    if (inRam(address, sizeof(value)))
+    {
+        std::memcpy(&value, rdram + (address & 0x1FFFFFFFu), sizeof(value));
+    }
     return value;
+}
+
+// A NUL-terminated guest string, up to `limit` characters.
+std::string guestString(const uint8_t *rdram, uint32_t address, size_t limit)
+{
+    std::string out;
+    for (uint32_t at = address; out.size() < limit && inRam(at, 1u); ++at)
+    {
+        const char c = static_cast<char>(rdram[at & 0x1FFFFFFFu]);
+        if (c == '\0')
+        {
+            break;
+        }
+        out += c;
+    }
+    return out;
 }
 
 // disc/JA/balance/tables.txt: "# ..." comments, then one table a line: its
@@ -163,17 +190,24 @@ bool loadTables(const std::filesystem::path &folder)
 
 void writeWord(uint8_t *rdram, uint32_t address, uint32_t value)
 {
-    std::memcpy(rdram + (address & 0x1FFFFFFFu), &value, sizeof(value));
+    if (inRam(address, sizeof(value)))
+    {
+        std::memcpy(rdram + (address & 0x1FFFFFFFu), &value, sizeof(value));
+    }
 }
 
 // An archive path as the index names it: lower case, backslashes, no device,
 // version or leading separator.
-std::string normalize(const char *path)
+std::string normalize(const std::string &path)
 {
     std::string out;
-    for (const char *p = path; *p && *p != ';'; ++p)
+    for (const char c : path)
     {
-        out += *p == '/' ? '\\' : static_cast<char>(std::tolower(static_cast<unsigned char>(*p)));
+        if (c == ';')
+        {
+            break;
+        }
+        out += c == '/' ? '\\' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     const size_t start = out.find_first_not_of('\\');
     return start == std::string::npos ? std::string() : out.substr(start);
@@ -215,7 +249,7 @@ bool loadFiles(const std::filesystem::path &folder)
         {
             return false;
         }
-        files[normalize(line.substr(0, tab1).c_str())] = file;
+        files[normalize(line.substr(0, tab1))] = file;
     }
     if (files.empty())
     {
@@ -254,9 +288,9 @@ void dirTableFindFile(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     const uint32_t entry = getRegU32(ctx, 5);
     const uint32_t pathAddress = getRegU32(ctx, 6);
-    if (pathAddress != 0 && entry != 0)
+    if (pathAddress != 0 && entry != 0 && inRam(entry, 0x14u))
     {
-        const std::string name = normalize(reinterpret_cast<const char *>(rdram + (pathAddress & 0x1FFFFFFFu)));
+        const std::string name = normalize(guestString(rdram, pathAddress, 512u));
         std::lock_guard<std::mutex> lock(g_filesMutex);
         if (!g_filesLooked)
         {
@@ -292,13 +326,19 @@ void dirTableFindFile(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 uint64_t readDword(const uint8_t *rdram, uint32_t address)
 {
     uint64_t value = 0;
-    std::memcpy(&value, rdram + (address & 0x1FFFFFFFu), sizeof(value));
+    if (inRam(address, sizeof(value)))
+    {
+        std::memcpy(&value, rdram + (address & 0x1FFFFFFFu), sizeof(value));
+    }
     return value;
 }
 
 void writeDword(uint8_t *rdram, uint32_t address, uint64_t value)
 {
-    std::memcpy(rdram + (address & 0x1FFFFFFFu), &value, sizeof(value));
+    if (inRam(address, sizeof(value)))
+    {
+        std::memcpy(rdram + (address & 0x1FFFFFFFu), &value, sizeof(value));
+    }
 }
 
 // The flag names the Director's Cut's table gives the low half's 0x8000: CATCH
@@ -325,15 +365,16 @@ void parseFlagNames(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     uint32_t data = 0;
     if (text != 0 && getRegU32(ctx, 5) == kCharaFlagsLowTable)
     {
-        // The parser's own words: letters, digits and '_'.
-        const char *p = reinterpret_cast<const char *>(rdram + (text & 0x1FFFFFFFu));
+        // The parser's own words: letters, digits and '_', in any case (it
+        // compares them lower-cased).
+        const std::string names = guestString(rdram, text, 4096u);
         std::string word;
-        for (size_t i = 0; i < 256; ++i)
+        for (size_t i = 0; i <= names.size(); ++i)
         {
-            const char c = p[i];
+            const char c = i < names.size() ? names[i] : '\0';
             if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
             {
-                word += c;
+                word += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
                 continue;
             }
             if (word == "CATCH" || word == "ENEMY_FLY")
@@ -341,10 +382,6 @@ void parseFlagNames(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
                 data = kHasCatch;
             }
             word.clear();
-            if (c == '\0')
-            {
-                break;
-            }
         }
     }
     if (data == 0)
@@ -358,7 +395,10 @@ void parseFlagNames(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 // The lock-on jump (CharaJumpToTarget, 0x211070) takes its target's character
 // from ActionMgrFindById and homes in only when it has FLY; the Director's
 // Cut's version also when it has CATCH. Such a character gets FLY between the
-// lookup's return and the jump's end, the test's only read of it.
+// lookup's return and the jump's end, the test's only read of it. A jump
+// whose end never comes (its thread exited while it was unwound) leaves its
+// lend behind: the next jump forgets it without writing to that character,
+// which may be gone, and whose flags the game rebuilds every frame anyway.
 void returnFly(uint8_t *rdram)
 {
     if (g_flyLent != 0)
@@ -373,7 +413,6 @@ void afterFindAction(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uin
 {
     (void)runtime;
     (void)data;
-    returnFly(rdram); // one lent before and never taken back
     const uint32_t chara = getRegU32(ctx, 2);
     if (chara == 0)
     {
@@ -413,6 +452,7 @@ void afterJumpToTarget(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, u
 
 void charaJumpToTarget(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
+    g_flyLent = 0; // a lend whose jump never ended
     rg::hooks::callThen(g_jumpToTarget, rdram, ctx, runtime, &afterJumpToTarget, 0u);
 }
 
@@ -493,7 +533,8 @@ void install(PS2Runtime &runtime)
         std::fprintf(stderr, "[rg] the Director's Cut balance is off: its tables' hook is missing\n");
         return;
     }
-    if (!rg::timing::hookFunction(runtime, kCharaGetStatF3C, &charaGetStatF3C, g_getStatF3C))
+    const bool bossRule = rg::timing::hookFunction(runtime, kCharaGetStatF3C, &charaGetStatF3C, g_getStatF3C);
+    if (!bossRule)
     {
         std::fprintf(stderr, "[rg] Director's Cut balance: bosses can still be knocked down (hook missing)\n");
     }
@@ -517,10 +558,9 @@ void install(PS2Runtime &runtime)
         std::fprintf(stderr, "[rg] Director's Cut balance: lock-on jumps home in on flyers only, as in the US "
                              "(hook missing)\n");
     }
-    std::fprintf(stderr,
-                 "[rg] Director's Cut balance on: %zu tables and %zu enemy files and AI scripts from %s, "
-                 "bosses never knocked down\n",
-                 g_tables.size(), g_files.size(), folder.string().c_str());
+    std::fprintf(stderr, "[rg] Director's Cut balance on: %zu tables and %zu enemy files and AI scripts from %s%s\n",
+                 g_tables.size(), g_files.size(), folder.string().c_str(),
+                 bossRule ? ", bosses never knocked down" : "");
 }
 
 void setEnabled(bool on)

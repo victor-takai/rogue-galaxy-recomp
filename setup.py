@@ -95,6 +95,14 @@ def hash_entry(iso: IsoImage, entry: Entry) -> str:
     return h.hexdigest()
 
 
+def hash_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def image_digests(path: Path) -> dict:
     md5, sha1, sha256, crc = hashlib.md5(), hashlib.sha1(), hashlib.sha256(), 0
     with open(path, "rb") as f:
@@ -254,7 +262,8 @@ def cmd_extract_japanese(args: argparse.Namespace) -> int:
         done = 0
         manifest = {"image": str(Path(args.iso).resolve()), "files": {}}
         # Run again (for the balance's tables, say), a file copied whole before
-        # from this same disc, which the indexes above vouch for, stays.
+        # from this same disc, which the indexes above vouch for, stays when
+        # its bytes are still the ones copied; a damaged one is copied again.
         before = {}
         if (out / "manifest.json").is_file():
             before = json.loads((out / "manifest.json").read_text(encoding="utf-8")).get("files", {})
@@ -262,7 +271,13 @@ def cmd_extract_japanese(args: argparse.Namespace) -> int:
             entry = files[path][0]
             dest = out / path
             old = before.get(path)
-            if old and old.get("size") == entry.size and dest.is_file() and dest.stat().st_size == entry.size:
+            if (
+                old
+                and old.get("size") == entry.size
+                and dest.is_file()
+                and dest.stat().st_size == entry.size
+                and hash_file(dest) == old.get("sha256")
+            ):
                 manifest["files"][path] = old
                 done += entry.size
                 print(f"{done * 100 // max(total, 1):3d}%  {path} (already there)", flush=True)
@@ -278,7 +293,22 @@ def cmd_extract_japanese(args: argparse.Namespace) -> int:
             print(f"{done * 100 // max(total, 1):3d}%  {path}", flush=True)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"extracted {len(wanted)} files ({total / 2**30:.2f} GiB) to {out}")
-    return cmd_director_cut_balance(args)
+    # The undub is whole here: the balance, an option, cannot undo that.
+    if not make_balance(args):
+        print("the undub is installed; the Director's Cut balance (an option) was not made")
+    return 0
+
+
+def make_balance(args: argparse.Namespace) -> bool:
+    """cmd_director_cut_balance for a step that must go on without it: says why it was not made."""
+    try:
+        cmd_director_cut_balance(args)
+        return True
+    except SystemExit as stop:
+        print(f"   the Director's Cut balance not made: {str(stop).rstrip('.')}")
+    except Exception as error:  # a damaged or unexpected image: whatever its parsing raises
+        print(f"   the Director's Cut balance not made: {type(error).__name__}: {error}")
+    return False
 
 
 def cmd_director_cut_balance(args: argparse.Namespace) -> int:
@@ -847,12 +877,8 @@ def balance_for_undub(version: str, disc: Path) -> None:
         print("== the Director's Cut balance (an option) needs your Japanese disc once: run Install-Undub.bat")
         return
     print("== the Director's Cut balance, from the Japanese disc image the undub came from", flush=True)
-    try:
-        cmd_director_cut_balance(argparse.Namespace(version=version, iso=image, disc=str(disc)))
-    except SystemExit as stop:
-        print(f"   not made: {str(stop).rstrip('.')}; Install-Undub.bat makes it")
-    except (OSError, ValueError, KeyError) as error:
-        print(f"   not made: {error}; Install-Undub.bat makes it")
+    if not make_balance(argparse.Namespace(version=version, iso=image, disc=str(disc))):
+        print("   Install-Undub.bat makes it")
 
 
 def cmd_install(args: argparse.Namespace) -> int:
