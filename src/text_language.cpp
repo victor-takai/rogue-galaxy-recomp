@@ -38,6 +38,8 @@ constexpr const char *kFolder = "EU";
 // The menu's choices, in its order: 0 is the game's English.
 constexpr const char *kCodes[] = {"", "FR", "DE", "ES", "IT"};
 std::atomic<int> g_preferred{0};
+// The one of them the text is in (another code RG_TEXT_LANG picked counts as 0).
+std::atomic<int> g_language{0};
 
 // The PAL executable gives its menus and game data more room, for the longer European
 // layouts and texts. Found by pairing the two executables' functions and comparing
@@ -740,6 +742,11 @@ void setPreferred(int choice)
     g_preferred.store(choice, std::memory_order_relaxed);
 }
 
+int language()
+{
+    return g_language.load(std::memory_order_relaxed);
+}
+
 void chooseAtBoot(uint8_t *rdram, PS2Runtime &runtime)
 {
     // RG_TEXT_LANG (a developer's switch, any two letters of the game's table) over
@@ -792,6 +799,13 @@ void chooseAtBoot(uint8_t *rdram, PS2Runtime &runtime)
             }
             g_runtime = &runtime;
             g_active = g_code != "en";
+            for (int choice = 1; choice < static_cast<int>(sizeof(kCodes) / sizeof(kCodes[0])); ++choice)
+            {
+                if (wanted == kCodes[choice])
+                {
+                    g_language.store(choice, std::memory_order_relaxed);
+                }
+            }
             std::fprintf(stderr, "[rg] text in %s\n", name);
             return;
         }

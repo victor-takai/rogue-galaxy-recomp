@@ -26,6 +26,11 @@ namespace rg::textlanguage
 // 4 Italian. Read once, at boot.
 void setPreferred(int choice);
 
+// The language the game's text is in, numbered as that choice: English (0) until
+// chooseAtBoot has set another. Writing to its menus: the accents as the European
+// texts spell them (<'e>), which the menus' font then draws.
+int language();
+
 // From the hook of StaticInitLangCodeTables, after the game filled its tables:
 // sets the text token (0x481528) to the language chosen (RG_TEXT_LANG over the
 // menu) when its files exist in disc/EU.

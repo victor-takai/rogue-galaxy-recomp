@@ -127,7 +127,8 @@ F1 > Settings > Language.
 
 Most of the same options, and Display > Borders, are on the game's Settings
 screen (System > Settings in the main menu): L1 and R1 turn the page, and
-a number's - and + buttons lower and raise it.
+a number's - and + buttons lower and raise it. With the text in French,
+German, Spanish or Italian, the options are named in that language there too.
 Controller's buttons, Check for new versions, Native renderer, the text's
 language, the undub and the texture packs are in F1 alone.
 
