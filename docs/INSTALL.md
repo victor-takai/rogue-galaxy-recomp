@@ -5,6 +5,7 @@ short version is on the [README](../README.md#install-windows).
 
 - [Install (Windows)](#install-windows)
 - [Undub (optional)](#undub-optional)
+- [European texts (optional)](#european-texts-optional)
 - [Update](#update)
 - [Saves from PCSX2](#saves-from-pcsx2)
 - [Uninstall](#uninstall)
@@ -49,6 +50,20 @@ Director's Cut (SCPS-17013).
 
 The text stays English.
 
+## European texts (optional)
+
+The text in French, German, Spanish or Italian. You need your own image of
+the European disc (SCES-54552).
+
+1. After installing, double-click `Install-European.bat` and choose that
+   image (or drop it onto the file). It builds the four languages' texts,
+   about 320 MB, into the folder in a minute.
+2. Pick the language in
+   [F1 > Settings > Language > Text](OPTIONS.md#language).
+3. Start the game again.
+
+The voices stay as they are (English, or Japanese with the undub).
+
 ## Update
 
 The game tells you at start when a new version is out, and F1 > Rogue
@@ -61,8 +76,9 @@ new version changes how the game's code is translated. The build tools
 stay unless the new version needs newer ones.
 
 What is kept: your disc, saves (`disc\mc0`), settings
-(`%APPDATA%\RogueGalaxy\Recompiled`), textures and the undub's files
-(`disc\JA`). `update.log` and `install.log` say what happened.
+(`%APPDATA%\RogueGalaxy\Recompiled`), textures, the undub's files
+(`disc\JA`) and the European texts (`disc\EU`). `update.log` and
+`install.log` say what happened.
 
 A zip downloaded by hand from the
 [releases](https://github.com/victor-takai/rogue-galaxy-recomp/releases)
@@ -84,7 +100,8 @@ From then on, `Update.bat` is in the folder.
 
 This works too, but the tools are downloaded, the disc extracted and
 everything built again, as the first time. Copy `disc\mc0` (and `disc\mc1`)
-from the old folder to keep your saves, and `disc\JA` to keep the undub.
+from the old folder to keep your saves, `disc\JA` to keep the undub and
+`disc\EU` to keep the European texts.
 
 ## Saves from PCSX2
 

@@ -128,11 +128,17 @@ void Overlay::applySettings() {
         }
         if (!m_startCaptured && !option.number())
             m_startOptions[option.key] = gameOption(option);
+        if (!m_startCaptured && option.number())
+            m_startNumbers[option.key] = gameNumber(option);
     }
     m_startCaptured = true;
 }
 
 bool Overlay::waitsForRestart(const GameOption &option) const {
+    if (option.number()) {
+        const auto found = m_startNumbers.find(option.key);
+        return option.restart && found != m_startNumbers.end() && found->second != gameNumber(option);
+    }
     const auto found = m_startOptions.find(option.key);
     return option.restart && found != m_startOptions.end() && found->second != gameOption(option);
 }

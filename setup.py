@@ -4,6 +4,7 @@
     python setup.py verify   --iso "Rogue Galaxy (USA).iso" [--full]
     python setup.py extract  --iso "Rogue Galaxy (USA).iso" [--out disc] [--force]
     python setup.py extract-japanese --iso "Rogue Galaxy - Director's Cut (Japan).iso" [--disc disc]
+    python setup.py extract-european --iso "Rogue Galaxy (Europe).iso" [--disc disc] [--languages fr de es it]
     python setup.py info     [--disc disc]
     python setup.py overlays  [--disc disc] [--out build/overlays]
     python setup.py check     [--disc disc]
@@ -11,6 +12,9 @@
 
 `extract-japanese` copies the voices and the movies that differ from the US
 ones out of the Japanese Director's Cut into disc/JA, for the Japanese dub.
+`extract-european` builds the European release's French, German, Spanish and
+Italian texts into the US game's files, disc/EU/<LANG>.DAT and .idx
+(tools/disc/european.py says how).
 `verify` checks a dump against config/<version>/hashes.json without writing
 anything. `extract` unpacks both DVD layers into one tree (the runtime boots
 the ELF from that folder) and hashes every file while copying. `info` decodes
@@ -263,6 +267,52 @@ def cmd_extract_japanese(args: argparse.Namespace) -> int:
             print(f"{done * 100 // max(total, 1):3d}%  {path}", flush=True)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"extracted {len(wanted)} files ({total / 2**30:.2f} GiB) to {out}")
+    return 0
+
+
+def cmd_extract_european(args: argparse.Namespace) -> int:
+    """The texts of the European release, built for the US game, into <disc>/EU."""
+    from disc import european
+
+    known = load_toml_json(config_dir(args.version) / "european.json")
+    us_known = load_hashes(args.version)["files"]
+    disc = Path(args.disc)
+    # The files are built on the US ones: they must be this version's.
+    for name in known["indexes"]:
+        path = disc / name
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != us_known[name]["sha256"]:
+            sys.exit(f"{path} is not the US disc's ({args.version}): run `setup.py extract` first.")
+    out = disc / "EU"
+    languages = [code.lower() for code in (args.languages or known["languages"])]
+    for code in languages:
+        if code not in known["languages"]:
+            sys.exit(f"{code}: not a language of the European release ({', '.join(known['languages'])})")
+    started = time.time()
+    with IsoImage(args.iso) as iso:
+        files = unique_files(iso)
+        for name, want in known["indexes"].items():
+            copies = files.get(name)
+            if not copies or hash_entry(iso, copies[0]) != want:
+                sys.exit(
+                    f"{args.iso} is not the European Rogue Galaxy (SCES-54552): {name} does not match. "
+                    "Only that release's texts are known to line up with the US game."
+                )
+        pal = european.disc_from_iso(iso)
+        us = european.disc_from_folder(disc)
+        manifest = {"image": str(Path(args.iso).resolve()), "languages": {}}
+        if (out / "manifest.json").is_file():
+            manifest["languages"] = json.loads((out / "manifest.json").read_text(encoding="utf-8")).get("languages", {})
+        for n, code in enumerate(languages):
+            report = european.write_language(us, pal, code, out)
+            manifest["languages"][code.upper()] = {
+                "files": report.files,
+                "strings": report.strings,
+                "english_lines": report.english_lines,
+                "tables_kept_english": report.kept_us,
+            }
+            print(f"{(n + 1) * 100 // len(languages):3d}%  {code.upper()}: {report.files} files", flush=True)
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(f"built {', '.join(c.upper() for c in languages)} into {out} in {time.time() - started:.0f} s")
     return 0
 
 
@@ -831,6 +881,12 @@ def main() -> int:
     p.add_argument("--iso", required=True)
     p.add_argument("--disc", default=str(ROOT / "disc"))
     p.set_defaults(func=cmd_extract_japanese)
+
+    p = sub.add_parser("extract-european", help="the European release's texts, built for the US game, into disc/EU")
+    p.add_argument("--iso", required=True)
+    p.add_argument("--disc", default=str(ROOT / "disc"))
+    p.add_argument("--languages", nargs="*", help="fr de es it (default: all four)")
+    p.set_defaults(func=cmd_extract_european)
 
     p = sub.add_parser("info", help="print SYSTEM.CNF and the MWo3 overlay table")
     p.add_argument("--disc", default=str(ROOT / "disc"))

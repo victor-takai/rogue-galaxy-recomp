@@ -17,6 +17,7 @@ image; nothing of the game is distributed.
 - In-game menu (F1)
 - [New game settings](docs/OPTIONS.md)
 - Japanese voices and movies (undub)
+- Text in French, German, Spanish or Italian
 - [Texture packs](docs/TEXTURE_PACKS.md), PCSX2's included
 
 ## What to expect
@@ -51,8 +52,8 @@ connection and your own uncompressed `.iso` of Rogue Galaxy USA
 
 To update later, double-click `Update.bat`.
 
-The full guide, with the undub, updating, saves from PCSX2 and
-uninstalling, is in [docs/INSTALL.md](docs/INSTALL.md).
+The full guide, with the undub, the European texts, updating, saves from
+PCSX2 and uninstalling, is in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Controls
 
@@ -73,9 +74,10 @@ F11 or Alt+Enter toggles fullscreen. F12 takes a screenshot.
 ### The F1 menu
 
 **F1** (or the Guide button, or Back+Start) opens the menu: display, sound,
-controls, the game options, Language (the undub) and Textures. Most game
-options are also on the game's own Settings screen (System > Settings).
-Every option and where it is: [docs/OPTIONS.md](docs/OPTIONS.md).
+controls, the game options, Language (the text's language, the undub) and
+Textures. Most game options are also on the game's own Settings screen
+(System > Settings). Every option and where it is:
+[docs/OPTIONS.md](docs/OPTIONS.md).
 
 With a controller: ✕ opens a page, ○ goes back, △ reaches the menu bar,
 L1 and R1 turn the pages.
@@ -87,7 +89,8 @@ L1 and R1 turn the pages.
 Every page, by who it is for: [docs/README.md](docs/README.md). The main
 ones:
 
-- [docs/INSTALL.md](docs/INSTALL.md): installing, the undub, updating
+- [docs/INSTALL.md](docs/INSTALL.md): installing, the undub, the European
+  texts, updating
 - [CHANGELOG.md](CHANGELOG.md): each release, and its known issues
 - [docs/OPTIONS.md](docs/OPTIONS.md): every option
 - [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md): the project in plain words
