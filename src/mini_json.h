@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -30,15 +31,19 @@ struct Value
     double number = 0.0;
     std::string string;
     std::vector<Value> items;
-    std::vector<std::pair<std::string, Value>> members;
+    // An object's members, in file order: names[i] is the name of values[i]
+    // (not a vector of pairs: libstdc++ 16 wants the pair complete while
+    // Value is not).
+    std::vector<std::string> names;
+    std::vector<Value> values;
 
     const Value *find(const char *name) const
     {
-        for (const auto &member : members)
+        for (std::size_t i = 0; i < names.size(); ++i)
         {
-            if (member.first == name)
+            if (names[i] == name)
             {
-                return &member.second;
+                return &values[i];
             }
         }
         return nullptr;
@@ -199,7 +204,8 @@ private:
             }
             if (object)
             {
-                out.members.emplace_back(std::move(name), std::move(child));
+                out.names.push_back(std::move(name));
+                out.values.push_back(std::move(child));
             }
             else
             {

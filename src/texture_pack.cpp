@@ -363,18 +363,20 @@ bool loadPack(const Source &source, const std::string &id, Pack &pack)
     }
     if (const auto *aliases = index.find("aliases"); aliases && aliases->type == rg::json::Value::Type::Object)
     {
-        for (const auto &alias : aliases->members)
+        for (size_t i = 0; i < aliases->names.size(); ++i)
         {
+            const std::string &aliasName = aliases->names[i];
+            const rg::json::Value &aliasValue = aliases->values[i];
             // A file inside the pack only: no "..", no drive or root.
-            const std::filesystem::path relative(alias.second.string);
-            if (alias.second.type != rg::json::Value::Type::String || relative.is_absolute() ||
-                relative.has_root_name() || alias.second.string.find("..") != std::string::npos ||
-                !isPicture(alias.second.string) || !source.has(alias.second.string))
+            const std::filesystem::path relative(aliasValue.string);
+            if (aliasValue.type != rg::json::Value::Type::String || relative.is_absolute() ||
+                relative.has_root_name() || aliasValue.string.find("..") != std::string::npos ||
+                !isPicture(aliasValue.string) || !source.has(aliasValue.string))
             {
-                std::fprintf(stderr, "[rg] texture pack %s: alias %s left out\n", id.c_str(), alias.first.c_str());
+                std::fprintf(stderr, "[rg] texture pack %s: alias %s left out\n", id.c_str(), aliasName.c_str());
                 continue;
             }
-            add(alias.first, alias.second.string);
+            add(aliasName, aliasValue.string);
         }
     }
     if (const auto *ignore = index.find("ignore"); ignore && ignore->type == rg::json::Value::Type::Array)
