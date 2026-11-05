@@ -239,7 +239,87 @@ Left to the VU1, chunk by chunk:
   with one of them is left whole to the VU1. Harvest mode collects their
   samples where they run: other planets, more battles and events, menus.
 
+**Where the pieces are picked** (2026-10-30). `VuMicrocodeTableInitMaybe`
+fills a table at 0x491280: 4 sets of 12 rows, a row 16 bytes of A, F and
+E pieces, and at +0x300 the row's pointers to its B group (4 entries,
+0x47dec0 or 0x47ded0), C group and D group (8 entries each, from
+0x449dd0). `VuProgSelResolveMaybe` (0x14e370) reads a selector of row,
+set, B, C and D index; the model draws (`ModelEmitDrawPacketsMaybe` and
+the two beside it) take the set from the draw context's +0x3C40 and the
+row from the material, the effect drawers (`EffQuadDrawNodes`) from the
+effect's data (+0xA). The rows:
+
+| Row | A | F | E | C group | D group | Missing pieces |
+|---|---|---|---|---|---|---|
+| 0, 2 | 07151c25 | d3f6f631, 150031ee | 6e420ef8 | strip | strip | none |
+| 1 | 3f6df595 | | | 3689bac9 | (C's) | outline B index 1, 89123290 |
+| 3, 7, 9 | 07151c25 | 0594a063, 9df36d6a, ad209cd3 | 6e420ef8 | strip | strip | the F pieces of 3 and 9 |
+| 4 | 821b638f | | | dc8dbfe4 | | none |
+| 5 | 0b1031ae | | 8ecadb3a (D) | | | none |
+| 6 | c8143ab4 | b1d29245 | none | strip | 1bd1b5c0 | none (late save, 2026-10-30) |
+| 8 | c8143ab4 | none | ab37fe79 | strip | 2feaa9a1 | D 2feaa9a1 |
+| 10 | 4beba151 | 15be21a5 | 860dd144 | 3b890d00 | | none |
+| 11 | 07151c25 | a04c11ce | none | none | 312d076b | F a04c11ce, D 312d076b |
+
+Sets 1 and 2 are set 0 with rows 0 and 2 taking A 8855d9e7 and E
+56d6683a (set 1) or c9e1cecc (set 2). The strip C group's index bit 1
+(with lit, bits 0 and 2) is C 127ca0b4 and e3bca52a; the strip B group's
+index 0 and 1 are 857fbbc2 and 36d686cd. A 964be3bc and cf7a85a5 are in
+no row.
+
+A GameFAQs save at the end of the game (Jaster Lv99, 132 hours) walked
+through Zerard's transporters (Main Street, the Dorgenark's deck,
+Starship Factory, Rosencaster Prison, Gladius Towers, West Side, Galaxy
+Corporation) gave A c8143ab4, D 1bd1b5c0, F b1d29245 and 9df36d6a and no
+other piece: no battle came (`RG_FORCE_ENCOUNTER` saw no encounter
+countdown there). Row 6 came the moment a warp began: it is the
+transporter's beam, an effect, so the other rare rows are likely effects
+too (effects name their row in their own data).
+
+### Harvest checklist
+
+For whoever plays with harvest on (`tools/vu1/oracle/harvest-play.sh`;
+`RG_MC0_DIR=build/run/mc0-late` for the late save, a copy of which the
+game saves into). A `[harvest] new program` line in the log with `?` or
+`-` in its pieces is an unseen piece: note where you were. The census
+afterwards (`tools/vu1/census.py --recording build/harvest/*.vu1r`)
+ticks it off. These are guesses, the likeliest first, from what the
+pieces sit beside in the table:
+
+- [ ] **Insectron** (row 9, F ad209cd3: a reflection map; the
+      Insectron arena's floors use it, per RGDecomp's port branch,
+      `docs/NATIVE-RENDER.md` "Kind 0x43F100").
+- [ ] **Battles with every character's skills** (rows 3, 8, 9, 11, the
+      C lighting bit): the game's largest set of effects. Each
+      character's special attacks, the combo finishers (Burning Strike),
+      items used in battle, a status effect or two, a knockout and
+      revive.
+- [ ] **A boss fight** or two, for their own effects and models.
+- [ ] **Water, lava, waterfalls, glowing or energy surfaces** (F
+      0594a063, ad209cd3, a04c11ce: UV kinds beside the scroll and the
+      sphere map): Rosa's oasis, Juraika's rivers and falls, Vedan's
+      lava, any force field or hologram.
+- [ ] **Each planet once** (Rosa, Juraika, Vedan, Alistia, Mariglenn):
+      walk from the transporter and into the first enemy area.
+- [ ] **Save points, chests, doors and the other transporters' warps**
+      in and out (row 8 shares row 6's A piece, the beam's).
+- [ ] **Space, the Dorgenark flying or the planet select** (row 11, no
+      lighting: a sky or a backdrop?).
+- [ ] **The menus with models**: equipment preview, the bestiary's
+      enemy view (Select with the developer tools fills it), the Factory,
+      Insectron (the battle and its menus are overlays of their own and
+      may upload the two A pieces in no row, 964be3bc and cf7a85a5).
+- [ ] **Events in real time**: a story scene on the engine (set 1 or 2,
+      A 8855d9e7, is a different A for the plain strips: a reflection,
+      a mirror, a first-person view?).
+- [ ] **The first-person view** in the field, and the camera close
+      to a wall or the water.
+
 ## Speed with every program native (2026-10-28, RX 6700 XT)
+
+These tables predate the native effects (docs/NATIVE-RENDERER.md, phase 3);
+with them, 8x holds 60 fps on the same card. Kept for the VU1 side's own
+costs.
 
 The same walk and measure as below (`native-perf.sh`, last 25 s, 60 fps
 mode):
