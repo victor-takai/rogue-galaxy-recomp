@@ -5,8 +5,10 @@ What each page here is for, by who it is for. New to the project? Start with
 
 ## Playing
 
-- [The main README](../README.md): installing, updating, the undub, the
-  controls.
+- [The main README](../README.md): what the project is, the short
+  install and the controls.
+- [INSTALL.md](INSTALL.md): installing, the undub, updating, saves from
+  PCSX2 and uninstalling.
 - [OPTIONS.md](OPTIONS.md): the F1 menu and every game option, with where to
   find each one.
 - [DISC.md](DISC.md): which disc images work, and how they are checked and

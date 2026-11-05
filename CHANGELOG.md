@@ -34,7 +34,7 @@ game folder is, so that its `RogueGalaxy` folder merges into yours (let
 Windows replace the files), then run `Install.bat` again. It does not ask
 for the disc image, and your saves (`disc\mc0`) and settings stay. From
 0.2.0 on, `Update.bat` does it
-([README](README.md#update)).
+([INSTALL.md](docs/INSTALL.md#update)).
 
 ### New
 
