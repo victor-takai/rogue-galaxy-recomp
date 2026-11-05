@@ -48,7 +48,12 @@ menus by their labels, the strings of the game's tables (names,
 descriptions) record by record, the pictures with words and, where those
 moved in their atlas, the layouts' rectangles for them, the room the
 layouts give a line of text (the European words are longer), and the
-message font. A line the European disc has no words for stays English (in
+message font. The European executable breaks a line too long for its
+window itself, and the US one draws it past the screen's edges, so lines
+wider than the US English ever writes in that window (scene subtitles,
+talk windows, menu messages) get breaks, measured with the US font's
+letter widths; a talk window's page holds three lines at most, as in the
+US texts. A line the European disc has no words for stays English (in
 French, one line of one scene, and one scene of chapter 17). The result, about 80 MB a language, goes into
 `disc/EU/<LANG>.DAT` and `<LANG>.idx`, and takes about a minute
 ([`tools/disc/european.py`](../tools/disc/european.py) says how). It checks

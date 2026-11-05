@@ -299,15 +299,18 @@ def cmd_extract_european(args: argparse.Namespace) -> int:
                 )
         pal = european.disc_from_iso(iso)
         us = european.disc_from_folder(disc)
+        # The US message font's widths, to break the lines the PAL executable would.
+        widths = european.message_font_widths((disc / load_hashes(args.version)["elf"]).read_bytes())
         manifest = {"image": str(Path(args.iso).resolve()), "languages": {}}
         if (out / "manifest.json").is_file():
             manifest["languages"] = json.loads((out / "manifest.json").read_text(encoding="utf-8")).get("languages", {})
         for n, code in enumerate(languages):
-            report = european.write_language(us, pal, code, out)
+            report = european.write_language(us, pal, code, out, widths=widths)
             manifest["languages"][code.upper()] = {
                 "files": report.files,
                 "strings": report.strings,
                 "english_lines": report.english_lines,
+                "line_breaks": report.line_breaks,
                 "tables_kept_english": report.kept_us,
             }
             print(f"{(n + 1) * 100 // len(languages):3d}%  {code.upper()}: {report.files} files", flush=True)

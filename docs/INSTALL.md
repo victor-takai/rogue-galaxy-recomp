@@ -48,7 +48,8 @@ Director's Cut (SCPS-17013).
    [F1 > Settings > Language](OPTIONS.md#language).
 3. Start the game again.
 
-The text stays English.
+The text stays in its language: English, or one of the
+[European texts](#european-texts-optional) with the Japanese voices.
 
 ## European texts (optional)
 

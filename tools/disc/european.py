@@ -19,7 +19,10 @@ taken from the PAL one:
   French are the same build), and pictures the PAL picture;
 - the menus' font setting: the PAL glyph list, each accent tag written as one
   byte 0xA0 + its index (src/text_language.cpp, kAccentTags);
-- the message font: the PAL pack with the US pack's fifth normal page.
+- the message font: the PAL pack with the US pack's fifth normal page;
+- long lines: the PAL executable breaks a line too long for its window, the
+  US one does not, so scene, talk and menu message lines wider than the US
+  English's get breaks (message_font_widths, wrap_text_file, wrap_table).
 
 The result is <disc>/EU/<LANG>.DAT, every file on sectors of its own, and
 <LANG>.idx, a line a file: its archive path, first sector, size.
@@ -676,6 +679,176 @@ def encode_glyph_list(text: bytes) -> bytes:
     return bytes(out) + sep + rest
 
 
+# ---------------------------------------------------------------- line breaks
+
+# The PAL texts leave a long line to the PAL executable, whose message windows
+# and subtitles break their text to fit (its rewritten text code wraps through
+# the font's FontWrapText); the US executable wraps only menu widgets and draws a
+# message line as written, past the screen's edges. The Spanish texts write
+# almost no breaks, the others some lines wider than the US windows. So a line
+# wider than its window gets breaks here, at the spaces where the next word would
+# not fit (FontWrapText's rule), measured with the US message font's widths.
+
+FONT_TABLE = 0x44E850  # US: a glyph code each, its character and widths in the three fonts
+MESSAGE_FONT = 1  # names 0, messages 1, system 2 (TextStyleGetFontType)
+# The accent tags' widths in the message font (src/text_language.cpp kAccentWidths).
+ACCENT_WIDTHS = (6, 6, 6, 6, 6, 10, 12, 16, 4, 10, 10, 10, 6, 16, 16, 16, 16, 16, 16, 14, 12, 12, 12, 12,
+                 8, 8, 10, 10, 12, 14, 14, 14, 14, 12, 12, 12, 12, 10, 10, 10, 10, 10, 10, 10, 10, 10, 8, 8,
+                 10, 10, 10, 10, 10, 10, 10, 14, 10, 10, 10, 10, 10, 10, 10, 10)
+SPACE_WIDTH = 8  # the text style's (TextStyleGetSpaceWidth); a guess, the same for every line
+NAME_WIDTH = 60  # a %s, a name filled in at run time
+# The windows: the widest line the US English writes in them, measured the same
+# way (they fit). Scene subtitles span the screen (512); talk windows are narrower.
+SCENE_WIDTH = 490
+TALK_WIDTH = 430
+TALK_LINES = 3  # lines on a talk window page, the most US English puts there
+TALK_TABLE = re.compile(r"npctt|ptalk_text", re.IGNORECASE)
+# Another message file's window is as wide as its widest US line; a line just
+# past it (a few pixels) is left alone rather than broken.
+WIDTH_SLACK = 8
+
+TOKEN = re.compile(rb"<[^<>\r\n]{1,8}>|%[0-9]*[sd]|.", re.S)
+BREAK = re.compile(rb"(\r?\n|\\n|<page>)")
+
+
+def message_font_widths(elf: bytes) -> dict[int, int]:
+    """Each character's width in the US message font, from the executable's table
+    (FontMapAsciiChar's characters, FontGetCharWidth's widths)."""
+    phoff = struct.unpack_from("<I", elf, 0x1C)[0]
+    phentsize, phnum = struct.unpack_from("<HH", elf, 0x2A)
+    widths = {}
+    for i in range(phnum):
+        kind, offset, vaddr, _, size = struct.unpack_from("<5I", elf, phoff + i * phentsize)
+        if kind == 1 and vaddr <= FONT_TABLE < vaddr + size:
+            at = offset + FONT_TABLE - vaddr
+            for code in range(1, 256):
+                char, *fonts = elf[at + 4 * code:at + 4 * code + 4]
+                if fonts[0] == 0:  # the table's end (FontMapAsciiChar stops there)
+                    break
+                if char:
+                    widths[char] = fonts[MESSAGE_FONT]
+    return widths
+
+
+def line_width(line: bytes, widths: dict[int, int]) -> int:
+    total = 0
+    for token in TOKEN.findall(line):
+        if token == b" ":
+            total += SPACE_WIDTH
+        elif token.startswith(b"<") and len(token) > 1:
+            tag = token.decode("latin-1")
+            total += ACCENT_WIDTHS[ACCENT_TAGS.index(tag)] if tag in ACCENT_TAGS else 0
+        elif token.startswith(b"%") and len(token) > 1:
+            total += NAME_WIDTH
+        else:
+            total += widths.get(token[0], 12)
+    return total
+
+
+def text_width(text: bytes, widths: dict[int, int]) -> int:
+    """The widest line of a text (lines end at a newline, a written \\n or <page>)."""
+    return max((line_width(part, widths) for part in BREAK.split(text) if not BREAK.fullmatch(part)), default=0)
+
+
+def wrap_line(line: bytes, limit: int, newline: bytes, widths: dict[int, int]) -> tuple[bytes, int]:
+    """The line with `newline` in place of each space where the next word would
+    not fit in `limit`; and how many breaks went in."""
+    if line_width(line, widths) <= limit:
+        return line, 0
+    out = []
+    current = None
+    for word in line.split(b" "):
+        candidate = word if current is None else current + b" " + word
+        if current is not None and word and line_width(candidate, widths) > limit:
+            out.append(current)
+            current = word
+        else:
+            current = candidate
+    out.append(current)
+    return newline.join(out), len(out) - 1
+
+
+def wrap_text(text: bytes, limit: int, newline: bytes, widths: dict[int, int]) -> tuple[bytes, int]:
+    parts = BREAK.split(text)
+    breaks = 0
+    for i, part in enumerate(parts):
+        if part and not BREAK.fullmatch(part):
+            parts[i], n = wrap_line(part, limit, newline, widths)
+            breaks += n
+    return b"".join(parts), breaks
+
+
+def wrap_text_file(data: bytes, limit: int, widths: dict[int, int]) -> tuple[bytes, int]:
+    """A labelled text file with its long lines broken (a newline inside a line's
+    text, as the files write their own breaks)."""
+    head, blocks = text_blocks(data)
+    out = bytearray(head)
+    breaks = 0
+    for ident, block in blocks:
+        if ident is None:
+            out += block
+            continue
+        first, sep, rest = block.partition(b"\n")
+        out += first + sep
+        for line in rest.splitlines(keepends=True):
+            body = line.rstrip(b"\r\n")
+            if body.startswith(b"//") or body.startswith(b"@"):
+                out += line
+                continue
+            wrapped, n = wrap_text(body, limit, b"\n", widths)
+            out += wrapped + line[len(body):]
+            breaks += n
+    return bytes(out), breaks
+
+
+def split_pages(text: bytes, lines: int) -> bytes:
+    """A talk window's text with a page wherever one would hold more than `lines`
+    lines (the US talk texts never put more on a page): its next line starts a
+    new page (<page> and the line's \\n)."""
+    pages = text.split(b"<page>")
+    out = []
+    for page in pages:
+        parts = page.split(b"\\n")
+        lead = parts[0] == b""  # a page after <page> starts with its \n
+        body = parts[1:] if lead else parts
+        if len(body) <= lines:
+            out.append(page)
+            continue
+        chunks = [b"\\n".join(body[i:i + lines]) for i in range(0, len(body), lines)]
+        out.append((b"\\n" if lead else b"") + b"<page>\\n".join(chunks))
+    return b"<page>".join(out)
+
+
+def wrap_table(data: bytes, limit: int, widths: dict[int, int], lines: int = 0) -> tuple[bytes, int]:
+    """A cfg table with its long strings broken (a written \\n, as the tables
+    write their own breaks), and with `lines`, no page holding more than that."""
+    entries = cfg_read(data)
+    if entries is None:
+        return data, 0
+    breaks = 0
+    for entry in entries:
+        for k, param in enumerate(entry.params):
+            if isinstance(param, bytes):
+                wrapped, n = wrap_text(param, limit, b"\\n", widths)
+                if lines:
+                    paged = split_pages(wrapped, lines)
+                    n += paged != wrapped
+                    wrapped = paged
+                if n:
+                    entry.params[k] = wrapped
+                    breaks += n
+    return (cfg_write(entries), breaks) if breaks else (data, 0)
+
+
+def file_window(us_data: bytes, widths: dict[int, int]) -> int:
+    """A message file's window width: its widest US English line, with the slack."""
+    widest = 0
+    for ident, block in text_blocks(us_data)[1]:
+        if ident is not None and b"\n" in block:
+            widest = max(widest, text_width(block.split(b"\n", 1)[1], widths))
+    return widest + WIDTH_SLACK if widest else 0
+
+
 # ---------------------------------------------------------------- building
 
 LANG_TOKEN = re.compile(r"(_|\\)(en)(?=[._\\])")
@@ -705,6 +878,7 @@ class Report:
     strings: int = 0
     sprite_groups: int = 0
     text_boxes: int = 0
+    line_breaks: int = 0
     kept_us: list[str] = field(default_factory=list)
 
 
@@ -737,8 +911,9 @@ def word_textures(us: Disc, pal: Disc, code: str) -> set[bytes]:
 
 
 def build_pack(us_pack: bytes, pal_pack: bytes, pal_en_pack: bytes | None, code: str, report: Report,
-               where: str, words: set[bytes] = frozenset()) -> bytes:
-    """A language pack: the US entries, renamed to the language, with the PAL words."""
+               where: str, words: set[bytes] = frozenset(), widths: dict[int, int] | None = None) -> bytes:
+    """A language pack: the US entries, renamed to the language, with the PAL words
+    (and, given the message font's widths, their long lines broken)."""
     # The PAL language pack's entries under their US (English) names.
     pal = {re.sub(r"_" + code + r"(?=[._])", "_en", e.name, flags=re.IGNORECASE).lower(): e
            for e in pac_read(pal_pack)}
@@ -763,6 +938,11 @@ def build_pack(us_pack: bytes, pal_pack: bytes, pal_en_pack: bytes | None, code:
                 bridge = pal_en.get(lower)
                 data, n = merge_text(p.data, e.data, bridge.data if bridge else None)
                 report.english_lines += n
+                if widths:
+                    window = file_window(e.data, widths)
+                    if window:
+                        data, n = wrap_text_file(data, window, widths)
+                        report.line_breaks += n
             elif is_table(lower):
                 bridge = pal_en.get(lower)
                 merged = merge_cfg(e.data, bridge.data, p.data) if bridge else None
@@ -771,6 +951,9 @@ def build_pack(us_pack: bytes, pal_pack: bytes, pal_en_pack: bytes | None, code:
                 else:
                     data, n = merged
                     report.strings += n
+                    if widths and TALK_TABLE.search(lower):
+                        data, n = wrap_table(data, TALK_WIDTH, widths, TALK_LINES)
+                        report.line_breaks += n
                 if lower.endswith(".res.bin"):
                     layout, pal_layout = cfg_read(data), cfg_read(p.data)
                     english = cfg_read(bridge.data) if bridge else None
@@ -789,7 +972,8 @@ def build_pack(us_pack: bytes, pal_pack: bytes, pal_en_pack: bytes | None, code:
     return pac_write(out)
 
 
-def build_scene(us_pack: bytes, pal_pack: bytes, code: str, report: Report) -> bytes:
+def build_scene(us_pack: bytes, pal_pack: bytes, code: str, report: Report,
+                widths: dict[int, int] | None = None) -> bytes:
     pal = {e.name.lower(): e for e in pac_read(pal_pack)}
     out = []
     for e in pac_read(us_pack):
@@ -801,6 +985,9 @@ def build_scene(us_pack: bytes, pal_pack: bytes, code: str, report: Report) -> b
             if p is not None:
                 data, n = merge_text(p.data, e.data, bridge.data if bridge else None)
                 report.english_lines += n
+                if widths:
+                    data, n = wrap_text_file(data, SCENE_WIDTH, widths)
+                    report.line_breaks += n
         out.append(PacEntry(entry_to_language(e.name, code), data, e.raw_header))
     return pac_write(out)
 
@@ -818,8 +1005,10 @@ def build_font(us_pack: bytes, pal_pack: bytes) -> bytes:
     return pac_write(out)
 
 
-def build_language(us: Disc, pal: Disc, code: str, report: Report) -> Iterator[tuple[str, bytes]]:
-    """Every file the US executable asks for in the language that the PAL disc has words for."""
+def build_language(us: Disc, pal: Disc, code: str, report: Report,
+                   widths: dict[int, int] | None = None) -> Iterator[tuple[str, bytes]]:
+    """Every file the US executable asks for in the language that the PAL disc has words for;
+    given the US message font's widths (message_font_widths), with long lines broken."""
     us_names = us.names()
     pal_names = pal.names()
     words = word_textures(us, pal, code)
@@ -830,7 +1019,7 @@ def build_language(us: Disc, pal: Disc, code: str, report: Report) -> Iterator[t
             us_pack = us.read(name)
             if not any(e.name.lower().endswith("_en.txt") for e in pac_read(us_pack)):
                 continue
-            yield name, build_scene(us_pack, pal.read(name), code, report)
+            yield name, build_scene(us_pack, pal.read(name), code, report, widths)
             continue
         target = to_language(name, code)
         if target == name:
@@ -851,10 +1040,15 @@ def build_language(us: Disc, pal: Disc, code: str, report: Report) -> Iterator[t
         lower = name.lower()
         if lower.endswith(".pac"):
             yield target, build_pack(us.read(name), pal.read(target),
-                                     pal.read(pal_en) if pal_en else None, code, report, name, words)
+                                     pal.read(pal_en) if pal_en else None, code, report, name, words, widths)
         elif is_text(lower):
-            data, n = merge_text(pal.read(target), us.read(name), pal.read(pal_en) if pal_en else None)
+            us_data = us.read(name)
+            data, n = merge_text(pal.read(target), us_data, pal.read(pal_en) if pal_en else None)
             report.english_lines += n
+            window = file_window(us_data, widths) if widths else 0
+            if window:
+                data, n = wrap_text_file(data, window, widths)
+                report.line_breaks += n
             yield target, data
         elif is_table(lower):
             merged = merge_cfg(us.read(name), pal.read(pal_en), pal.read(target)) if pal_en else None
@@ -862,13 +1056,18 @@ def build_language(us: Disc, pal: Disc, code: str, report: Report) -> Iterator[t
                 report.kept_us.append(name)
                 continue
             report.strings += merged[1]
-            yield target, merged[0]
+            data = merged[0]
+            if widths and TALK_TABLE.search(lower):
+                data, n = wrap_table(data, TALK_WIDTH, widths, TALK_LINES)
+                report.line_breaks += n
+            yield target, data
         else:
             yield target, keep_picture_names(us.read(name), pal.read(target))  # pictures with words
 
 
 def write_language(us: Disc, pal: Disc, code: str, out_dir: Path,
-                   progress: Callable[[str], None] | None = None) -> Report:
+                   progress: Callable[[str], None] | None = None,
+                   widths: dict[int, int] | None = None) -> Report:
     report = Report()
     out_dir.mkdir(parents=True, exist_ok=True)
     dat = out_dir / f"{code.upper()}.DAT"
@@ -877,7 +1076,7 @@ def write_language(us: Disc, pal: Disc, code: str, out_dir: Path,
     lines = [f"# {code.upper()}: archive path, first sector in {dat.name}, size (setup.py extract-european)"]
     sector = 0
     with open(part_dat, "wb") as f:
-        for name, data in build_language(us, pal, code, report):
+        for name, data in build_language(us, pal, code, report, widths):
             f.write(data)
             f.write(b"\0" * (-len(data) % SECTOR))
             lines.append(f"{name}\t{sector}\t{len(data)}")
