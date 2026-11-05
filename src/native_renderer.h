@@ -6,7 +6,8 @@
 // VU1 programs computed natively and drawn as GPU meshes, and the post
 // effects drawn by the renderer instead of as the GS packets the game
 // builds for them. Off, everything goes through the GS emulation, as
-// before; nothing reads it yet.
+// before. Here it turns on RG_VU1_NATIVE=gpu (src/vu1_native.h), which its
+// variable still overrides.
 //
 // graphics.cpp hands the menu's setting over when the menu applies its
 // settings, before the game starts. The first read of enabled() keeps it for

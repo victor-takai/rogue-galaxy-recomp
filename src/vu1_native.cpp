@@ -15,6 +15,7 @@
 #include <xmmintrin.h>
 #endif
 
+#include "native_renderer.h"
 #include "gif_events.h"
 
 // The strip programs, piece by piece (byte addresses):
@@ -1674,7 +1675,9 @@ void buildMesh(const Program &program, const uint8_t *data, uint32_t top,
 Mode modeFromEnvironment()
 {
     const char *value = std::getenv("RG_VU1_NATIVE");
-    if (!value || std::strcmp(value, "0") == 0)
+    if (!value || !*value)
+        return rg::nativerenderer::enabled() ? Mode::Gpu : Mode::Off;
+    if (std::strcmp(value, "0") == 0)
         return Mode::Off;
     if (std::strcmp(value, "check") == 0)
         return Mode::Check;

@@ -48,7 +48,13 @@ thread_local uint32_t t_vu1Camera = 0;
 // VU1, its packets are collected (check) or dropped (replace).
 thread_local std::vector<std::vector<uint8_t>> *t_vu1Packets = nullptr;
 thread_local bool t_dropVu1Packets = false;
-const rg::vu1native::Mode g_nativeMode = rg::vu1native::modeFromEnvironment();
+// Read when the thread starts, after the menu's native renderer setting
+// (static initializers run before the menu hands it over).
+rg::vu1native::Mode nativeMode()
+{
+    static const rg::vu1native::Mode mode = rg::vu1native::modeFromEnvironment();
+    return mode;
+}
 // RG_VU1_NATIVE_CHECK_EVERY=N: check mode compares one chunk in N (each costs
 // the VU1's run, the native build and two decodes, on this thread).
 const uint32_t g_checkEvery = [] {
@@ -685,7 +691,7 @@ public:
         // (once per code image and entry), its MSCNTs run the chunks; or the
         // MSCAL is the chunk (drawsAtCall).
         const rg::vu1native::Program *native = nullptr;
-        if (g_nativeMode != rg::vu1native::Mode::Off)
+        if (nativeMode() != rg::vu1native::Mode::Off)
         {
             if (!resume)
             {
@@ -704,7 +710,7 @@ public:
             }
             if (m_nativeProgram && resume != rg::vu1native::drawsAtCall(*m_nativeProgram))
             {
-                const bool gpu = g_nativeMode == rg::vu1native::Mode::Gpu;
+                const bool gpu = nativeMode() == rg::vu1native::Mode::Gpu;
                 // The chunks that clip go to the VU1 in every mode: the GPU's
                 // clipping of triangles across the eye plane does not match
                 // the VU1's on every driver.
@@ -713,7 +719,7 @@ public:
                 {
                     m_nativeMonitor.declined(*m_nativeProgram, reason);
                 }
-                else if (g_nativeMode == rg::vu1native::Mode::Check && m_checkCount++ % g_checkEvery != 0u)
+                else if (nativeMode() == rg::vu1native::Mode::Check && m_checkCount++ % g_checkEvery != 0u)
                 {
                     // Not this one: the VU1 runs it, unchecked.
                 }
@@ -733,9 +739,9 @@ public:
             }
             m_nativeMonitor.tick();
         }
-        if (!native || (g_nativeMode != rg::vu1native::Mode::Skip && g_nativeMode != rg::vu1native::Mode::Gpu))
+        if (!native || (nativeMode() != rg::vu1native::Mode::Skip && nativeMode() != rg::vu1native::Mode::Gpu))
         {
-            if (native && g_nativeMode == rg::vu1native::Mode::Check)
+            if (native && nativeMode() == rg::vu1native::Mode::Check)
             {
                 m_vu1Packets.clear();
                 t_vu1Packets = &m_vu1Packets;
@@ -743,7 +749,7 @@ public:
                 m_checkData.assign(memory.getVU1Data(), memory.getVU1Data() + PS2_VU1_DATA_SIZE);
                 m_checkState = vu1.state();
             }
-            t_dropVu1Packets = native && g_nativeMode == rg::vu1native::Mode::Replace;
+            t_dropVu1Packets = native && nativeMode() == rg::vu1native::Mode::Replace;
             static const bool replay = rg::vu1replay::enabled();
             if (replay)
             {
@@ -769,7 +775,7 @@ public:
         }
         if (native)
         {
-            if (g_nativeMode == rg::vu1native::Mode::Check)
+            if (nativeMode() == rg::vu1native::Mode::Check)
             {
                 const char *kind = m_nativeMonitor.check(*native, m_vu1Packets, m_nativePackets);
                 if (!kind && !rg::vu1native::memoryEffectsMatch(*native, m_checkData.data(), top,
@@ -792,12 +798,12 @@ public:
                 {
                     deliverPacket(m_runtime.gs(), packet.data(), static_cast<uint32_t>(packet.size()));
                 }
-                if (g_nativeMode == rg::vu1native::Mode::Gpu && rg::vu1native::hasMesh(*native))
+                if (nativeMode() == rg::vu1native::Mode::Gpu && rg::vu1native::hasMesh(*native))
                 {
                     deliverMesh(m_runtime.gs(), m_nativeMesh);
                 }
                 // What the VU1 would have left in its memory, where it did not run.
-                if (g_nativeMode != rg::vu1native::Mode::Replace)
+                if (nativeMode() != rg::vu1native::Mode::Replace)
                 {
                     rg::vu1native::applyMemoryEffects(*native, memory.getVU1Data(), top);
                 }
@@ -962,7 +968,7 @@ private:
     uint64_t m_nativeGeneration = ~0ull;
     uint32_t m_nativePC = 0u;
     uint32_t m_checkCount = 0u;
-    rg::vu1native::Monitor m_nativeMonitor{g_nativeMode};
+    rg::vu1native::Monitor m_nativeMonitor{nativeMode()};
     std::vector<std::vector<uint8_t>> m_nativePackets;
     GSNativeMesh m_nativeMesh;
     std::vector<std::vector<uint8_t>> m_vu1Packets;
