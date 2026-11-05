@@ -12,6 +12,11 @@
 #include "runtime/gs/gs_backend.h"
 #include "scene_timing.h"
 
+#if defined(RG_HAS_SDLGPU)
+#include "gfx/native/native_pipeline.h"
+#include "native_producer.h"
+#endif
+
 namespace rg::graphics
 {
 namespace
@@ -158,8 +163,29 @@ FlipPacedBackend *g_paced = nullptr;
 PS2Runtime::RecompiledFunction g_originalFlip = nullptr;
 std::atomic<uint64_t> g_flips{0u};
 
+// The native pipeline's producer for the frame's end (docs/NATIVE-PIPELINE.md):
+// a Present of the scene target at each flip. The target itself is the
+// game's frame, declared where the game names it (native_producer.h); the
+// renderer takes 640x448 until then.
+void presentNative(uint64_t frame)
+{
+#if defined(RG_HAS_SDLGPU)
+    namespace native = dq8::gfx::native;
+    if (!native::enabled())
+        return;
+    native::Present present;
+    present.target = rg::nativeproducer::kSceneTarget;
+    present.rect = {0, 0, 640u, 448u};
+    present.frame = frame;
+    native::push(std::move(present));
+#else
+    (void)frame;
+#endif
+}
+
 void afterFlip(uint8_t *, R5900Context *, PS2Runtime *, uint32_t)
 {
+    presentNative(g_flips.load(std::memory_order_relaxed) + 1u);
     g_flips.fetch_add(1u, std::memory_order_relaxed);
     if (g_paced)
     {

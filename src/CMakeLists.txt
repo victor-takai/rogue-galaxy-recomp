@@ -100,6 +100,9 @@ add_executable(roguegalaxy
     texture_pack.cpp
     vif1_thread.cpp
     vu1_native.cpp
+    draw_state_mirror.cpp
+    native_capture.cpp
+    native_producer.cpp
     gif_events.cpp
     vu0_flags.cpp
     vu0_native.cpp

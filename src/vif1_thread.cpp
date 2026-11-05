@@ -24,6 +24,8 @@
 #include "debug/vu1_replay.h"
 #include "native_renderer.h"
 #include "vu1_native.h"
+#include "draw_state_mirror.h"
+#include "native_producer.h"
 #include "ps2_runtime.h"
 #include "ps2_syscalls.h"
 #include "runtime/ee_scheduler.h"
@@ -524,8 +526,10 @@ private:
 GifStage *g_stage = nullptr;
 // A GS packet on its way, as the memory's GIF callback sends it (below).
 void deliverPacket(GS &gs, const uint8_t *data, uint32_t size);
-// A native strip likewise, in order with the packets.
-void deliverMesh(GS &gs, const GSNativeMesh &mesh);
+// A native strip likewise, in order with the packets. `vu1Data`: the VU1
+// data memory a program's mesh was built from, for the native pipeline's
+// mesh draw (rg::nativeproducer::mesh); null for others.
+void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data = nullptr);
 // For busyReport's VU1 pair counts.
 PS2Runtime *g_runtime = nullptr;
 
@@ -836,7 +840,7 @@ public:
                 }
                 if (nativeMode() == rg::vu1native::Mode::Gpu && rg::vu1native::hasMesh(*native))
                 {
-                    deliverMesh(m_runtime.gs(), m_nativeMesh);
+                    deliverMesh(m_runtime.gs(), m_nativeMesh, memory.getVU1Data());
                 }
                 // What the VU1 would have left in its memory, where it did not run.
                 if (nativeMode() != rg::vu1native::Mode::Replace)
@@ -1039,8 +1043,11 @@ Vif1Thread *g_thread = nullptr;
 
 void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
 {
+    // The native pipeline's draw-state mirror follows every packet, in the
+    // order the GS gets them.
     if (g_stage && t_onVif1Thread)
     {
+        rg::drawstate::observe(data, size);
         g_stage->packet(data, size);
         return;
     }
@@ -1050,13 +1057,25 @@ void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
         // every DMA start drains them already, this keeps it so.
         g_thread->drain();
     }
+    rg::drawstate::observe(data, size);
     ps2_gs_detail::t_sourceTag = t_onVif1Thread ? t_vu1Tag : 0u;
     ps2_gs_detail::t_sourceCamera = t_onVif1Thread ? t_vu1Camera : 0u;
     gs.processGIFPacket(data, size);
 }
 
-void deliverMesh(GS &gs, const GSNativeMesh &mesh)
+void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data)
 {
+    // Steps 4a and 4c of docs/NATIVE-PIPELINE.md: a VU1 program's mesh as a
+    // native mesh draw, under the draw state the GS would draw it with; made
+    // one, it does not go to the GS at all.
+    if (vu1Data && rg::drawstate::enabled())
+    {
+        if (g_stage && !t_onVif1Thread)
+            g_thread->drain();
+        const GSDrawState state = rg::drawstate::current();
+        if (rg::nativeproducer::mesh(mesh, &state, vu1Data, 0u))
+            return;
+    }
     if (g_stage && t_onVif1Thread)
     {
         g_stage->mesh(mesh);
@@ -1189,6 +1208,10 @@ void gsWaiter(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     g_thread->drain();
     g_gsWaiters[Index].second(rdram, ctx, runtime);
+    // The stubs write the front end's registers themselves (sceGsPutDrawEnv,
+    // sceGsSwapDBuff's environments and clear): the native pipeline's
+    // draw-state mirror reads them back.
+    rg::drawstate::readBack(runtime->gs());
 }
 
 template <size_t... I>

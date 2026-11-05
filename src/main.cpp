@@ -49,6 +49,7 @@
 #include "settings_pages.h"
 #include "shop_prices.h"
 #include "step_fixes.h"
+#include "native_capture.h"
 #include "vif1_thread.h"
 #include "vu0_flags.h"
 #include "vu0_native.h"
@@ -186,6 +187,8 @@ int run(int argc, char **argv)
     // itself up, so the whole run sees one answer.
     if (rg::nativerenderer::enabled())
         std::fprintf(stderr, "[rg] native renderer on\n");
+    // The native pipeline's game hooks, with it on (RG_NATIVE_PIPELINE=1).
+    rg::nativecapture::install(runtime);
     rg::debug::installCallTrace(runtime);
     rg::debug::installHardwareWatch(runtime);
     rg::debug::installPosTrace(runtime);
