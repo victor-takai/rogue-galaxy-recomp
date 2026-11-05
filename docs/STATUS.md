@@ -35,10 +35,22 @@ from the player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
   [dialogue.md](dialogue.md)), texture packs
   ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)), the Xbox buttons in the text,
   the inventory options and the F1 menu with only a controller.
-- Off by default, for development: the VU1 programs done natively
-  (`RG_VU1_NATIVE`, [VU1-NATIVE.md](VU1-NATIVE.md)) and the menu's "Native
-  renderer" switch, which nothing reads yet
-  ([NATIVE-RENDERER.md](NATIVE-RENDERER.md)).
+- In progress:
+  - Performance: the heaviest battles and some bosses still drop below
+    60 fps.
+  - Drawing the game with the PC's renderer instead of through the
+    emulation of the PS2's graphics chip
+    ([NATIVE-RENDERER.md](NATIVE-RENDERER.md)). Off by default, for
+    development: the VU1 programs done natively (`RG_VU1_NATIVE`,
+    [VU1-NATIVE.md](VU1-NATIVE.md)) and the menu's "Native renderer"
+    switch, which nothing reads yet.
+  - A native Linux build, for Linux PCs and the Steam Deck (the Windows
+    build through Proton is prepared but untested:
+    [BUILDING.md](BUILDING.md#steam-deck-untested)).
+  - The European release's languages, read from the player's own disc of
+    that version: they work and are in an open pull request
+    ([#42](https://github.com/victor-takai/rogue-galaxy-recomp/pull/42)),
+    not yet in a release.
 - Taken out at the user's request: the menus in 4:3 on a wide screen
   (2026-10-28, never committed), Save anywhere and Sharp letters
   (2026-10-30, 3b09797; the sources are at b55f0ea).
