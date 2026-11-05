@@ -77,7 +77,10 @@ constexpr int16_t kCentreTexts = 0x1000;
 // its words are pieces of the screen's picture, and it has none better. The
 // signs' text, its top this far above the button's middle, white as the
 // words are (the row names' grey left the "-" hard to see; 0x80 is full).
-constexpr int16_t kSignRise = 8;
+// At 8 both signs' middles sat 1.5 lines under the button's (the button
+// 97-117 with its rim, the "+" 103-114 with its outline, at 1x); at 10 they
+// sit half a line over it, which the eye takes for the middle.
+constexpr int16_t kSignRise = 10;
 constexpr uint32_t kTextColour = 0xCu;
 constexpr uint32_t kSignColour = 0x80808080u;
 
