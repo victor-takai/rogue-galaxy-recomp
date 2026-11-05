@@ -131,6 +131,10 @@ lists in `src/settings_pages.cpp` puts the option there too:
   holds more. `kNumbers` is full.
 - The label is in Title Case, short, and says "(Next Start)" for a
   `restart` option.
+- `kLocal` names it in French, German, Spanish and Italian, for the text's
+  language (Language > Text): the European release's words where it has
+  them, its accent tags (`<'e>`), and no longer than "Bag Page 7 (Next
+  Start)" with the value. A row it lacks shows the English label.
 - A number's range, step, default and the way it reads (1.0x for `kTimes`)
   come from the menu's table; nothing to repeat. Its choices read - and +.
 - Changes made there go back through the F1 menu, which saves and applies
@@ -156,7 +160,8 @@ game's own menu", among the ones in F1 alone.
 3. `src/main.cpp`: the `#include` and the `install` call after `loadELF`.
 4. `src/graphics.cpp`: the `#include`, the `GameOption` in
    `host.gameOptions`, the line in `applyGameOption` or `applyGameNumber`.
-5. `src/settings_pages.cpp` (optional): the row in its page.
+5. `src/settings_pages.cpp` (optional): the row in its page, and its names
+   in `kLocal`.
 6. `docs/OPTIONS.md`, `docs/DEVELOPMENT.md`, `CHANGELOG.md`.
 7. Try it: flip it in F1 and see the game change; restart and see it kept
    (`%APPDATA%\RogueGalaxy\Recompiled\settings.ini`, `[game]`); run once

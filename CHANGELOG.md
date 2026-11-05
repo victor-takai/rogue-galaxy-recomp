@@ -16,6 +16,13 @@
   `Install-Undub.bat` reads it. With the undub already installed, the
   update reads it from the image it came from, if that is still where it
   was; otherwise run `Install-Undub.bat` again (the voices it copied stay).
+- European texts (experimental): the menus, scenes and battles in French,
+  German, Spanish or Italian, from your own European disc (F1 > Settings >
+  Language > Text, from the next start). Run `Install-European.bat` first
+  and pick the disc image. The options on the game's own Settings screen
+  are named in that language too. The voices stay as they are. Played in
+  Spanish and tested in all four up to the first scenes; the rest of the
+  story has not been seen in them yet.
 
 ### Changed
 

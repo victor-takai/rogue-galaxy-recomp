@@ -1,0 +1,9 @@
+{
+  "comment": "Identifies the European release (SCES-54552, English, French, German, Spanish, Italian), whose texts `python setup.py extract-european` builds into disc/EU for the US game (tools/disc/european.py). The sha256 are of the two text archives' indexes.",
+  "boot": "SCES_545.52",
+  "indexes": {
+    "DATA0_0.HD6": "3935ca6030d88cc264868697069790bafe484738a5a61406052a50b1f99c8894",
+    "DATA1_0.HD6": "3fc198e28bf52ad73d223388d0a78078595f09931eae59af2672bd1ce04b41d8"
+  },
+  "languages": ["fr", "de", "es", "it"]
+}

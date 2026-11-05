@@ -34,7 +34,7 @@ Settings has seven pages, written here as F1 > Settings > Game and so on:
 - **Sound**: volume and muting.
 - **Controls**: controller and keyboard remapping, dead zones.
 - **Game**: the game options below.
-- **Language**: the undub, [below](#language).
+- **Language**: the text's language and the undub, [below](#language).
 - **Textures**: a switch for each texture pack found
   ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)).
 - **Interface**: the menu's size, notifications, pause and fast-forward,
@@ -96,7 +96,7 @@ The numbers are against the game's own, 1.0x.
 | Weapon growth | 1.0x to 10.0x: each battle fills a weapon's gauge (15 to full), then its attributes, by 1 point, or more. |
 | Shop prices | 0.1x to 2.0x. |
 | Action gauge speed | 0.25x to 4.0x. |
-| Director's Cut balance | Off by default. Battles with the numbers of the Japanese Director's Cut (SCPS-17013), which the US release did not get: 85 of the 374 groups of enemies are smaller (the Cactulus group in Rosa comes 2 to 3 instead of 4 to 5), 75 enemies leave about 1.5 times the money, the regular enemies of Rosencaster and the Starship Factory and three story fights (Giant, Attack Walker, Gale) are weaker, the 10 Area Masters stronger, bigger enemies harder to knock down, bosses never knocked down, and three boss attacks lose their poison or paralysis. Experience, the party and the weapons stay as they are, and the damage formula is the same in both. Needs that disc's files in `disc/JA/balance`: `Install-Undub.bat` with your Japanese disc image writes them (by hand, `python setup.py director-cut-balance --iso "<your Japanese disc>"`); one image makes the files of all three Director's Cut options. Takes effect at the next start. |
+| Director's Cut balance | Off by default. Battles with the numbers of the Japanese Director's Cut (SCPS-17013), which the US release did not get: 85 of the 374 groups of enemies are smaller (the Cactulus group in Rosa comes 2 to 3 instead of 4 to 5), 75 enemies leave about 1.5 times the money, the regular enemies of Rosencaster and the Starship Factory and three story fights (Giant, Attack Walker, Gale) are weaker, the 10 Area Masters stronger, bigger enemies harder to knock down, bosses never knocked down, and three boss attacks lose their poison or paralysis. Experience, the party and the weapons stay as they are, and the damage formula is the same in both. With the text in French, German, Spanish or Italian, the enemies' numbers stay the US ones for now (that text has tables of its own); the boss rule stays. Needs that disc's files in `disc/JA/balance`: `Install-Undub.bat` with your Japanese disc image writes them (by hand, `python setup.py director-cut-balance --iso "<your Japanese disc>"`); one image makes the files of all three Director's Cut options. Takes effect at the next start. |
 | Director's Cut enemy behavior | Off by default. The enemies' attacks (their reach, timing and kind of hit) and AI of the same release: enemies turn to face you before they attack, some start their attacks from farther away. As in that release, the party's jump attacks also home in on two jellyfish and on flying enemies knocked out of the air. Needs the same files. In that release it comes with the balance above; each works without the other. Takes effect at the next start. |
 | Director's Cut party AI | Off by default. The allies' AI of the same release: an ally low on health sometimes falls back to the leader and guards. Needs the same files. Takes effect at the next start. |
 
@@ -123,15 +123,18 @@ F1 > Settings > Language.
 
 | Option | |
 |---|---|
+| Text | English (the game's), Français, Deutsch, Español or Italiano: the menus, scenes and battles in that language of the European release, from your own European disc (SCES-54552). Needs that disc's texts in `disc/EU`: double-click `Install-European.bat` (after `Install.bat`) and pick your European disc image, or drop it onto the file; by hand, `python setup.py extract-european --iso "<your European disc>"`. A few lines the European disc has no words for stay English. Takes effect at the next start. |
 | Undub (Japanese voices) | The voices in scenes and the movies come from your own Japanese Director's Cut (SCPS-17013) instead of the English ones; the text stays as it is. Needs that disc's files in `disc/JA`: double-click `Install-Undub.bat` (after `Install.bat`) and pick your Japanese disc image, or drop it onto the file; by hand, `python setup.py extract-japanese --iso "<your Japanese disc>"`. A few lines (63) have no Japanese voice and play silent. Takes effect at the next start. |
 
 ## In the game's own menu
 
 Most of the same options, and Display > Borders, are on the game's Settings
 screen (System > Settings in the main menu): L1 and R1 turn the page, and
-a number's - and + buttons lower and raise it.
+a number's - and + buttons lower and raise it. With the text in French,
+German, Spanish or Italian, the options are named in that language there too.
 Controller's buttons, Check for new versions, the three Director's Cut
-options, Native renderer, the undub and the texture packs are in F1 alone.
+options, Native renderer, the text's language, the undub and the texture
+packs are in F1 alone.
 
 <p align="center">
   <img src="images/settings-switches.jpg" width="49%" alt="The game's Settings screen: the switches">
