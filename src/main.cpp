@@ -37,6 +37,7 @@
 #include "draw_distance.h"
 #include "free_camera.h"
 #include "instant_text.h"
+#include "text_language.h"
 #include "voice_language.h"
 #include "map_chests.h"
 #include "native_renderer.h"
@@ -176,6 +177,7 @@ int run(int argc, char **argv)
     rg::shopprices::install(runtime);
     rg::instanttext::install(runtime);
     rg::voicelanguage::install(runtime);
+    rg::textlanguage::install(runtime);
     rg::mapchests::install(runtime);
     rg::freecamera::install(runtime);
     rg::settingspages::install(runtime);

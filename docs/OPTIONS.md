@@ -34,7 +34,7 @@ Settings has seven pages, written here as F1 > Settings > Game and so on:
 - **Sound**: volume and muting.
 - **Controls**: controller and keyboard remapping, dead zones.
 - **Game**: the game options below.
-- **Language**: the undub, [below](#language).
+- **Language**: the text's language and the undub, [below](#language).
 - **Textures**: a switch for each texture pack found
   ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)).
 - **Interface**: the menu's size, notifications, pause and fast-forward,
@@ -120,15 +120,17 @@ F1 > Settings > Language.
 
 | Option | |
 |---|---|
+| Text | English (the game's), Français, Deutsch, Español or Italiano: the menus, scenes and battles in that language of the European release, from your own European disc (SCES-54552). Needs that disc's texts in `disc/EU`: double-click `Install-European.bat` (after `Install.bat`) and pick your European disc image, or drop it onto the file; by hand, `python setup.py extract-european --iso "<your European disc>"`. A few lines the European disc has no words for stay English. Takes effect at the next start. |
 | Undub (Japanese voices) | The voices in scenes and the movies come from your own Japanese Director's Cut (SCPS-17013) instead of the English ones; the text stays as it is. Needs that disc's files in `disc/JA`: double-click `Install-Undub.bat` (after `Install.bat`) and pick your Japanese disc image, or drop it onto the file; by hand, `python setup.py extract-japanese --iso "<your Japanese disc>"`. A few lines (63) have no Japanese voice and play silent. Takes effect at the next start. |
 
 ## In the game's own menu
 
 Most of the same options, and Display > Borders, are on the game's Settings
 screen (System > Settings in the main menu): L1 and R1 turn the page, and
-a number's - and + buttons lower and raise it.
-Controller's buttons, Check for new versions, Native renderer, the undub and
-the texture packs are in F1 alone.
+a number's - and + buttons lower and raise it. With the text in French,
+German, Spanish or Italian, the options are named in that language there too.
+Controller's buttons, Check for new versions, Native renderer, the text's
+language, the undub and the texture packs are in F1 alone.
 
 <p align="center">
   <img src="images/settings-switches.jpg" width="49%" alt="The game's Settings screen: the switches">

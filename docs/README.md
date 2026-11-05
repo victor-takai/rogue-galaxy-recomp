@@ -7,8 +7,8 @@ What each page here is for, by who it is for. New to the project? Start with
 
 - [The main README](../README.md): what the project is, the short
   install and the controls.
-- [INSTALL.md](INSTALL.md): installing, the undub, updating, saves from
-  PCSX2 and uninstalling.
+- [INSTALL.md](INSTALL.md): installing, the undub, the European texts,
+  updating, saves from PCSX2 and uninstalling.
 - [OPTIONS.md](OPTIONS.md): the F1 menu and every game option, with where to
   find each one.
 - [DISC.md](DISC.md): which disc images work, and how they are checked and
@@ -45,7 +45,7 @@ What each page here is for, by who it is for. New to the project? Start with
 - [sixty-fps-logic.md](sixty-fps-logic.md): what the game counts in frames,
   and how the 60 fps mode keeps its speed.
 - [dialogue.md](dialogue.md): how the game picks and loads a line of
-  dialogue, the base of the undub.
+  dialogue, the base of the undub and the European texts.
 
 ## The renderer
 

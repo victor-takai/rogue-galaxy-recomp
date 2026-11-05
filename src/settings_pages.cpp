@@ -11,6 +11,7 @@
 #include "free_camera.h"
 #include "ps2_runtime.h"
 #include "scene_timing.h"
+#include "text_language.h"
 
 namespace rg::settingspages
 {
@@ -65,7 +66,8 @@ constexpr uint32_t kPadLastButtons = 0x5Cu;
 constexpr uint32_t kPadLock = 0x24Cu;
 constexpr uint32_t kButtonL1 = 0x4u;
 constexpr uint32_t kButtonR1 = 0x8u;
-constexpr uint32_t kTextBytes = 48u;
+// A row's name and value; an accent is a tag of four or five bytes (<'e>).
+constexpr uint32_t kTextBytes = 64u;
 // A text entry (kTextStride bytes): x and y (s16, from the widget's place),
 // the string, the wrap (u16), the font (s8) and the colour (u32); a list
 // ended by x -1. UiDrawWidgets draws a widget's texts after every sprite,
@@ -135,6 +137,81 @@ constexpr Row kScenes[] = {
     {"minimap_size", "Minimap Size", Kind::Number},
     {"compass_size", "Compass Size", Kind::Number},
 };
+
+// The rows' names when the text is in a European language
+// (rg::textlanguage::language(): French, German, Spanish, Italian), in the
+// European release's own words where it has them: the game's page (Kampfkamera,
+// Minikarte anzeigen, Visuale in battaglia), its bag, storage, chests,
+// transporter and Action Gauge. Its accent tags (<'e>) are what its menu font
+// draws. A name, with its value, fits in about as much room as
+// "Bag Page 7 (Next Start)".
+struct Local
+{
+    const char *key;
+    const char *text[4];
+};
+constexpr Local kLocal[] = {
+    {"widescreen", {"<'E>cran large", "Breitbild", "Pantalla panor<'a>mica", "Schermo panoramico"}},
+    {"skip_opening", {"Passer l'introduction", "Intro <:u>berspringen", "Saltar introducci<'o>n", "Salta l'introduzione"}},
+    {"instant_loading_recap", {"R<'e>sum<'e> imm<'e>diat", "Handlung sofort", "Resumen inmediato", "Riassunto immediato"}},
+    {"instant_text", {"Texte instantan<'e>", "Sofortiger Text", "Texto instant<'a>neo", "Testo istantaneo"}},
+    {"map_chests", {"Coffres sur la carte", "Truhen auf Karte", "Cofres en el mapa", "Scrigni sulla mappa"}},
+    {"faster_camera", {"Cam<'e>ra rapide", "Schnelle Kamera", "C<'a>mara r<'a>pida", "Visuale rapida"}},
+    {"free_camera", {"Cam<'e>ra libre", "Freie Kamera", "C<'a>mara libre", "Visuale libera"}},
+    {"dev_tools", {"Outils d<'e>veloppeur", "Entwicklerwerkzeuge", "Modo desarrollador", "Strumenti di sviluppo"}},
+    {"sixty_fps", {"60 FPS (red<'e>marrage)", "60 FPS (Neustart)", "60 FPS (reinicio)", "60 FPS (riavvio)"}},
+    {"field_of_view", {"Champ de vision", "Sichtfeld", "Campo de visi<'o>n", "Campo visivo"}},
+    {"camera_distance", {"Distance cam<'e>ra", "Kameradistanz", "Distancia c<'a>mara", "Distanza visuale"}},
+    {"draw_distance", {"Distance de vue", "Sichtweite", "Distancia visual", "Raggio visivo"}},
+    {"encounter_rate", {"Rencontres", "Begegnungen", "Encuentros", "Scontri casuali"}},
+    {"battle_experience", {"Exp<'e>rience", "Erfahrung", "Experiencia", "Esperienza"}},
+    {"battle_money", {"Argent", "Geld", "Dinero", "Denaro"}},
+    {"item_drops", {"Butin", "Beute", "Bot<'i>n", "Bottino"}},
+    {"weapon_growth", {"<'E>volution armes", "Waffenwachstum", "Mejora de armas", "Crescita armi"}},
+    {"shop_prices", {"Prix en magasin", "Ladenpreise", "Precios de tienda", "Prezzi negozi"}},
+    {"action_gauge", {"Jauge d'action", "Aktionsanzeige", "Ind. de acci<'o>n", "Barra Azione"}},
+    {"fast_transporter", {"Transporteurs rapides", "Schnelle Transporter", "Transportador r<'a>pido", "Warp rapido"}},
+    {"full_bag_to_storage", {"Surplus en r<'e>serve", "<:U>berschuss ins Lager", "Exceso al inventario", "Eccesso in Inventario"}},
+    {"stack_limit_99", {"Limite d'objets 99", "Gegenstandslimit 99", "L<'i>mite de objetos 99", "Limite oggetti 99"}},
+    {"bigger_bag", {"Sac page 7 (red<'e>m.)", "Taschenseite 7 (Neust.)", "Mochila p<'a>g. 7 (reinicio)", "Sacca pag. 7 (riavvio)"}},
+    {"sides", {"Bordures", "R<:a>nder", "Bordes", "Bordi"}},
+    {"minimap_size", {"Taille mini-carte", "Minikartengr<:o><ss>e", "Tama<~n>o minimapa", "Dim. minimappa"}},
+    {"compass_size", {"Taille boussole", "Kompassgr<:o><ss>e", "Tama<~n>o br<'u>jula", "Dim. bussola"}},
+};
+constexpr const char *kSidesLocal[4][std::size(kSidesNames)] = {
+    {"Noir", "Flou", "Image"},
+    {"Schwarz", "Unscharf", "Bild"},
+    {"Negro", "Difuminado", "Imagen"},
+    {"Nero", "Sfocato", "Immagine"},
+};
+
+// The European language the text is in, 1 to 4, or 0.
+int textLanguage()
+{
+    const int language = rg::textlanguage::language();
+    return language >= 1 && language <= 4 ? language : 0;
+}
+
+const char *label(const Row &row)
+{
+    const int language = textLanguage();
+    for (const Local &local : kLocal)
+    {
+        if (language != 0 && std::strcmp(local.key, row.key) == 0)
+        {
+            return local.text[language - 1];
+        }
+    }
+    return row.label;
+}
+
+const char *choiceName(const Row &row, int value)
+{
+    const int count = static_cast<int>(std::size(kSidesNames));
+    value = std::clamp(value, 0, count - 1);
+    const int language = textLanguage();
+    return row.names == kSidesNames && language != 0 ? kSidesLocal[language - 1][value] : row.names[value];
+}
 
 struct Page
 {
@@ -370,9 +447,11 @@ void writeLabel(uint8_t *rdram, const Screen &screen, int index, const Row &row)
 {
     const uint32_t string = g_text + static_cast<uint32_t>(index) * kTextBytes;
     char text[kTextBytes];
+    // French puts a space before the colon, as its game texts do ("Magasin :").
+    const char *colon = textLanguage() == 1 ? " :" : ":";
     if (row.names)
     {
-        std::snprintf(text, sizeof(text), "%s: %s", row.label, row.names[value(row)]);
+        std::snprintf(text, sizeof(text), "%s%s %s", label(row), colon, choiceName(row, value(row)));
     }
     else if (row.kind == Kind::Number)
     {
@@ -392,11 +471,16 @@ void writeLabel(uint8_t *rdram, const Screen &screen, int index, const Row &row)
         {
             std::snprintf(shown, sizeof(shown), "%d", value(row));
         }
-        std::snprintf(text, sizeof(text), "%s: %s", row.label, shown);
+        if (textLanguage() != 0)
+        {
+            // A decimal comma (1,5x).
+            std::replace(shown, shown + std::strlen(shown), '.', ',');
+        }
+        std::snprintf(text, sizeof(text), "%s%s %s", label(row), colon, shown);
     }
     else
     {
-        std::snprintf(text, sizeof(text), "%s", row.label);
+        std::snprintf(text, sizeof(text), "%s", label(row));
     }
     writeString(rdram, string, text);
     writeGuest(rdram, screen.texts + static_cast<uint32_t>(index) * kTextStride + kTextString, string);

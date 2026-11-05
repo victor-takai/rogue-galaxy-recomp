@@ -34,6 +34,33 @@ checks the image's two voice indexes against
 and refuses another Japanese release: only the Director's Cut has voices
 that line up with the US game.
 
+## The European disc (texts)
+
+The European release (SCES-54552) has the game's text in English, French,
+German, Spanish and Italian, but in a revised build: its scene scripts are
+compiled for a newer script engine, its menu packs hold other entries and
+its game tables carry the Director's Cut balance, so the US executable
+cannot read its files as they are. `Install-European.bat` (or
+`python setup.py extract-european --iso <image>`) builds, for each of the
+four languages, the files the US executable asks for in that language, each
+from the US file with the European words put in: the lines of scenes and
+menus by their labels, the strings of the game's tables (names,
+descriptions) record by record, the pictures with words and, where those
+moved in their atlas, the layouts' rectangles for them, the room the
+layouts give a line of text (the European words are longer), and the
+message font. The European executable breaks a line too long for its
+window itself, and the US one draws it past the screen's edges, so lines
+wider than the US English ever writes in that window (scene subtitles,
+talk windows, menu messages) get breaks, measured with the US font's
+letter widths; a talk window's page holds three lines at most, as in the
+US texts. A line the European disc has no words for stays English (in
+French, one line of one scene, and one scene of chapter 17). The result, about 80 MB a language, goes into
+`disc/EU/<LANG>.DAT` and `<LANG>.idx`, and takes about a minute
+([`tools/disc/european.py`](../tools/disc/european.py) says how). It checks
+the image's two text indexes against
+[`config/SCUS_974.90/european.json`](../config/SCUS_974.90/european.json)
+and refuses another release.
+
 ## Layers
 
 The image holds two ISO9660 volumes:

@@ -62,6 +62,9 @@ struct GameOption {
     // The page it is on: empty for Game's, "language" for Language's,
     // "textures" for Textures' (Rogue Galaxy: added).
     std::string page;
+    // A number shown as one button a value, minimum first, instead of a
+    // slider: the names of the values (Rogue Galaxy: added).
+    std::vector<std::string> choices;
     bool number() const { return maximum > minimum; }
 };
 
@@ -272,6 +275,7 @@ private:
     // The switches as this run started with them, for those that wait for a
     // restart (Rogue Galaxy: added).
     std::map<std::string, bool> m_startOptions;
+    std::map<std::string, int> m_startNumbers;
     bool m_startCaptured = false;
     SDL_Window *m_window = nullptr;
     ImGuiContext *m_context = nullptr;

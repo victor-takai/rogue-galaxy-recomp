@@ -20,8 +20,12 @@ into `disc/JA`, about 3 GB. The menu's Settings > Language > "Undub
 (Japanese voices)" turns it on at the next start ([OPTIONS.md](OPTIONS.md)).
 `src/voice_language.cpp` then does what section 8 describes: the voice token
 reads `JA`, the voice archives are read from `JA/`, and a movie with a copy
-in `disc/JA/MOVIE` plays from there. The European text is not done. The rest
-of this file is the study.
+in `disc/JA/MOVIE` plays from there. The European text is done too, though
+not the way section 10 first planned: the PAL disc's files do not work in
+the US executable as they are, so `setup.py extract-european` builds US
+files with the PAL words in them ([DISC.md](DISC.md#the-european-disc-texts),
+`tools/disc/european.py`, `src/text_language.h`). The rest of this file is
+the study.
 
 ## 1. Two language tokens in every path
 
@@ -119,9 +123,10 @@ Text carries tags that the window turns into glyphs:
   (around 0x26E440 to 0x26E500) indexes this table by `code - 0x423` for the
   width and the plain width table (0x45C270) below that.
 
-Open: where the PAL draws those 64 glyphs from. The glyph tables (section 5)
-are byte-identical between the US and PAL fonts, so the picture lives either in
-the first texture page (which differs) or in PAL-only code.
+The PAL draws those 64 glyphs from the first texture page of each font (which
+differs from the US one; the glyph tables of section 5 are byte-identical): the
+nth accent is the cell of glyph code 107 + n, in place of the US page's kana and
+kanji.
 
 ## 5. Fonts
 
@@ -221,6 +226,29 @@ them: a movie carries its own sound.
   per-language trio, from the PAL pack). Other `?` files (`menu`, `rc\param`)
   come the same way from the PAL archives. Needs the PAL font and the 64
   accent codes added to the US executable's tag lookup and layout code.
+  *As built (2026-11-04):* the PAL scripts are compiled for 236 script
+  commands against the US engine's 233, so the scenes keep the US script and
+  take only the PAL lines (their labels match in 242 of 248 scenes; a line the
+  PAL text lacks stays English). The other files are rebuilt the same way, the
+  US file as the frame: menu texts by label, the cfg tables (`.cfg.bin` game
+  tables, `.res.bin` layouts) string by string through PAL English, layouts'
+  sprite groups from PAL where they cut a PAL picture that differs from the US
+  one or give longer words more room, text boxes and text lines as wide as
+  PAL's (a menu-font line is a group of letter cells; a longer word overran it
+  onto the next lines). A group of an unchanged picture that PAL redrew stays
+  US: the load menu's slot buttons, narrowed in PAL for words it writes as text
+  where the US layout has a picture of "Slot 1"/"Slot 2". The pause screen's
+  pieces are a table in the executable (0x451CD0), given the PAL one's. The PAL
+  executable's larger menu and game data stacks (0x1900, 0x2F00, 0x12A00 blocks)
+  are given to the US one, and the menus' own font lists its accents as one byte
+  each. The accents are glyph codes 107 + n, the cells where PAL's first font
+  pages draw them; the US width table (0x44E851, four bytes a code) ends at code
+  106, right before the button tags' table (0x44EA00), so their widths are
+  answered by `FontGetCharWidth` and `FontGetGlyphWidth` hooks, not written
+  there (writing them broke `(X)` and the other button tags). The names' font
+  (floating names over people and enemies) has its letters on rows 22 pixels
+  apart in PAL against 18 in the US: `FontGetLineHeight` and `FontGetGlyphRect`
+  say 22 for it, as PAL's do.
 - Both need the player's own discs read at run time and a language setting; the
   chosen language and the disc paths have to reach the hook that fills the two
   tokens. (For the voices, the disc is read once, at install, into `disc/JA`,
@@ -228,7 +256,6 @@ them: a movie carries its own sound.
 
 ## 9. Not yet studied
 
-- How PAL draws the 64 accent glyphs (texture cell source and layout).
 - Text overflow: how window width and line count are fixed per style, and how
   the longer European lines fit (the one scene text sampled was 11% longer in
   French than in English).

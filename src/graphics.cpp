@@ -23,6 +23,7 @@
 #include "draw_distance.h"
 #include "free_camera.h"
 #include "instant_text.h"
+#include "text_language.h"
 #include "voice_language.h"
 #include "map_chests.h"
 #include "native_renderer.h"
@@ -278,6 +279,8 @@ void applyGameNumber(const std::string &key, int value)
         rg::shopprices::setPercent(value);
     else if (key == "action_gauge")
         rg::battlerates::setActionGauge(value);
+    else if (key == "text_language")
+        rg::textlanguage::setPreferred(value);
 }
 
 // F9 and F10 presses, counted as SDL queues their key-down events. pump()
@@ -675,6 +678,12 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         {"action_gauge", "Action gauge speed",
          "How fast the party's action gauge fills again in battle, against the game's (1.0x).",
          false, 25, 400, 100, kTimes, 25},
+        {"text_language", "Text",
+         "The game's text, menus and scenes, in one of the European release's languages, from your European disc "
+         "(SCES-54552): run Install-European.bat in the game's folder once and pick that disc's image. Without "
+         "it the text stays English. The voices stay as they are. Takes effect the next time the game starts.",
+         false, 0, 4, 0, "", 1, true, true, "language",
+         {"English", "Fran\xC3\xA7" "ais", "Deutsch", "Espa\xC3\xB1" "ol", "Italiano"}},
         {"japanese_voices", "Undub (Japanese voices)",
          "The voices in scenes and the movies come from your Japanese Director's Cut disc instead of the English "
          "ones; the text stays as it is. It needs that disc's files: run Install-Undub.bat in the game's folder "

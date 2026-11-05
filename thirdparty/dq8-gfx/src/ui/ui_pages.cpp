@@ -563,6 +563,27 @@ void Overlay::drawGameOptions(const std::string &page, const char *emptyText, co
         if (!table)
             continue;
         settingRow(option.label.c_str(), option.help.empty() ? nullptr : option.help.c_str());
+        if (option.number() && !option.choices.empty()) {
+            // Rogue Galaxy: added, a value a button (the text's language).
+            const int value = gameNumber(option);
+            int index = value - option.minimum;
+            std::vector<const char *> labels;
+            for (const std::string &choice : option.choices)
+                labels.push_back(choice.c_str());
+            if (segmented(option.key.c_str(), &index, labels.data(), static_cast<int>(labels.size()))) {
+                const int next = std::clamp(option.minimum + index, option.minimum, option.maximum);
+                if (next != value) {
+                    m_settings.gameNumbers[option.key] = next;
+                    m_settings.gameOptions.erase(option.key);
+                    if (m_host.setGameNumber)
+                        m_host.setGameNumber(option.key, next);
+                    markDirty();
+                }
+            }
+            if (waitsForRestart(option))
+                ImGui::TextColored(color(palette::kBad), "Restart the game for this to take effect.");
+            continue;
+        }
         if (option.number()) {
             const int value = gameNumber(option);
             int next = value;

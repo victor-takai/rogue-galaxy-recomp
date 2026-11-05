@@ -153,8 +153,9 @@ fullscreen there; Back + Start opens the menu (F1).
 | `Install.bat`, `tools/install/` | The Windows installer: build tools into `toolchain\`, then `setup.py install` |
 | `Update.bat`, `tools/install/update.ps1` | Brings a folder `Install.bat` built to the newest release and rebuilds what changed (a git checkout uses `git pull` instead) |
 | `Install-Undub.bat`, `tools/install/install-undub.ps1` | The Japanese voices from your own Japanese disc, into `disc/JA` (`setup.py extract-japanese`) |
+| `Install-European.bat`, `tools/install/install-european.ps1` | The French, German, Spanish and Italian texts from your own European disc, built into `disc/EU` (`setup.py extract-european`, `tools/disc/european.py`) |
 | `CHANGELOG.md` | What each release brings, and its known issues |
-| `setup.py` | `verify`, `extract`, `extract-japanese`, `info`, `overlays`, `check`, `recompile`, `tools`, `build`, `install`, `portable` (and `make-hashes`, `maps`, `vu1-manifest`, `vu-blocks-manifest` for maintainers) |
+| `setup.py` | `verify`, `extract`, `extract-japanese`, `extract-european`, `info`, `overlays`, `check`, `recompile`, `tools`, `build`, `install`, `portable` (and `make-hashes`, `maps`, `vu1-manifest`, `vu-blocks-manifest` for maintainers) |
 | `CMakeLists.txt`, `src/` | The game executable: `main.cpp`, the hooks, one file per feature ([HOOKS.md](HOOKS.md)), the overlay manager (`src/overlay/`), the diagnosis tools (`src/debug/`: traces, watches, profiler, stall watch, GS census, self-test) and the Windows launcher, `Rogue Galaxy.exe` (`src/launcher/`) |
 | `cmake/framework_patches.cmake` | Applies `patches/ps2recomp/` to the framework, at configure and from `setup.py tools` |
 | `debug/` | Launchers for diagnosis: `RogueGalaxy.bat` (the game in a terminal), `-profile`, `-hitches`, `-capture` and `-collect` ([DEVELOPMENT.md](DEVELOPMENT.md)) |

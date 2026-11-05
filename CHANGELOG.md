@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- European texts (experimental): the menus, scenes and battles in French,
+  German, Spanish or Italian, from your own European disc (F1 > Settings >
+  Language > Text, from the next start). Run `Install-European.bat` first
+  and pick the disc image. The options on the game's own Settings screen
+  are named in that language too. The voices stay as they are. Played in
+  Spanish and tested in all four up to the first scenes; the rest of the
+  story has not been seen in them yet.
 - The options set against the game's own (encounter rate, experience,
   money, item drops, weapon growth, shop prices, action gauge, camera and
   draw distance, minimap and compass size) show as multipliers, 1.0x for
