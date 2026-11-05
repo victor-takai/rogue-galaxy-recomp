@@ -39,74 +39,20 @@ the run before is `build\last-run.prev.log`.
 ## Install (Windows)
 
 You need Windows 10 or 11 (64-bit), about 16 GB free, an internet
-connection and your own image of Rogue Galaxy USA (SCUS-97490). It must be
-an uncompressed `.iso`, as Redump's (6,967,721,984 bytes); turn a `.chd` or
-`.cso` back into an `.iso` first ([DISC.md](docs/DISC.md)).
+connection and your own uncompressed `.iso` of Rogue Galaxy USA
+(SCUS-97490).
 
 1. Download `RogueGalaxy-<version>.zip` from the [releases](../../releases)
    page (not "Source code").
-2. Extract it to a short path, such as `C:\`. You get `C:\RogueGalaxy`,
-   your game folder.
+2. Extract it to a short path, such as `C:\`.
 3. Double-click `Install.bat` and choose your disc image.
-4. Wait about 20 minutes on a fast PC, up to an hour on a slower one. It
-   downloads the build tools (about 300 MB) into the folder, extracts the
-   disc and builds the game. Nothing is installed in Windows.
+4. Wait about 20 minutes on a fast PC, up to an hour on a slower one.
 5. Play with `Rogue Galaxy.exe`.
 
-If it stops, `install.log` says why; run `Install.bat` again to continue.
-If an antivirus removes the compiler, restore it and run it again.
+To update later, double-click `Update.bat`.
 
-### Undub (optional)
-
-You need your own image of the Japanese Director's Cut (SCPS-17013). After
-installing, double-click `Install-Undub.bat` and choose that image (or drop
-it onto the file); it copies about 3 GB of voices and movies. Then turn it
-on in [F1 > Settings > Language](docs/OPTIONS.md#language) and restart the
-game. The text stays English.
-
-### Update
-
-The game tells you at start when a new version is out; nothing updates by
-itself. To update, double-click `Update.bat`: it downloads the newest release and rebuilds
-only what changed. That takes a few minutes, or about as long as the first
-install when the new version changes how the game's code is translated.
-
-Your disc, saves, settings, textures and undub files are kept. `update.log`
-says what happened. A zip downloaded by hand from the
-[releases](../../releases) page can be dropped onto `Update.bat`.
-
-<details>
-<summary>Updating from 0.1.0, or into a new folder</summary>
-
-**From 0.1.0**, which has no `Update.bat`: extract the new zip where your
-game folder is (for `C:\RogueGalaxy`, into `C:\`), let Windows replace the
-files, and run `Install.bat` again. It does not ask for the disc image.
-From then on, use `Update.bat`.
-
-**Into a new folder**: everything is downloaded and built again, as the
-first time. Copy `disc\mc0` and `disc\mc1` from the old folder to keep your
-saves, and `disc\JA` to keep the undub.
-
-</details>
-
-### Saves from PCSX2
-
-The memory card, `disc\mc0`, has the same layout as a PCSX2 folder memory
-card, so saves copy over as they are.
-
-1. In PCSX2's memory card settings, convert your card to a folder card
-   (keep the original).
-2. Back up `disc\mc0`: a save with the same folder name replaces the one in
-   that slot.
-3. Copy the card's `BASCUS-97490LV5RG_xx` folders, one per save, into
-   `disc\mc0`.
-
-Only saves from the USA release work.
-
-### Uninstall
-
-Delete the game folder (your saves are in `disc\mc0`) and
-`%APPDATA%\RogueGalaxy\Recompiled` (settings and screenshots).
+The full guide, with the undub, updating, saves from PCSX2 and
+uninstalling, is in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Controls
 
@@ -141,6 +87,7 @@ L1 and R1 turn the pages.
 Every page, by who it is for: [docs/README.md](docs/README.md). The main
 ones:
 
+- [docs/INSTALL.md](docs/INSTALL.md): installing, the undub, updating
 - [CHANGELOG.md](CHANGELOG.md): each release, and its known issues
 - [docs/OPTIONS.md](docs/OPTIONS.md): every option
 - [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md): the project in plain words

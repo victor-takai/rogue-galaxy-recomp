@@ -1,7 +1,7 @@
 # Building by hand
 
 For developers and other systems: these are the steps
-[`Install.bat`](../README.md#install-windows) runs on Windows.
+[`Install.bat`](INSTALL.md#install-windows) runs on Windows.
 
 ## Setup
 
