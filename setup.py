@@ -4,6 +4,7 @@
     python setup.py verify   --iso "Rogue Galaxy (USA).iso" [--full]
     python setup.py extract  --iso "Rogue Galaxy (USA).iso" [--out disc] [--force]
     python setup.py extract-japanese --iso "Rogue Galaxy - Director's Cut (Japan).iso" [--disc disc]
+    python setup.py director-cut-balance --iso "Rogue Galaxy - Director's Cut (Japan).iso" [--disc disc]
     python setup.py extract-european --iso "Rogue Galaxy (Europe).iso" [--disc disc] [--languages fr de es it]
     python setup.py info     [--disc disc]
     python setup.py overlays  [--disc disc] [--out build/overlays]
@@ -11,7 +12,10 @@
     python setup.py recompile [--disc disc] [--recomp path/to/ps2_recomp]
 
 `extract-japanese` copies the voices and the movies that differ from the US
-ones out of the Japanese Director's Cut into disc/JA, for the Japanese dub.
+ones out of the Japanese Director's Cut into disc/JA, for the Japanese dub,
+then runs `director-cut-balance`, which writes that release's battle balance
+for the US game into disc/JA/balance: four tables, and the enemies' files and
+AI scripts it changed (tools/disc/balance.py).
 `extract-european` builds the European release's French, German, Spanish and
 Italian texts into the US game's files, disc/EU/<LANG>.DAT and .idx
 (tools/disc/european.py says how).
@@ -92,6 +96,14 @@ def hash_entry(iso: IsoImage, entry: Entry) -> str:
     h = hashlib.sha256()
     for chunk in iso.iter_chunks(entry):
         h.update(chunk)
+    return h.hexdigest()
+
+
+def hash_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
     return h.hexdigest()
 
 
@@ -253,9 +265,27 @@ def cmd_extract_japanese(args: argparse.Namespace) -> int:
         total = sum(files[p][0].size for p in wanted)
         done = 0
         manifest = {"image": str(Path(args.iso).resolve()), "files": {}}
+        # Run again (for the balance's tables, say), a file copied whole before
+        # from this same disc, which the indexes above vouch for, stays when
+        # its bytes are still the ones copied; a damaged one is copied again.
+        before = {}
+        if (out / "manifest.json").is_file():
+            before = json.loads((out / "manifest.json").read_text(encoding="utf-8")).get("files", {})
         for path in wanted:
             entry = files[path][0]
             dest = out / path
+            old = before.get(path)
+            if (
+                old
+                and old.get("size") == entry.size
+                and dest.is_file()
+                and dest.stat().st_size == entry.size
+                and hash_file(dest) == old.get("sha256")
+            ):
+                manifest["files"][path] = old
+                done += entry.size
+                print(f"{done * 100 // max(total, 1):3d}%  {path} (already there)", flush=True)
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             part = dest.with_name(dest.name + ".part")
             h = hashlib.sha256()
@@ -267,6 +297,53 @@ def cmd_extract_japanese(args: argparse.Namespace) -> int:
             print(f"{done * 100 // max(total, 1):3d}%  {path}", flush=True)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"extracted {len(wanted)} files ({total / 2**30:.2f} GiB) to {out}")
+    # The undub is whole here: the balance, an option, cannot undo that.
+    if not make_balance(args):
+        print("the undub is installed; the Director's Cut options' files were not made")
+    return 0
+
+
+def make_balance(args: argparse.Namespace) -> bool:
+    """cmd_director_cut_balance for a step that must go on without it: says why it was not made."""
+    try:
+        cmd_director_cut_balance(args)
+        return True
+    except SystemExit as stop:
+        print(f"   the Director's Cut options' files not made: {str(stop).rstrip('.')}")
+    except Exception as error:  # a damaged or unexpected image: whatever its parsing raises
+        print(f"   the Director's Cut options' files not made: {type(error).__name__}: {error}")
+    return False
+
+
+def cmd_director_cut_balance(args: argparse.Namespace) -> int:
+    """The Director's Cut's battle balance, enemy files and AI scripts, as files for the US game,
+    into <disc>/JA/balance: what its three options (balance, enemy behavior, party AI) read."""
+    from disc import balance
+
+    config = load_toml_json(config_dir(args.version) / "japanese.json")
+    known, files = config["balance_pack"], config["balance_files"]["files"]
+    disc = Path(args.disc)
+    out = disc / "JA" / "balance"
+    if not (disc / "DATA0_0.HD6").is_file():
+        sys.exit(f"{disc} does not hold the extracted US disc: run `setup.py extract` first.")
+    with IsoImage(args.iso) as iso:
+        try:
+            pack = balance.japanese_pack(iso)
+        except (KeyError, ValueError):
+            pack = b""
+        if balance.pack_sha256(pack) != known["sha256"]:
+            sys.exit(
+                f"{args.iso} is not the Japanese Director's Cut (SCPS-17013): its {known['name']} does not match."
+            )
+        try:
+            report = balance.build_files(iso, files, out)
+        except ValueError as error:
+            sys.exit(f"{args.iso}: {error}.")
+    # tables.txt last: with it there, the balance is whole.
+    report += balance.build(pack, disc, out)
+    for line in report:
+        print(line, flush=True)
+    print(f"the Director's Cut options' files are in {out}")
     return 0
 
 
@@ -838,6 +915,26 @@ def cmd_portable(args: argparse.Namespace) -> int:
     return 0
 
 
+def balance_for_undub(version: str, disc: Path) -> None:
+    """An undub installed before the Director's Cut balance (or its enemy files) existed
+    gets them, from the Japanese image it came from when that is still where it was;
+    never stops the install."""
+    ja = disc / "JA"
+    whole = all((ja / "balance" / name).is_file() for name in ("tables.txt", "files.idx", "files.dat"))
+    if not (ja / "manifest.json").is_file() or whole:
+        return
+    try:
+        image = json.loads((ja / "manifest.json").read_text(encoding="utf-8")).get("image")
+    except (OSError, ValueError):
+        image = None
+    if not image or not Path(image).is_file():
+        print("== the Director's Cut options need your Japanese disc once: run Install-Undub.bat")
+        return
+    print("== the Director's Cut options' files, from the Japanese disc image the undub came from", flush=True)
+    if not make_balance(argparse.Namespace(version=version, iso=image, disc=str(disc))):
+        print("   Install-Undub.bat makes it")
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     """Everything from a dump to a game: verify, extract, tools, recompile, build."""
     disc = ROOT / "disc"
@@ -857,6 +954,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         # not the disc's, the memory cards, stay as they are.
         if cmd_extract(argparse.Namespace(version=args.version, iso=args.iso, out=str(disc), force=True)):
             sys.exit("the extraction found problems; see above")
+    balance_for_undub(args.version, disc)
     cmd_tools(args)
     print("== recompile", flush=True)
     if cmd_recompile(argparse.Namespace(version=args.version, disc=str(disc), recomp=None)):
@@ -884,6 +982,14 @@ def main() -> int:
     p.add_argument("--iso", required=True)
     p.add_argument("--disc", default=str(ROOT / "disc"))
     p.set_defaults(func=cmd_extract_japanese)
+
+    p = sub.add_parser(
+        "director-cut-balance",
+        help="the Japanese Director's Cut's battle balance, as files for the US game, into disc/JA/balance",
+    )
+    p.add_argument("--iso", required=True)
+    p.add_argument("--disc", default=str(ROOT / "disc"))
+    p.set_defaults(func=cmd_director_cut_balance)
 
     p = sub.add_parser("extract-european", help="the European release's texts, built for the US game, into disc/EU")
     p.add_argument("--iso", required=True)

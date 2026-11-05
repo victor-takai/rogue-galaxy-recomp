@@ -72,6 +72,13 @@ something looks wrong (text, a menu, the picture), open an
 screenshot and the game's log. Picking English again brings the game back as
 it was.
 
+The same step reads what the Director's Cut changed in battles, which the
+US release did not get: smaller groups of enemies, more money, some enemies
+weaker and others stronger, and that release's enemy attacks and AI. Three
+options in F1 > Settings > Game turn it on, each part on its own:
+[Director's Cut balance, enemy behavior and party AI](OPTIONS.md#game-options).
+The voices can stay English.
+
 ## Update
 
 The game tells you at start when a new version is out, and F1 > Rogue

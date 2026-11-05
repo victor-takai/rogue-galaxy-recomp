@@ -34,6 +34,20 @@ checks the image's two voice indexes against
 and refuses another Japanese release: only the Director's Cut has voices
 that line up with the US game.
 
+The same run then writes the Director's Cut's battle balance into
+`disc/JA/balance` (`python setup.py director-cut-balance --iso <image>`
+alone): four tables of the Japanese param pack (`rc\param\param_2_ja.pac`
+in `DATA0_0`, checked against the same file's `balance_pack`) with the
+Japanese numbers and the US strings, and `tables.txt`, which names the US
+table each replaces; and the 76 enemy files (`chara\mob\*.chr`) and 98 AI
+scripts (`chara\spt\*.stb`) that release changed, as they are, checked
+against `balance_files` and packed into `files.dat` (about 20 MiB) with
+their list, `files.idx` ([OPTIONS.md](OPTIONS.md#game-options), "Director's
+Cut balance", "enemy behavior" and "party AI"; `src/dc_balance.h`). Run again, it copies only the voices and
+movies not already there. `setup.py install` (so `Update.bat` too) makes the
+balance's files for an undub installed without them, from the image
+`disc/JA/manifest.json` names, when it is still there.
+
 ## The European disc (texts)
 
 The European release (SCES-54552) has the game's text in English, French,

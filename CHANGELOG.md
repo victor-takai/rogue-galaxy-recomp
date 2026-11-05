@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### New
+
+- What the Japanese Director's Cut changed in battles, which the US
+  release did not get, as three options (Game, off by default, from the
+  next start):
+  - Director's Cut balance: smaller groups of enemies, more money from
+    many of them, the Rosencaster and Starship Factory enemies weaker, the
+    Area Masters stronger, bosses never knocked down;
+  - Director's Cut enemy behavior: the enemies' attacks and AI;
+  - Director's Cut party AI: allies low on health fall back and guard.
+  All of it comes from your own Japanese Director's Cut disc:
+  `Install-Undub.bat` reads it. With the undub already installed, the
+  update reads it from the image it came from, if that is still where it
+  was; otherwise run `Install-Undub.bat` again (the voices it copied stay).
 - European texts (experimental): the menus, scenes and battles in French,
   German, Spanish or Italian, from your own European disc (F1 > Settings >
   Language > Text, from the next start). Run `Install-European.bat` first
@@ -9,6 +23,9 @@
   are named in that language too. The voices stay as they are. Played in
   Spanish and tested in all four up to the first scenes; the rest of the
   story has not been seen in them yet.
+
+### Changed
+
 - The options set against the game's own (encounter rate, experience,
   money, item drops, weapon growth, shop prices, action gauge, camera and
   draw distance, minimap and compass size) show as multipliers, 1.0x for
