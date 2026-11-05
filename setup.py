@@ -295,7 +295,7 @@ def cmd_extract_japanese(args: argparse.Namespace) -> int:
     print(f"extracted {len(wanted)} files ({total / 2**30:.2f} GiB) to {out}")
     # The undub is whole here: the balance, an option, cannot undo that.
     if not make_balance(args):
-        print("the undub is installed; the Director's Cut balance (an option) was not made")
+        print("the undub is installed; the Director's Cut options' files were not made")
     return 0
 
 
@@ -305,14 +305,15 @@ def make_balance(args: argparse.Namespace) -> bool:
         cmd_director_cut_balance(args)
         return True
     except SystemExit as stop:
-        print(f"   the Director's Cut balance not made: {str(stop).rstrip('.')}")
+        print(f"   the Director's Cut options' files not made: {str(stop).rstrip('.')}")
     except Exception as error:  # a damaged or unexpected image: whatever its parsing raises
-        print(f"   the Director's Cut balance not made: {type(error).__name__}: {error}")
+        print(f"   the Director's Cut options' files not made: {type(error).__name__}: {error}")
     return False
 
 
 def cmd_director_cut_balance(args: argparse.Namespace) -> int:
-    """The Director's Cut's battle balance, as files for the US game, into <disc>/JA/balance."""
+    """The Director's Cut's battle balance, enemy files and AI scripts, as files for the US game,
+    into <disc>/JA/balance: what its three options (balance, enemy behavior, party AI) read."""
     from disc import balance
 
     config = load_toml_json(config_dir(args.version) / "japanese.json")
@@ -338,7 +339,7 @@ def cmd_director_cut_balance(args: argparse.Namespace) -> int:
     report += balance.build(pack, disc, out)
     for line in report:
         print(line, flush=True)
-    print(f"the Director's Cut balance's files are in {out}")
+    print(f"the Director's Cut options' files are in {out}")
     return 0
 
 
@@ -874,9 +875,9 @@ def balance_for_undub(version: str, disc: Path) -> None:
     except (OSError, ValueError):
         image = None
     if not image or not Path(image).is_file():
-        print("== the Director's Cut balance (an option) needs your Japanese disc once: run Install-Undub.bat")
+        print("== the Director's Cut options need your Japanese disc once: run Install-Undub.bat")
         return
-    print("== the Director's Cut balance, from the Japanese disc image the undub came from", flush=True)
+    print("== the Director's Cut options' files, from the Japanese disc image the undub came from", flush=True)
     if not make_balance(argparse.Namespace(version=version, iso=image, disc=str(disc))):
         print("   Install-Undub.bat makes it")
 

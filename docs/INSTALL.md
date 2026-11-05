@@ -49,12 +49,12 @@ Director's Cut (SCPS-17013).
 
 The text stays English.
 
-The same step reads the Director's Cut's battle balance, which the US
-release did not get: smaller groups of enemies, more money, some enemies
-weaker and others stronger, and that release's enemy attacks and AI. Turn
-it on in F1 > Settings > Game >
-[Director's Cut balance](OPTIONS.md#game-options) if you want it; the
-voices can stay English.
+The same step reads what the Director's Cut changed in battles, which the
+US release did not get: smaller groups of enemies, more money, some enemies
+weaker and others stronger, and that release's enemy attacks and AI. Three
+options in F1 > Settings > Game turn it on, each part on its own:
+[Director's Cut balance, enemy behavior and party AI](OPTIONS.md#game-options).
+The voices can stay English.
 
 ## Update
 

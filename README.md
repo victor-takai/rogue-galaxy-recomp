@@ -17,7 +17,8 @@ image; nothing of the game is distributed.
 - In-game menu (F1)
 - [New game settings](docs/OPTIONS.md)
 - Japanese voices and movies (undub)
-- The Japanese Director's Cut's battle balance, as an option
+- The Japanese Director's Cut's battle balance, enemy behavior and party
+  AI, as options
 - [Texture packs](docs/TEXTURE_PACKS.md), PCSX2's included
 
 ## What to expect

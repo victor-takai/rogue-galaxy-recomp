@@ -96,7 +96,9 @@ The numbers are against the game's own, 1.0x.
 | Weapon growth | 1.0x to 10.0x: each battle fills a weapon's gauge (15 to full), then its attributes, by 1 point, or more. |
 | Shop prices | 0.1x to 2.0x. |
 | Action gauge speed | 0.25x to 4.0x. |
-| Director's Cut balance | Off by default. Battles with the balance of the Japanese Director's Cut (SCPS-17013), which the US release did not get: 85 of the 374 groups of enemies are smaller (the Cactulus group in Rosa comes 2 to 3 instead of 4 to 5), 75 enemies leave about 1.5 times the money, the regular enemies of Rosencaster and the Starship Factory and three story fights (Giant, Attack Walker, Gale) are weaker, the 10 Area Masters stronger, bigger enemies harder to knock down, bosses never knocked down, and three boss attacks lose their poison or paralysis. Experience, the party and the weapons stay as they are, and the damage formula is the same in both. Needs that disc's numbers in `disc/JA/balance`: `Install-Undub.bat` with your Japanese disc image writes them (by hand, `python setup.py director-cut-balance --iso "<your Japanese disc>"`). The enemies' attacks (their reach, timing and kind of hit) and the AI come from that disc too: enemies turn to face you before they attack, some start their attacks from farther away, and an ally low on health falls back to the leader and guards. As in that release, the party's jump attacks also home in on two jellyfish and on flying enemies knocked out of the air. Takes effect at the next start. |
+| Director's Cut balance | Off by default. Battles with the numbers of the Japanese Director's Cut (SCPS-17013), which the US release did not get: 85 of the 374 groups of enemies are smaller (the Cactulus group in Rosa comes 2 to 3 instead of 4 to 5), 75 enemies leave about 1.5 times the money, the regular enemies of Rosencaster and the Starship Factory and three story fights (Giant, Attack Walker, Gale) are weaker, the 10 Area Masters stronger, bigger enemies harder to knock down, bosses never knocked down, and three boss attacks lose their poison or paralysis. Experience, the party and the weapons stay as they are, and the damage formula is the same in both. Needs that disc's files in `disc/JA/balance`: `Install-Undub.bat` with your Japanese disc image writes them (by hand, `python setup.py director-cut-balance --iso "<your Japanese disc>"`); one image makes the files of all three Director's Cut options. Takes effect at the next start. |
+| Director's Cut enemy behavior | Off by default. The enemies' attacks (their reach, timing and kind of hit) and AI of the same release: enemies turn to face you before they attack, some start their attacks from farther away. As in that release, the party's jump attacks also home in on two jellyfish and on flying enemies knocked out of the air. Needs the same files. In that release it comes with the balance above; each works without the other. Takes effect at the next start. |
+| Director's Cut party AI | Off by default. The allies' AI of the same release: an ally low on health sometimes falls back to the leader and guards. Needs the same files. Takes effect at the next start. |
 
 **Rendering**
 
@@ -128,8 +130,8 @@ F1 > Settings > Language.
 Most of the same options, and Display > Borders, are on the game's Settings
 screen (System > Settings in the main menu): L1 and R1 turn the page, and
 a number's - and + buttons lower and raise it.
-Controller's buttons, Check for new versions, Director's Cut balance, Native
-renderer, the undub and the texture packs are in F1 alone.
+Controller's buttons, Check for new versions, the three Director's Cut
+options, Native renderer, the undub and the texture packs are in F1 alone.
 
 <p align="center">
   <img src="images/settings-switches.jpg" width="49%" alt="The game's Settings screen: the switches">

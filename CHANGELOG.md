@@ -4,12 +4,14 @@
 
 ### New
 
-- Director's Cut balance: battles with the balance of the Japanese
-  Director's Cut, which the US release did not get: smaller groups of
-  enemies, more money from many of them, the Rosencaster and Starship
-  Factory enemies weaker, the Area Masters stronger, bosses never knocked
-  down, and that release's enemy attacks and AI, the party's too (Game >
-  Director's Cut balance, off by default, from the next start).
+- What the Japanese Director's Cut changed in battles, which the US
+  release did not get, as three options (Game, off by default, from the
+  next start):
+  - Director's Cut balance: smaller groups of enemies, more money from
+    many of them, the Rosencaster and Starship Factory enemies weaker, the
+    Area Masters stronger, bosses never knocked down;
+  - Director's Cut enemy behavior: the enemies' attacks and AI;
+  - Director's Cut party AI: allies low on health fall back and guard.
   All of it comes from your own Japanese Director's Cut disc:
   `Install-Undub.bat` reads it. With the undub already installed, the
   update reads it from the image it came from, if that is still where it

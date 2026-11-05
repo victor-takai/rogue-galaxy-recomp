@@ -43,7 +43,7 @@ table each replaces; and the 76 enemy files (`chara\mob\*.chr`) and 98 AI
 scripts (`chara\spt\*.stb`) that release changed, as they are, checked
 against `balance_files` and packed into `files.dat` (about 20 MiB) with
 their list, `files.idx` ([OPTIONS.md](OPTIONS.md#game-options), "Director's
-Cut balance"; `src/dc_balance.h`). Run again, it copies only the voices and
+Cut balance", "enemy behavior" and "party AI"; `src/dc_balance.h`). Run again, it copies only the voices and
 movies not already there. `setup.py install` (so `Update.bat` too) makes the
 balance's files for an undub installed without them, from the image
 `disc/JA/manifest.json` names, when it is still there.

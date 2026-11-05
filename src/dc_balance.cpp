@@ -44,6 +44,7 @@ constexpr uint32_t kCharaJumpToTarget = 0x00211070u;  // act.cfg's lock-on jump
 constexpr uint32_t kActionMgrFindById = 0x00233B50u;  // its target's character...
 constexpr uint32_t kJumpTargetFound = 0x00211150u;    // ...returning here
 constexpr uint32_t kCharaFlags = 0x3D0u;              // u64, rebuilt every frame
+constexpr uint32_t kTextLanguage = 0x00481528u;       // the code a path's `?` becomes ("EN")
 constexpr uint64_t kFly = 1ull << 51;                 // ENEMY_FLY's high half, 0x80000
 constexpr uint64_t kCatch = 0x8000u;                  // the low half's bit the US leaves free
 
@@ -62,7 +63,10 @@ struct File
     uint32_t size = 0;
 };
 
-std::atomic<bool> g_preferred{false};
+// The menu's three switches (dc_balance.h).
+std::atomic<bool> g_balance{false};
+std::atomic<bool> g_enemyBehavior{false};
+std::atomic<bool> g_partyAi{false};
 std::vector<Table> g_tables;
 // files.idx: archive path (lower case, backslashes) -> where in files.dat.
 std::unordered_map<std::string, File> g_files;
@@ -213,9 +217,16 @@ std::string normalize(const std::string &path)
     return start == std::string::npos ? std::string() : out.substr(start);
 }
 
+// The party's AI scripts (c001-c009) among the files; the rest are the enemies'.
+bool isPartyScript(const std::string &path)
+{
+    return path.rfind("chara\\spt\\c", 0) == 0;
+}
+
 // disc/JA/balance/files.idx: "# ..." comments, then one file a line: its
 // archive path, its first sector in files.dat and its size, tab-separated.
-bool loadFiles(const std::filesystem::path &folder)
+// Only the enemies' files, the party's scripts or both are kept.
+bool loadFiles(const std::filesystem::path &folder, bool enemies, bool party)
 {
     std::ifstream list(folder / "files.idx");
     if (!list)
@@ -249,7 +260,11 @@ bool loadFiles(const std::filesystem::path &folder)
         {
             return false;
         }
-        files[normalize(line.substr(0, tab1))] = file;
+        const std::string path = normalize(line.substr(0, tab1));
+        if (isPartyScript(path) ? party : enemies)
+        {
+            files[path] = file;
+        }
     }
     if (files.empty())
     {
@@ -298,8 +313,8 @@ void dirTableFindFile(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
             g_filesLbn = filesLbn(rdram, ctx);
             if (!g_filesLbn)
             {
-                std::fprintf(stderr, "[rg] Director's Cut balance: files.dat cannot be opened; the enemies' "
-                                     "attacks and AI stay the US ones\n");
+                std::fprintf(stderr, "[rg] Director's Cut: files.dat cannot be opened; the enemies' attacks and "
+                                     "AI and the party's AI stay the US ones\n");
             }
         }
         const auto found = g_filesLbn ? g_files.find(name) : g_files.end();
@@ -313,7 +328,7 @@ void dirTableFindFile(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
             writeWord(rdram, entry + 0x10u, 0);
             if (g_filesTold.insert(name).second)
             {
-                std::fprintf(stderr, "[rg] Director's Cut balance: %s\n", name.c_str());
+                std::fprintf(stderr, "[rg] Director's Cut: %s\n", name.c_str());
             }
             setReturnU32(ctx, 1);
             ctx->pc = getRegU32(ctx, 31);
@@ -427,7 +442,7 @@ void afterFindAction(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uin
         if (!told)
         {
             told = true;
-            std::fprintf(stderr, "[rg] Director's Cut balance: a lock-on jump homes in on a CATCH target\n");
+            std::fprintf(stderr, "[rg] Director's Cut enemy behavior: a lock-on jump homes in on a CATCH target\n");
         }
     }
 }
@@ -456,8 +471,36 @@ void charaJumpToTarget(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     rg::hooks::callThen(g_jumpToTarget, rdram, ctx, runtime, &afterJumpToTarget, 0u);
 }
 
+// The game's text language: the code its paths' `?` becomes ("EN"; another
+// once a text in another language is served). Its param pack, and so its
+// tables, are that language's, with their names: never the US ones the
+// balance's tables replace.
+void tellIfAnotherLanguage(const uint8_t *rdram)
+{
+    static bool told = false;
+    if (told)
+    {
+        return;
+    }
+    const uint32_t code = readWord(rdram, kTextLanguage);
+    std::string name = code ? guestString(rdram, code, 4u) : std::string();
+    for (char &c : name)
+    {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    if (!name.empty() && name != "EN")
+    {
+        told = true;
+        std::fprintf(stderr,
+                     "[rg] Director's Cut balance: with the text in %s the enemies' numbers stay the US ones (its "
+                     "tables are the English text's); the boss rule still applies\n",
+                     name.c_str());
+    }
+}
+
 void dataTableRunCfg(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
+    tellIfAnotherLanguage(rdram);
     const uint32_t buffer = getRegU32(ctx, 5) & 0x1FFFFFFFu;
     const uint32_t size = getRegU32(ctx, 6);
     for (Table &table : g_tables)
@@ -506,66 +549,143 @@ void charaGetStatF3C(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     }
 }
 
-} // namespace
-
-void install(PS2Runtime &runtime)
+// RG_DIRECTOR_CUT_BALANCE and the two others, over the menu: 1 on, 0 off.
+void fromEnv(const char *name, std::atomic<bool> &on)
 {
-    const char *env = std::getenv("RG_DIRECTOR_CUT_BALANCE");
+    const char *env = std::getenv(name);
     if (env && *env)
     {
-        setEnabled(*env != '0');
+        on.store(*env != '0', std::memory_order_relaxed);
     }
-    if (!g_preferred.load(std::memory_order_relaxed))
-    {
-        return;
-    }
-    const std::filesystem::path folder = PS2Runtime::getIoPaths().cdRoot / "JA" / "balance";
+}
+
+// The numbers: the tables, and the boss rule with them. What is on, for the
+// log's last line; empty when nothing is.
+std::string installBalance(PS2Runtime &runtime, const std::filesystem::path &folder)
+{
     if (!loadTables(folder))
     {
         std::fprintf(stderr,
                      "[rg] the Director's Cut balance needs its tables in disc/JA/balance: run Install-Undub.bat "
                      "with your Japanese Director's Cut (or python setup.py director-cut-balance --iso <it>); "
                      "the balance stays the US one\n");
-        return;
+        return {};
     }
     if (!rg::timing::hookFunction(runtime, kDataTableRunCfg, &dataTableRunCfg, g_runCfg))
     {
+        g_tables.clear();
         std::fprintf(stderr, "[rg] the Director's Cut balance is off: its tables' hook is missing\n");
-        return;
+        return {};
     }
     const bool bossRule = rg::timing::hookFunction(runtime, kCharaGetStatF3C, &charaGetStatF3C, g_getStatF3C);
     if (!bossRule)
     {
         std::fprintf(stderr, "[rg] Director's Cut balance: bosses can still be knocked down (hook missing)\n");
     }
-    g_runtime = &runtime;
-    if (!loadFiles(folder))
-    {
-        std::fprintf(stderr, "[rg] Director's Cut balance: the enemies' attacks and AI stay the US ones, "
-                             "files.idx/files.dat missing or not whole: run Install-Undub.bat again\n");
-    }
-    else if (!rg::timing::hookFunction(runtime, kDirTableFindFile, &dirTableFindFile, g_findFile))
-    {
-        g_files.clear();
-        std::fprintf(stderr, "[rg] Director's Cut balance: the enemies' attacks and AI stay the US ones "
-                             "(hook missing)\n");
-    }
-    // The jump's hook first: it is the one that takes FLY back.
-    if (!rg::timing::hookFunction(runtime, kParseFlagNames, &parseFlagNames, g_parseFlags) ||
-        !rg::timing::hookFunction(runtime, kCharaJumpToTarget, &charaJumpToTarget, g_jumpToTarget) ||
-        !rg::timing::hookFunction(runtime, kActionMgrFindById, &actionMgrFindById, g_findAction))
-    {
-        std::fprintf(stderr, "[rg] Director's Cut balance: lock-on jumps home in on flyers only, as in the US "
-                             "(hook missing)\n");
-    }
-    std::fprintf(stderr, "[rg] Director's Cut balance on: %zu tables and %zu enemy files and AI scripts from %s%s\n",
-                 g_tables.size(), g_files.size(), folder.string().c_str(),
-                 bossRule ? ", bosses never knocked down" : "");
+    return "balance (" + std::to_string(g_tables.size()) + " tables" +
+           (bossRule ? ", bosses never knocked down)" : ")");
 }
 
-void setEnabled(bool on)
+// The enemies' files, the party's scripts or both, served from files.dat.
+bool installFiles(PS2Runtime &runtime, const std::filesystem::path &folder, bool enemies, bool party)
 {
-    g_preferred.store(on, std::memory_order_relaxed);
+    const char *what = enemies && party ? "enemy behavior and party AI" : enemies ? "enemy behavior" : "party AI";
+    if (!loadFiles(folder, enemies, party))
+    {
+        std::fprintf(stderr,
+                     "[rg] the Director's Cut %s needs files.idx and files.dat in disc/JA/balance: run "
+                     "Install-Undub.bat again; it stays the US one\n",
+                     what);
+        return false;
+    }
+    if (!rg::timing::hookFunction(runtime, kDirTableFindFile, &dirTableFindFile, g_findFile))
+    {
+        g_files.clear();
+        std::fprintf(stderr, "[rg] the Director's Cut %s is off: the file lookup's hook is missing\n", what);
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+void install(PS2Runtime &runtime)
+{
+    fromEnv("RG_DIRECTOR_CUT_BALANCE", g_balance);
+    fromEnv("RG_DIRECTOR_CUT_ENEMIES", g_enemyBehavior);
+    fromEnv("RG_DIRECTOR_CUT_PARTY_AI", g_partyAi);
+    const bool balance = g_balance.load(std::memory_order_relaxed);
+    const bool enemies = g_enemyBehavior.load(std::memory_order_relaxed);
+    const bool party = g_partyAi.load(std::memory_order_relaxed);
+    if (!balance && !enemies && !party)
+    {
+        return;
+    }
+    g_runtime = &runtime;
+    const std::filesystem::path folder = PS2Runtime::getIoPaths().cdRoot / "JA" / "balance";
+    std::vector<std::string> on;
+    if (balance)
+    {
+        std::string what = installBalance(runtime, folder);
+        if (!what.empty())
+        {
+            on.push_back(std::move(what));
+        }
+    }
+    if ((enemies || party) && installFiles(runtime, folder, enemies, party))
+    {
+        size_t partyScripts = 0;
+        for (const auto &file : g_files)
+        {
+            partyScripts += isPartyScript(file.first) ? 1u : 0u;
+        }
+        if (enemies)
+        {
+            std::string what = "enemy behavior (" + std::to_string(g_files.size() - partyScripts) + " files";
+            // The jump's hook first: it is the one that takes FLY back.
+            if (rg::timing::hookFunction(runtime, kParseFlagNames, &parseFlagNames, g_parseFlags) &&
+                rg::timing::hookFunction(runtime, kCharaJumpToTarget, &charaJumpToTarget, g_jumpToTarget) &&
+                rg::timing::hookFunction(runtime, kActionMgrFindById, &actionMgrFindById, g_findAction))
+            {
+                what += ", CATCH";
+            }
+            else
+            {
+                std::fprintf(stderr, "[rg] Director's Cut enemy behavior: lock-on jumps home in on flyers only, "
+                                     "as in the US (hook missing)\n");
+            }
+            on.push_back(what + ")");
+        }
+        if (party)
+        {
+            on.push_back("party AI (" + std::to_string(partyScripts) + " scripts)");
+        }
+    }
+    if (on.empty())
+    {
+        return;
+    }
+    std::string list;
+    for (const std::string &what : on)
+    {
+        list += (list.empty() ? "" : ", ") + what;
+    }
+    std::fprintf(stderr, "[rg] Director's Cut on, from %s: %s\n", folder.string().c_str(), list.c_str());
+}
+
+void setBalance(bool on)
+{
+    g_balance.store(on, std::memory_order_relaxed);
+}
+
+void setEnemyBehavior(bool on)
+{
+    g_enemyBehavior.store(on, std::memory_order_relaxed);
+}
+
+void setPartyAi(bool on)
+{
+    g_partyAi.store(on, std::memory_order_relaxed);
 }
 
 } // namespace rg::dcbalance

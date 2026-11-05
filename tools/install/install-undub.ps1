@@ -2,11 +2,11 @@
 #
 # Takes the Japanese voices and movies (the "undub") from the player's own
 # Japanese disc image, the Director's Cut (SCPS-17013), into disc\JA, and that
-# release's battle balance into disc\JA\balance. Run again, it copies
+# release's battle changes into disc\JA\balance. Run again, it copies
 # only what is missing. It uses the Python that Install.bat downloaded into
 # toolchain\, so Install.bat has to have run first. Afterwards, in the game's
 # menu (F1): Settings > Language > Undub, Settings > Game > Director's Cut
-# balance.
+# balance, enemy behavior and party AI.
 #
 #   Install-Undub.bat                   (or drop the Japanese .iso onto it)
 #   Install-Undub.bat -Iso "D:\Rogue Galaxy (Japan).iso"
@@ -78,7 +78,7 @@ foreach ($name in @("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP")) {
 
 Write-Host ""
 Write-Host "Copying the voices and movies (about 3 GB; a few minutes, less for what is already there),"
-Write-Host "then the Director's Cut's battle balance."
+Write-Host "then the files of the Director's Cut options (battle balance, enemy behavior, party AI)."
 $ErrorActionPreference = "Continue"
 Push-Location -LiteralPath $Root
 try {
@@ -94,9 +94,9 @@ if ($code -ne 0) {
 
 Write-Host ""
 if (Test-Path -LiteralPath (Join-Path $Root "disc\JA\balance\tables.txt")) {
-    Write-Host "Done. In the game, press F1: Settings > Language turns on the undub, and Settings > Game >" -ForegroundColor Green
-    Write-Host "Director's Cut balance the Japanese battle balance. Both take effect at the next start." -ForegroundColor Green
+    Write-Host "Done. In the game, press F1: Settings > Language turns on the undub, and Settings > Game the" -ForegroundColor Green
+    Write-Host "Director's Cut balance, enemy behavior and party AI. They take effect at the next start." -ForegroundColor Green
 } else {
     Write-Host "Done. In the game, press F1: Settings > Language turns on the undub, from the next start." -ForegroundColor Green
-    Write-Host "The Director's Cut battle balance (an option) was not made; the reason is above."
+    Write-Host "The Director's Cut options' files were not made; the reason is above."
 }
