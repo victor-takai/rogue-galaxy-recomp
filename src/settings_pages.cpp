@@ -117,7 +117,7 @@ constexpr Row kNumbers[] = {
     {"field_of_view", "Field of View", Kind::Number},
     {"camera_distance", "Camera Distance", Kind::Number},
     {"draw_distance", "Draw Distance", Kind::Number},
-    {"encounter_rate", "Encounters", Kind::Number},
+    {"encounter_rate", "Encounter Rate", Kind::Number},
     {"battle_experience", "Experience", Kind::Number},
     {"battle_money", "Money", Kind::Number},
     {"item_drops", "Item Drops", Kind::Number},
