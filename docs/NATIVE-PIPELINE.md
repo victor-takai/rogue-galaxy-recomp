@@ -71,20 +71,29 @@ game built them. Every reference is an id (`native_records.h`):
   VIF1 thread sends, and reads the registers back after a libgraph stub
   writes them, patch 0031). A mesh made a draw no longer goes to the GS.
 - **Present**: the flip pushes a `Present` of the scene target.
+- **Effects as sprite draws** (step 5, `src/native_effects.h`): hooks note
+  which packet memory each effect function wrote (glare, plane shadow,
+  CBlur and CBlur draw, bloom, depth of field, the refraction's capture,
+  focus filter, shadow-map blur, colour filter, and the flip's copy into
+  the display buffer). The VIF1 thread holds those packets, builds a
+  `GSNativeEffect` from their sprites (`src/native_effect.h`: each sprite
+  as the GS would draw it, its strips joined), and
+  `rg::nativeproducer::effect` makes each op a window-space mesh draw
+  between targets, all or nothing per effect. Made, the packets go on with
+  their kicks withheld (`XYZ2` as `XYZ3`), so the GS and the draw-state
+  mirror end with the registers they would have had. An effect the builder
+  or the producer refuses goes on as packets, and the log says why once.
+  `RG_NATIVE_<EFFECT>=0` turns one off; `RG_NATIVE_EFFECTS_LOG=1` prints the
+  first of each built.
 
-Under the pipeline the screen shows the 3D meshes only, and untextured:
-the textures and palettes are made and uploaded, but nothing yet hands
-them to the meshes (`takeProduced`, `replaceUpload`, `hostUpload` and
-`noteLocalCopy` have their callers in the next step), so every textured
-mesh counts as a texture miss and draws white. A mesh whose material is
-not modelled is drawn as near as the renderer can (counted); one into a
-buffer the game never named has no target and stays on the GS. 2D (the
-HUD, the menus, text), the effects (glare, bloom, shadows, depth of
-field, CBlur, the per-object composites: the party in the field), local
-copies and the game's colour and depth reads still go to the GS, which
-keeps running unseen, so they are missing from the screen. Those, the
-pipeline's own present, and a check that nothing reaches the GS any more,
-come next.
+Under the pipeline the screen shows the 3D meshes and the effects. 2D (the
+HUD, the menus, text), the per-object composites, local copies and the
+game's colour and depth reads still go to the GS, which keeps running
+unseen. Known from the archive branch's runs: most of what the effects'
+offscreen buffers hold comes from 2D pieces (their clears among them), so
+until 2D comes the effects can read buffers the renderer never filled.
+Those, the composites as object layers, the pipeline's own present, and a
+check that nothing reaches the GS any more, come next.
 
 Memory: the renderer keeps the cameras the producer can still name (the
 newest `2 * kCameraWindow`); textures are evicted over a byte budget and
@@ -102,4 +111,5 @@ without the native renderer it is ignored and says so. The log says
 `[native-pipeline] on`. With `DQ8_GFX_STATS_EVERY`, the stats report gets
 the renderer's `[native-pipeline]` line (records by kind, the readiness
 counters R1-R5) and the producer's `[native-producer]` line (textures,
-palettes and targets made, meshes made and why not, material misses).
+palettes and targets made, meshes made and why not, material misses,
+effects made and why not).
