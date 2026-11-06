@@ -1,0 +1,32 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/Helpers/Support.h b/ps2xRuntime/src/lib/Kernel/Stubs/Helpers/Support.h
+index 583cc81..89dd728 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/Helpers/Support.h
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/Helpers/Support.h
+@@ -85,7 +85,7 @@ namespace
+     {
+         path = normalizePathSeparators(std::move(path));
+         std::string lower = toLowerAscii(path);
+-        if (lower.rfind("cdrom0:", 0) == 0)
++        if (lower.rfind("cdrom0:", 0) == 0 || lower.rfind("cdrom1:", 0) == 0)
+         {
+             path = path.substr(7);
+         }
+diff --git a/ps2xRuntime/src/lib/Kernel/Syscalls/Helpers/Runtime.h b/ps2xRuntime/src/lib/Kernel/Syscalls/Helpers/Runtime.h
+index 6909364..dc71769 100644
+--- a/ps2xRuntime/src/lib/Kernel/Syscalls/Helpers/Runtime.h
++++ b/ps2xRuntime/src/lib/Kernel/Syscalls/Helpers/Runtime.h
+@@ -132,9 +132,12 @@ inline std::string translatePs2Path(const char *ps2Path)
+         return resolveWithBase(getConfiguredHostRoot(), pathStr.substr(prefixLength));
+     }
+ 
+-    if (lower.rfind("cdrom0:", 0) == 0 || lower.rfind("cdrom:", 0) == 0)
++    // cdrom1: (Rogue Galaxy: added) is how the game names its second layer's
++    // overlays (cdrom1:/BIN/INSECT.BIN); the extracted tree holds both layers'
++    // files in one folder, so it is the same root as cdrom0:.
++    if (lower.rfind("cdrom0:", 0) == 0 || lower.rfind("cdrom1:", 0) == 0 || lower.rfind("cdrom:", 0) == 0)
+     {
+-        const std::size_t prefixLength = (lower.rfind("cdrom0:", 0) == 0) ? 7 : 6;
++        const std::size_t prefixLength = (lower.rfind("cdrom:", 0) == 0) ? 6 : 7;
+         return resolveWithBase(getConfiguredCdRoot(), pathStr.substr(prefixLength));
+     }
+ 
