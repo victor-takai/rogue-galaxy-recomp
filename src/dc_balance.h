@@ -23,8 +23,13 @@ class PS2Runtime;
 // named in the list is overwritten there with the Japanese numbers before
 // it runs (with its size: never larger than the US one). Run again from the
 // same buffer, a table is already the Japanese one; the file's own header
-// says where it ends. A table in another language (another text's names) is
-// not the US one, and stays as it is.
+// says where it ends. A European text (src/text_language.h) has tables of its
+// own, the US numbers with its names; the same step makes the Japanese numbers
+// with those names for each language in disc/EU, listed in tables.txt under
+// the language's names (monster_param_FR.cfg.bin), matched the same way, and
+// only while the game's text is in that language (the code at 0x481528). A
+// language without them keeps the US numbers, with a line in the log; a table
+// whose file is not whole is left out, the others still apply.
 //
 // The rule in code: the Director's Cut's CharaResolveActionHit (JP 0x3B7068)
 // sets the target's knockdown resistance to 10, never knocked down, for a
