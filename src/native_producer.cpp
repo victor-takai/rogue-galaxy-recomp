@@ -2533,6 +2533,11 @@ bool effect(const GSNativeEffect &e)
     return true;
 }
 
+uint64_t uploadHash(const uint8_t *data, size_t size)
+{
+    return imageHash(data, size);
+}
+
 bool pipelineOn()
 {
     return native::enabled();
@@ -2644,6 +2649,7 @@ bool takeProduced(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, bool &, uint
 void noteContinuedInPacket() {}
 bool mesh(const GSNativeMesh &, const GSDrawState *, const uint8_t *, uint32_t) { return false; }
 bool pipelineOn() { return false; }
+uint64_t uploadHash(const uint8_t *, size_t) { return 0u; }
 uint32_t captureTarget(uint32_t) { return 0u; }
 bool readDepth(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, std::vector<uint8_t> &) { return false; }
 void replaceUpload(bool, uint32_t, uint32_t, uint32_t, uint32_t, const uint8_t *, uint32_t) {}

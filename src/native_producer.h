@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -122,6 +123,8 @@ void noteLocalCopy(uint32_t sbp, uint32_t sbw, uint32_t spsm, uint32_t sx, uint3
 // the format they are read in.
 void replaceUpload(bool palette, uint32_t dbp, uint32_t dpsm, uint32_t width, uint32_t height, const uint8_t *data,
                    uint32_t bytes);
+// The hash takeProduced's `hash` is of, for bytes the VIF1 thread saw sent.
+uint64_t uploadHash(const uint8_t *data, size_t size);
 void noteWithheld(bool palette, uint32_t imageBytes);
 void notePassed(Passed why);
 void noteSplit();
