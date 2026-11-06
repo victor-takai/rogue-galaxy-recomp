@@ -690,6 +690,80 @@ void pauseReasonDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     g_originalPauseDraw(rdram, ctx, runtime);
 }
 
+// The main menu's System submenu (Settings and Help, Opciones and Ayuda): its
+// highlight (widget 0x1AE) and frame (0x1AF's sprites 2 to 10) come from the
+// layout, wider in a European text (european.py keeps the PAL groups' room:
+// 78 for Spanish against 70), but MenuMainSubSelectLayoutCb (0x294550, the
+// list's callback, after which nothing else sizes them) sets the unselected
+// row's background (0x1AF's sprite 0 or 1) 70 wide, the US figure, which left
+// a strip of the backdrop at its right. The PAL executable sets it to the
+// highlight's width, as this does after the callback (the same 70 in
+// English). The UI's widgets are a list from 0x4DB1B0; a widget's sprites
+// (+0x20) are 0x20 bytes each, the width an s16 at +4; the callback's a0 has
+// the selected row, an s16 at +0x12.
+constexpr uint32_t kMainSubSelectLayout = 0x00294550u;
+constexpr uint32_t kMainMenuUi = 0x004DB1B0u;
+constexpr uint16_t kSubHighlight = 0x1AEu;
+constexpr uint16_t kSubRows = 0x1AFu;
+constexpr uint32_t kSelectedRow = 0x12u;
+constexpr uint32_t kWidgetSprites = 0x20u;
+constexpr uint32_t kSpriteBytes = 0x20u;
+constexpr uint32_t kSpriteWidth = 0x4u;
+PS2Runtime::RecompiledFunction g_originalSubLayout = nullptr;
+
+// The widget `id` of the UI at `ui`, or 0.
+uint32_t findWidget(const uint8_t *rdram, uint32_t ui, uint16_t id)
+{
+    uint32_t node = readWord(rdram, ui);
+    for (int guard = 0; node != 0u && guard < 4096; ++guard)
+    {
+        const uint32_t widget = readWord(rdram, node);
+        if (widget == 0u)
+        {
+            return 0u;
+        }
+        uint16_t widgetId = 0u;
+        std::memcpy(&widgetId, rdram + (widget & 0x1FFFFFFFu), sizeof(widgetId));
+        if (widgetId == id)
+        {
+            return widget;
+        }
+        node = readWord(rdram, node + 8u);
+    }
+    return 0u;
+}
+
+void mainSubSelectLayout(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t list = getRegU32(ctx, 4);
+    g_originalSubLayout(rdram, ctx, runtime);
+    const uint32_t highlight = findWidget(rdram, kMainMenuUi, kSubHighlight);
+    const uint32_t rows = findWidget(rdram, kMainMenuUi, kSubRows);
+    const uint32_t highlightSprites = highlight ? readWord(rdram, highlight + kWidgetSprites) : 0u;
+    const uint32_t rowSprites = rows ? readWord(rdram, rows + kWidgetSprites) : 0u;
+    if (list == 0u || highlightSprites == 0u || rowSprites == 0u)
+    {
+        return;
+    }
+    int16_t width = 0, selected = 0;
+    std::memcpy(&width, rdram + ((highlightSprites + kSpriteWidth) & 0x1FFFFFFFu), sizeof(width));
+    std::memcpy(&selected, rdram + ((list + kSelectedRow) & 0x1FFFFFFFu), sizeof(selected));
+    if (width <= 0)
+    {
+        return;
+    }
+    for (int16_t row = 0; row < 2; ++row)
+    {
+        const uint32_t at = (rowSprites + static_cast<uint32_t>(row) * kSpriteBytes + kSpriteWidth) & 0x1FFFFFFFu;
+        int16_t rowWidth = 0;
+        std::memcpy(&rowWidth, rdram + at, sizeof(rowWidth));
+        if (row != selected && rowWidth != 0)
+        {
+            std::memcpy(rdram + at, &width, sizeof(width));
+        }
+    }
+}
+
 void returnSize(R5900Context *ctx, uint32_t size, const char *what)
 {
     std::fprintf(stderr, "[rg] %s: 0x%X blocks (the PAL size)\n", what, size);
@@ -851,6 +925,10 @@ void install(PS2Runtime &runtime)
     if (!rg::timing::hookFunction(runtime, kPauseReasonDraw, &pauseReasonDraw, g_originalPauseDraw))
     {
         std::fprintf(stderr, "[rg] the pause screen keeps the US pieces\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kMainSubSelectLayout, &mainSubSelectLayout, g_originalSubLayout))
+    {
+        std::fprintf(stderr, "[rg] the main menu's System list keeps the US rows' width\n");
     }
 }
 
