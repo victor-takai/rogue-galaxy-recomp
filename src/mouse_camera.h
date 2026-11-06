@@ -47,7 +47,7 @@ void pump(SDL_Window *window, bool letGo, const Use &use);
 
 // Whether the player is not in control of the party but in one of the game's
 // menus, a scene or a talk (where the right click goes back and the wheel
-// moves up and down; dq8::gfx::SdlPadInput::setMenuMouse). Read from the
+// moves up and down; dq8::gfx::SdlPadInput::setInMenus). Read from the
 // game's memory, any thread.
 bool inGameMenu(const uint8_t *rdram);
 

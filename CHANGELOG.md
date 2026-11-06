@@ -30,10 +30,10 @@
   pause, Alt+Tab or a few seconds on the controller alone let it go.
 - Keyboard and mouse: new default keys made for them (the sword on the
   left click, the guard on E or the right click, jump on Space, the gun on
-  F, the menus on Tab; the table is in the README), mouse buttons and the
+  F, the menus on Tab or Esc; the table is in the README), mouse buttons and the
   wheel in F1 > Settings > Controls, and Walk (hold), Left Ctrl, since
   keys always push the stick all the way. In the game's menus the right
-  click goes back and the wheel moves up and down. The game's text shows
+  click and Esc go back and the wheel moves up and down. The game's text shows
   the keys and mouse buttons instead of the PlayStation's while you play
   with them. If you never changed a key, the new keys replace the old
   ones; if you changed any, all of yours stay.

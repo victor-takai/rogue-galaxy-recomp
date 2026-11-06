@@ -68,9 +68,11 @@ struct PadConfig {
     bool invertCameraY = false;
 
     // Which keyboard defaults a settings file was written with: before 2 (no
-    // `layout` in [keyboard]), the emulator-like keys (X, C, Z, V...). A file
-    // whose keys are still all those gets the new ones.
-    static constexpr int kKeyboardLayout = 2;
+    // `layout` in [keyboard]), the emulator-like keys (X, C, Z, V...), and a
+    // file whose keys are still all those gets the new ones; 2, Esc with
+    // Space on Circle, which moves to Triangle (3: Esc opens the menu and
+    // goes back in it, never jumps).
+    static constexpr int kKeyboardLayout = 3;
     int keyboardLayout = kKeyboardLayout;
 
     static PadConfig defaults();
@@ -136,11 +138,11 @@ public:
     uint64_t mouseMotionAt() const { return m_mouseMotionAt; }
     uint64_t controllerAt() const { return m_controllerAt; }
     // In the game's own menus (the host says when, before the events): the
-    // right click is Circle, back, and the wheel D-pad up and down, whatever
-    // they are bound to. Mouse buttons held when this changes count as
-    // released until they are let go, so a guard held as a menu opens does
-    // not close it.
-    void setMenuMouse(bool on);
+    // right click and Esc are Circle, back, and the wheel D-pad up and down,
+    // whatever they are bound to. Mouse buttons and Esc held when this
+    // changes count as released until they are let go, so a guard held, or
+    // the Esc that opened a menu, does not close it.
+    void setInMenus(bool on);
     // The pad as the bindings read the devices now, even while the menu
     // keeps it from the game; for a live preview of the bindings.
     PadSnapshot preview() const;
@@ -173,7 +175,8 @@ private:
     bool m_suppressPending = false;
     uint32_t m_sticks = 0x80808080u;
     bool m_walking = false;
-    bool m_menuMouse = false;
+    bool m_inMenus = false;
+    bool m_escSuppressed = false;
     SDL_MouseButtonFlags m_mouseButtons = 0u;
     SDL_MouseButtonFlags m_mouseSuppressed = 0u;
     uint64_t m_keyboardMouseAt = 0u;

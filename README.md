@@ -61,15 +61,15 @@ PCSX2 and uninstalling, is in [docs/INSTALL.md](docs/INSTALL.md).
 
 A gamepad, or the keyboard and mouse: the sword on the left click, the
 guard on E or the right click, jump on Space, the gun on F, the menus on
-Tab. In the game's menus the right click goes back and the wheel moves up
-and down. All of it can be changed in F1 > Settings > Controls.
+Tab or Esc. In the game's menus the right click and Esc go back and the
+wheel moves up and down. All of it can be changed in F1 > Settings > Controls.
 
 | Pad | Keyboard and mouse |
 |---|---|
 | Left stick | W A S D (hold Left Ctrl to walk) |
 | Right stick | The mouse, or I J K L |
 | D-pad | Arrow keys; the wheel is left and right |
-| ✕ / ○ / ▢ / △ | Left click / Space or Esc / F / Tab |
+| ✕ / ○ / ▢ / △ | Left click / Space / F / Tab or Esc |
 | L1 / R1 / L2 / R2 | Q / E or right click / 1 / 2 |
 | L3 / R3 | C / V |
 | Start / Select | Enter / M |

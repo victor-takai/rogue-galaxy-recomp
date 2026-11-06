@@ -231,6 +231,21 @@ void parseSettings(const std::string &text, Settings &settings) {
         if (equals != std::string::npos)
             apply(settings, section, trim(line.substr(0, equals)), trim(line.substr(equals + 1u)));
     }
+    if (settings.pad.keyboardLayout == 2) {
+        // Layout 2 had Esc with Space on Circle, where it jumped; 3 has it
+        // with Tab on Triangle. Moved where those two are as 2 had them.
+        auto &circle = settings.pad.keyboard[static_cast<size_t>(PadInput::Circle)];
+        auto &triangle = settings.pad.keyboard[static_cast<size_t>(PadInput::Triangle)];
+        const gfx::PadBinding space = gfx::PadBinding::key(SDL_SCANCODE_SPACE);
+        const gfx::PadBinding escape = gfx::PadBinding::key(SDL_SCANCODE_ESCAPE);
+        const gfx::PadBinding tab = gfx::PadBinding::key(SDL_SCANCODE_TAB);
+        if (circle == gfx::PadBindingSlots{space, escape} && triangle == gfx::PadBindingSlots{tab, {}}) {
+            circle = {space, {}};
+            triangle = {tab, escape};
+            std::fprintf(stderr, "[ui] keyboard: Esc moves from Circle to Triangle\n");
+        }
+        settings.pad.keyboardLayout = gfx::PadConfig::kKeyboardLayout;
+    }
     if (settings.pad.keyboardLayout < gfx::PadConfig::kKeyboardLayout) {
         // Keys still all as the first defaults had them take the new ones;
         // anyone's own keys stay (Walk, which that layout lacked, keeps its
