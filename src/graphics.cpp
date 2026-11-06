@@ -349,6 +349,22 @@ bool SDLCALL countMarkKeys(void *, SDL_Event *event)
     return true;
 }
 
+// "Walk (hold)" (Controls): the left stick at 70% of its push each way, after
+// the squaring (src/stick_response.cpp). The game drops the first 50 of an
+// axis's 128 steps and runs from a length of 0.9, so a key's full push
+// walks, at 0.51 straight and 0.72 on a diagonal.
+uint32_t walkSticks(uint32_t sticks)
+{
+    constexpr float kWalkPush = 0.7f;
+    const auto scaled = [](uint32_t byte) {
+        const long value = std::lround(128.0f + (static_cast<float>(byte) - 128.0f) * kWalkPush);
+        return static_cast<uint32_t>(std::clamp(value, 0L, 255L));
+    };
+    const uint32_t lx = scaled((sticks >> 8u) & 0xFFu);
+    const uint32_t ly = scaled(sticks & 0xFFu);
+    return (sticks & 0xFFFF0000u) | (lx << 8u) | ly;
+}
+
 // Called once per frame by the runtime when the backend owns the window:
 // services SDL events (the menu takes its own first) and hands the host pad
 // to the runtime.
@@ -373,8 +389,12 @@ bool pump(void *userData)
     {
         return false;
     }
-    rg::mousecamera::pump(backend->window(),
-                          (g_menu && g_menu->capturesInput()) || g_hostPaused.load(std::memory_order_relaxed));
+    {
+        const dq8::gfx::SdlPadInput &pad = backend->padInput();
+        rg::mousecamera::pump(backend->window(),
+                              (g_menu && g_menu->capturesInput()) || g_hostPaused.load(std::memory_order_relaxed),
+                              {pad.keyboardMouseAt(), pad.mouseMotionAt(), pad.controllerAt()});
+    }
     updateButtonGlyphs(*backend);
     // The shape the picture takes with Widescreen on, for the game's camera:
     // under Auto the window's.
@@ -480,7 +500,12 @@ bool pump(void *userData)
     }
     uint32_t held = 0u, pressed = 0u, sticks = 0u;
     backend->hostPadState(held, pressed, sticks);
-    ps2PadPublishHostState(held, pressed, rg::pad::shapeSticks(sticks));
+    sticks = rg::pad::shapeSticks(sticks);
+    if (backend->padInput().walking())
+    {
+        sticks = walkSticks(sticks);
+    }
+    ps2PadPublishHostState(held, pressed, sticks);
     return true;
 }
 
@@ -626,9 +651,9 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         {"mouse_camera", "Mouse camera",
          "The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right "
          "looks right and up looks up, whatever the game's camera options. Locked on a target in battle it only "
-         "turns, as with the stick. While it is on, the mouse stays in the window with the cursor hidden; F1, the "
-         "pause (F2) or Alt+Tab lets it go.",
-         false},
+         "turns, as with the stick. Once you press a key or click, the mouse stays in the window with the cursor "
+         "hidden; F1, the pause (F2), Alt+Tab or a few seconds on the controller alone let it go.",
+         true},
         {"mouse_sensitivity", "Mouse sensitivity", "How far the mouse turns the camera, against 1.0x.", false, 25,
          400, 100, kTimes, 25},
         {"mouse_invert_vertical", "Invert mouse vertical",

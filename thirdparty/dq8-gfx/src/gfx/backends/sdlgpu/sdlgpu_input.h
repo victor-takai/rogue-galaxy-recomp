@@ -17,20 +17,29 @@ enum class PadInput : uint8_t {
     Start, Select,
     LeftStickUp, LeftStickDown, LeftStickLeft, LeftStickRight,
     RightStickUp, RightStickDown, RightStickLeft, RightStickRight,
+    // Not the pad's: held, the left stick is pushed only part of the way, a
+    // walk (keys push it all the way).
+    Walk,
     Count
 };
 constexpr size_t kPadInputCount = static_cast<size_t>(PadInput::Count);
 
-// One host input: a key, a gamepad button, or one direction of a gamepad axis.
+// One host input: a key, a gamepad button, one direction of a gamepad axis, a
+// mouse button, or a turn of the mouse wheel. The mouse's go in the keyboard's
+// slots; a wheel turn is a press, never held.
 struct PadBinding {
-    enum class Kind : uint8_t { None, Key, Button, Axis };
+    enum class Kind : uint8_t { None, Key, Button, Axis, Mouse, Wheel };
     Kind kind = Kind::None;
-    int16_t code = 0; // SDL_Scancode, SDL_GamepadButton or SDL_GamepadAxis
-    int8_t direction = 1;
+    // SDL_Scancode, SDL_GamepadButton, SDL_GamepadAxis or SDL's mouse button
+    // (SDL_BUTTON_LEFT to SDL_BUTTON_X2); a wheel's is 0.
+    int16_t code = 0;
+    int8_t direction = 1; // an axis's, or the wheel's: 1 away from you (up), -1 toward
 
     static PadBinding key(SDL_Scancode scancode);
     static PadBinding button(SDL_GamepadButton button);
     static PadBinding axis(SDL_GamepadAxis axis, int direction);
+    static PadBinding mouse(int button);
+    static PadBinding wheel(int direction);
     bool bound() const { return kind != Kind::None; }
     bool operator==(const PadBinding &) const = default;
 };
@@ -82,6 +91,7 @@ struct ControllerInfo {
 struct PadSnapshot {
     uint32_t held = 0u;
     uint32_t sticks = 0x80808080u;
+    bool walking = false; // PadInput::Walk held
 };
 
 // The pad report's bit for a button; 0 for a stick direction.
@@ -108,7 +118,15 @@ public:
     void setConfig(const PadConfig &config);
     const PadConfig &config() const { return m_config; }
     std::vector<ControllerInfo> controllers() const;
-    PadSnapshot snapshot() const { return {m_held, m_sticks}; }
+    PadSnapshot snapshot() const { return {m_held, m_sticks, m_walking}; }
+    // Whether PadInput::Walk is held, as of the last poll.
+    bool walking() const { return m_walking; }
+    // SDL_GetTicks() of the last press of a key or mouse button bound to the
+    // pad (or a wheel turn), of the last mouse motion, and of the last
+    // controller button or push past half a stick: which the player uses.
+    uint64_t keyboardMouseAt() const { return m_keyboardMouseAt; }
+    uint64_t mouseMotionAt() const { return m_mouseMotionAt; }
+    uint64_t controllerAt() const { return m_controllerAt; }
     // The pad as the bindings read the devices now, even while the menu
     // keeps it from the game; for a live preview of the bindings.
     PadSnapshot preview() const;
@@ -140,6 +158,10 @@ private:
     uint32_t m_suppressed = 0u;
     bool m_suppressPending = false;
     uint32_t m_sticks = 0x80808080u;
+    bool m_walking = false;
+    uint64_t m_keyboardMouseAt = 0u;
+    uint64_t m_mouseMotionAt = 0u;
+    uint64_t m_controllerAt = 0u;
 };
 
 } // namespace dq8::gfx

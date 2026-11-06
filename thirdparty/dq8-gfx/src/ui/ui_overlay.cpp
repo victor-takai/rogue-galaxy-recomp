@@ -333,6 +333,11 @@ bool Overlay::handleEvent(const SDL_Event &event) {
     ImGui::SetCurrentContext(m_context);
     if (m_capture.active && captureEvent(event))
         return true;
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && m_captureMouseDown != 0u &&
+        event.button.button == m_captureMouseDown) {
+        m_captureMouseDown = 0u;
+        return true;
+    }
     switch (event.type) {
     case SDL_EVENT_GAMEPAD_ADDED: {
         const char *name = SDL_GetGamepadNameForID(event.gdevice.which);
@@ -474,6 +479,18 @@ bool Overlay::captureEvent(const SDL_Event &event) {
                 return true;
             }
             finish(gfx::PadBinding::key(event.key.scancode));
+            return true;
+        }
+        // A mouse button, outside the prompt (its own buttons take theirs),
+        // or a turn of the wheel.
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !m_capturePromptHovered) {
+            m_captureMouseDown = event.button.button;
+            finish(gfx::PadBinding::mouse(event.button.button));
+            return true;
+        }
+        if (event.type == SDL_EVENT_MOUSE_WHEEL && event.wheel.y != 0.0f) {
+            const bool flipped = event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED;
+            finish(gfx::PadBinding::wheel((event.wheel.y > 0.0f) != flipped ? 1 : -1));
             return true;
         }
         return event.type == SDL_EVENT_KEY_UP;
@@ -995,10 +1012,12 @@ void Overlay::drawCapturePrompt() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(1.6f), em(1.2f)));
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
+    m_capturePromptHovered = false;
     if (ImGui::BeginPopupModal(kName, nullptr, flags)) {
         if (!m_capture.active) {
             ImGui::CloseCurrentPopup();
         } else {
+            m_capturePromptHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
             decorateWindow();
             ImDrawList *list = ImGui::GetWindowDrawList();
             const float glyph = em(2.4f);
@@ -1012,7 +1031,7 @@ void Overlay::drawCapturePrompt() {
                         gfx::padInputName(m_capture.input));
             ImGui::PopFont();
             if (m_capture.keyboard)
-                mutedText("%s", "Any key works, even Esc.");
+                mutedText("%s", "Any key works, even Esc; a mouse button outside this box, or the wheel.");
             else
                 mutedText("On the controller. Hold %s or press Esc to cancel.",
                           padButtonName(SDL_GAMEPAD_BUTTON_EAST).c_str());

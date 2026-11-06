@@ -314,6 +314,11 @@ private:
     int m_selectBindings = -1;
     gfx::PadInput m_hoveredInput = gfx::PadInput::Count;
     Capture m_capture;
+    // Whether the pointer is over the capture prompt (its buttons are not a
+    // binding), and the mouse button a capture took, whose release the menu
+    // must not see.
+    bool m_capturePromptHovered = false;
+    uint8_t m_captureMouseDown = 0u;
     uint32_t m_pendingScale = 0u;
     double m_pendingScaleSince = 0.0;
 

@@ -152,13 +152,36 @@ void install()
 }
 
 #if defined(RG_HAS_SDLGPU)
-void pump(SDL_Window *window, bool letGo)
+// Whether the player plays with the keyboard and mouse: from a press (a bound
+// key, a click, the wheel) until the controller alone has been used this
+// long, the keys and the mouse untouched.
+constexpr uint64_t kControllerLetGo = 5000u; // milliseconds
+
+bool playsWithMouse(const Use &use)
+{
+    static bool playing = false;
+    static uint64_t pressSeen = 0u;
+    if (use.keyboardMouse > pressSeen)
+    {
+        pressSeen = use.keyboardMouse;
+        playing = true;
+    }
+    const uint64_t lastUse = std::max(use.keyboardMouse, use.mouseMotion);
+    if (playing && use.controller > lastUse && SDL_GetTicks() - lastUse > kControllerLetGo)
+    {
+        playing = false;
+    }
+    return playing;
+}
+
+void pump(SDL_Window *window, bool letGo, const Use &use)
 {
     if (window == nullptr)
     {
         return;
     }
-    const bool want = g_enabled.load(std::memory_order_relaxed) && SDL_GetKeyboardFocus() == window && !letGo;
+    const bool want = g_enabled.load(std::memory_order_relaxed) && SDL_GetKeyboardFocus() == window && !letGo &&
+                      playsWithMouse(use);
     // Set whenever SDL's state is not what is wanted, a second apart after a
     // failure, which the log says once.
     static uint64_t nextTry = 0u;
@@ -206,7 +229,7 @@ void pump(SDL_Window *window, bool letGo)
 }
 #else
 // Without the SDL window (the software GS) there is no mouse to read.
-void pump(SDL_Window *, bool)
+void pump(SDL_Window *, bool, const Use &)
 {
 }
 #endif
