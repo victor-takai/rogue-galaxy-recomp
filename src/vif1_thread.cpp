@@ -25,6 +25,7 @@
 #include "native_renderer.h"
 #include "vu1_native.h"
 #include "draw_state_mirror.h"
+#include "native_effects.h"
 #include "native_producer.h"
 #include "ps2_runtime.h"
 #include "ps2_syscalls.h"
@@ -51,6 +52,18 @@ thread_local uint32_t t_vu1Camera = 0;
 // VU1, its packets are collected (check) or dropped (replace).
 thread_local std::vector<std::vector<uint8_t>> *t_vu1Packets = nullptr;
 thread_local bool t_dropVu1Packets = false;
+// The native pipeline's effects (src/native_effects.h); read at first use,
+// after the menu's setting.
+bool nativeEffects()
+{
+    static const bool on = rg::nativefx::enabled();
+    return on;
+}
+// The VIF1 thread's list: its bytes and where each piece came from, for the
+// EE address of a packet in it (listAddress).
+thread_local const uint8_t *t_listData = nullptr;
+thread_local size_t t_listSize = 0u;
+thread_local const std::vector<std::pair<uint32_t, uint32_t>> *t_listOrigins = nullptr;
 // Read when the thread starts, after the menu's native renderer setting
 // (static initializers run before the menu hands it over).
 rg::vu1native::Mode nativeMode()
@@ -538,6 +551,9 @@ void deliverPacket(GS &gs, const uint8_t *data, uint32_t size);
 // data memory a program's mesh was built from, for the native pipeline's
 // mesh draw (rg::nativeproducer::mesh); null for others.
 void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data = nullptr);
+// An effect's packets held on the VIF1 thread go on, as the renderer's
+// effect or as they are (below).
+void flushEffect();
 // For busyReport's VU1 pair counts.
 PS2Runtime *g_runtime = nullptr;
 
@@ -960,10 +976,14 @@ private:
             const auto started = std::chrono::steady_clock::now();
             try
             {
+                t_listData = m_current.data.data();
+                t_listSize = m_current.data.size();
+                t_listOrigins = &m_current.origins;
                 if (!m_current.data.empty())
                 {
                     memory.processVIF1Data(m_current.data.data(), static_cast<uint32_t>(m_current.data.size()));
                 }
+                flushEffect();
             }
             catch (const std::exception &error)
             {
@@ -1049,7 +1069,8 @@ private:
 
 Vif1Thread *g_thread = nullptr;
 
-void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
+// A packet to the GS as it is.
+void sendPacket(GS &gs, const uint8_t *data, uint32_t size)
 {
     // The native pipeline's draw-state mirror follows every packet, in the
     // order the GS gets them.
@@ -1071,8 +1092,174 @@ void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
     gs.processGIFPacket(data, size);
 }
 
+// The packets of an effect the producer may draw (src/native_effects.h),
+// held on the VIF1 thread until something else goes to the GS (an effect's
+// packets come in one run) or the list ends.
+struct HeldEffect
+{
+    rg::nativefx::Effect effect = rg::nativefx::Effect::None;
+    uint32_t unit = 0u; // the colour filter's colour
+    GS *gs = nullptr;
+    std::vector<std::vector<uint8_t>> packets;
+};
+thread_local HeldEffect t_held;
+std::atomic<uint64_t> g_effectsNative{0u};
+std::atomic<uint64_t> g_effectsAsPackets{0u};
+
+// The EE address of a packet in the VIF1 thread's list, or ~0u.
+uint32_t listAddress(const uint8_t *data)
+{
+    if (!t_listData || !t_listOrigins || data < t_listData || data >= t_listData + t_listSize)
+    {
+        return ~0u;
+    }
+    const uint32_t offset = static_cast<uint32_t>(data - t_listData);
+    auto it = std::upper_bound(t_listOrigins->begin(), t_listOrigins->end(), offset,
+                               [](uint32_t value, const auto &piece) { return value < piece.first; });
+    if (it == t_listOrigins->begin())
+    {
+        return ~0u;
+    }
+    --it;
+    return it->second + (offset - it->first);
+}
+
+// An effect built from its packets, as the producer's draws: then its
+// packets go on with their kicks withheld (the registers they set still
+// reach the GS and the draw-state mirror). False, with `why`, leaves the
+// packets to go on as they are.
+bool drawEffect(rg::nativefx::Effect kind, const std::vector<std::vector<uint8_t>> &packets, uint32_t unit,
+                GS &gs, std::string &why)
+{
+    thread_local GSNativeEffect effect;
+    thread_local std::vector<std::vector<uint8_t>> withheld;
+    if (!rg::nativefx::build(kind, packets, effect, withheld, why, unit))
+        return false;
+    rg::nativeproducer::noteEffect(effect);
+    if (!rg::nativeproducer::effect(effect))
+    {
+        why = "the producer cannot draw it (its stats line says why)";
+        return false;
+    }
+    for (const std::vector<uint8_t> &packet : withheld)
+    {
+        sendPacket(gs, packet.data(), static_cast<uint32_t>(packet.size()));
+    }
+    return true;
+}
+
+void countEffect(bool drawn, rg::nativefx::Effect kind, const std::string &why,
+                 const std::vector<std::vector<uint8_t>> &packets)
+{
+    if (drawn)
+    {
+        const uint64_t count = ++g_effectsNative;
+        if (count == 1u || count % 3600u == 0u)
+        {
+            std::fprintf(stderr, "[nativefx] %llu drawn by the renderer, %llu as packets\n",
+                         static_cast<unsigned long long>(count),
+                         static_cast<unsigned long long>(g_effectsAsPackets.load()));
+        }
+        return;
+    }
+    ++g_effectsAsPackets;
+    static std::mutex toldMutex;
+    static std::vector<std::string> told;
+    const std::string line = std::string(rg::nativefx::name(kind)) + ": " + why;
+    std::lock_guard lock(toldMutex);
+    if (told.size() < 16u && std::find(told.begin(), told.end(), line) == told.end())
+    {
+        told.push_back(line);
+        std::fprintf(stderr, "[nativefx] an effect stays packets: %s\n", line.c_str());
+        static const bool dump = std::getenv("RG_NATIVE_EFFECTS_TRACE") != nullptr;
+        if (dump)
+            rg::nativefx::dumpPackets("nativefx refused", packets);
+    }
+}
+
+void flushEffect()
+{
+    if (t_held.effect == rg::nativefx::Effect::None)
+    {
+        return;
+    }
+    GS &gs = *t_held.gs;
+    std::string why;
+    const bool drawn = drawEffect(t_held.effect, t_held.packets, t_held.unit, gs, why);
+    if (!drawn)
+    {
+        for (const std::vector<uint8_t> &packet : t_held.packets)
+        {
+            sendPacket(gs, packet.data(), static_cast<uint32_t>(packet.size()));
+        }
+    }
+    countEffect(drawn, t_held.effect, why, t_held.packets);
+    t_held.effect = rg::nativefx::Effect::None;
+    t_held.unit = 0u;
+    t_held.packets.clear();
+}
+
+void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
+{
+    // Step 5: an effect's packets, held until the effect's run ends.
+    if (nativeEffects() && t_onVif1Thread)
+    {
+        const uint32_t address = listAddress(data);
+        const rg::nativefx::Place place = address == ~0u ? rg::nativefx::Place{} : rg::nativefx::placeAt(address);
+        const rg::nativefx::Effect effect = place.effect;
+        const uint32_t unit = effect == rg::nativefx::Effect::ColorFilter ? place.unit : 0u;
+        if (effect != t_held.effect || unit != t_held.unit)
+        {
+            flushEffect();
+        }
+        if (effect == rg::nativefx::Effect::ShadowSetup)
+        {
+            rg::nativefx::observe(effect, data, size);
+        }
+        else if (effect != rg::nativefx::Effect::None)
+        {
+            t_held.effect = effect;
+            t_held.unit = unit;
+            t_held.gs = &gs;
+            t_held.packets.emplace_back(data, data + size);
+            return;
+        }
+    }
+    // The flip's copy, from the game thread: after the lists in flight, as
+    // the GS would get it.
+    if (!t_onVif1Thread && rg::nativefx::flipNative())
+    {
+        thread_local GSNativeEffect effect;
+        thread_local std::vector<std::vector<uint8_t>> withheld;
+        if (rg::nativefx::flipPacket(data, size, effect, withheld))
+        {
+            g_thread->drain();
+            rg::nativeproducer::noteEffect(effect);
+            const bool drawn = rg::nativeproducer::effect(effect);
+            if (drawn)
+            {
+                for (const std::vector<uint8_t> &packet : withheld)
+                {
+                    sendPacket(gs, packet.data(), static_cast<uint32_t>(packet.size()));
+                }
+            }
+            else
+            {
+                sendPacket(gs, data, size);
+            }
+            countEffect(drawn, rg::nativefx::Effect::Flip, "the producer cannot draw it", {});
+            return;
+        }
+    }
+    sendPacket(gs, data, size);
+}
+
 void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data)
 {
+    if (nativeEffects() && t_onVif1Thread)
+    {
+        flushEffect();
+    }
     // Steps 4a and 4c of docs/NATIVE-PIPELINE.md: a VU1 program's mesh as a
     // native mesh draw, under the draw state the GS would draw it with; made
     // one, it does not go to the GS at all.
@@ -1168,6 +1355,10 @@ void send(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, PS2Runtime::Re
         {
             list.data.reserve(qwc * 16u);
             appendBytes(memory, list.data, address, qwc * 16u);
+            if (nativeEffects())
+            {
+                list.origins.emplace_back(0u, address);
+            }
         }
         catch (const std::exception &)
         {
@@ -1179,7 +1370,7 @@ void send(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, PS2Runtime::Re
         static uint32_t listNumber = 0u;
         list.number = ++listNumber;
         gatherChain(memory, address, (chcr & kChcrTte) != 0u, (chcr & kChcrTie) != 0u, list.data,
-                    g_capture ? &list.origins : nullptr);
+                    (g_capture || nativeEffects()) ? &list.origins : nullptr);
     }
     reportFinished(rdram, ctx, runtime);
     g_thread->submit(std::move(list));
@@ -1295,6 +1486,10 @@ void install(PS2Runtime &runtime)
     // A texture split over DIRECT packets continues in place, without the
     // copy behind a synthesized IMAGE tag.
     memory.setGifImageCallback([&gs = runtime.gs()](const uint8_t *data, uint32_t size) {
+        if (t_onVif1Thread)
+        {
+            flushEffect();
+        }
         if (g_stage && t_onVif1Thread)
         {
             g_stage->image(data, size);
