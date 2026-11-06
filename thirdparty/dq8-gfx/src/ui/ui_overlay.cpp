@@ -333,10 +333,15 @@ bool Overlay::handleEvent(const SDL_Event &event) {
     ImGui::SetCurrentContext(m_context);
     if (m_capture.active && captureEvent(event))
         return true;
-    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && m_captureMouseDown != 0u &&
-        event.button.button == m_captureMouseDown) {
-        m_captureMouseDown = 0u;
-        return true;
+    if (m_captureMouseDown != 0u) {
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == m_captureMouseDown) {
+            m_captureMouseDown = 0u;
+            return true;
+        }
+        // Its release went elsewhere (the window lost the focus): nothing
+        // to keep from the menu any more.
+        if ((SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_MASK(m_captureMouseDown)) == 0u)
+            m_captureMouseDown = 0u;
     }
     switch (event.type) {
     case SDL_EVENT_GAMEPAD_ADDED: {
@@ -481,16 +486,23 @@ bool Overlay::captureEvent(const SDL_Event &event) {
             finish(gfx::PadBinding::key(event.key.scancode));
             return true;
         }
-        // A mouse button, outside the prompt (its own buttons take theirs),
-        // or a turn of the wheel.
-        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !m_capturePromptHovered) {
+        // A mouse button (the five the pad reads), outside the prompt (its
+        // own buttons take theirs), not a touch; or a whole notch of the
+        // wheel, which only presses a button (a stick or Walk is held).
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !m_capturePromptHovered &&
+            event.button.which != SDL_TOUCH_MOUSEID && event.button.button >= SDL_BUTTON_LEFT &&
+            event.button.button <= SDL_BUTTON_X2) {
             m_captureMouseDown = event.button.button;
             finish(gfx::PadBinding::mouse(event.button.button));
             return true;
         }
-        if (event.type == SDL_EVENT_MOUSE_WHEEL && event.wheel.y != 0.0f) {
+        if (event.type == SDL_EVENT_MOUSE_WHEEL && event.wheel.integer_y != 0) {
+            if (gfx::padButtonMask(m_capture.input) == 0u) {
+                notify("The wheel can only press a button", Icon::Warning);
+                return true;
+            }
             const bool flipped = event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED;
-            finish(gfx::PadBinding::wheel((event.wheel.y > 0.0f) != flipped ? 1 : -1));
+            finish(gfx::PadBinding::wheel((event.wheel.integer_y > 0) != flipped ? 1 : -1));
             return true;
         }
         return event.type == SDL_EVENT_KEY_UP;

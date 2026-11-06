@@ -237,18 +237,24 @@ rg::buttons::KeyLabel keyLabelFor(const dq8::gfx::PadBinding &binding)
     default:
         break;
     }
-    // Otherwise the name's first letters and digits ("Keypad 7" is 7, F10 is
-    // F10), up to three.
-    std::string name = SDL_GetScancodeName(scancode);
-    if (name.rfind("Keypad ", 0) == 0)
-        name = name.substr(7);
-    size_t length = 0;
-    for (const char c : name)
-    {
-        if (length < 3 && std::isalnum(static_cast<unsigned char>(c)))
-            label.text[length++] = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    }
-    if (length == 0)
+    // Otherwise the first letters and digits of what the player's keyboard
+    // prints on the key (an AZERTY's A where a QWERTY has Q), or of its US
+    // name when that has none (the AZERTY's &, whose key also says 1):
+    // "Keypad 7" is 7, F10 is F10, up to three.
+    const auto take = [&](std::string name) {
+        if (name.rfind("Keypad ", 0) == 0)
+            name = name.substr(7);
+        size_t length = 0;
+        for (const char c : name)
+        {
+            if (length < 3 && std::isalnum(static_cast<unsigned char>(c)))
+                label.text[length++] = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        label.text[length] = '\0';
+        return length > 0;
+    };
+    if (!take(SDL_GetKeyName(SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false))) &&
+        !take(SDL_GetScancodeName(scancode)))
         text("?");
     return label;
 }
@@ -271,10 +277,10 @@ bool xboxLike(SDL_GamepadType type)
 }
 
 // Twice a second, the pictures for Cross, Circle, Square, Triangle, L1, R1,
-// L2 and R2: each one's first binding on what the player uses, the keyboard
-// and mouse (pressed after the controller, or with no controller) or the
-// controller driving the game, as that controller names it (a PlayStation
-// or Nintendo pad keeps the game's).
+// L2 and R2: each one's first binding on what the player last pressed, the
+// keyboard and mouse or the controller driving the game, as that controller
+// names it (a PlayStation or Nintendo pad keeps the game's). Before any
+// press, the game's own: scripted runs with no controller keep their frames.
 void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
 {
     static auto last = std::chrono::steady_clock::time_point{};
@@ -302,8 +308,7 @@ void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
                 break;
             }
         }
-        const bool keyboard =
-            pad.config().keyboardEnabled && (!active || pad.keyboardMouseAt() > pad.controllerAt());
+        const bool keyboard = pad.config().keyboardEnabled && pad.keyboardMouseAt() > pad.controllerAt();
         if (keyboard)
         {
             for (size_t i = 0; i < rg::buttons::kButtons; ++i)

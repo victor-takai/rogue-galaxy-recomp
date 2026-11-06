@@ -174,6 +174,7 @@ private:
     uint32_t m_sticks = 0x80808080u;
     bool m_walking = false;
     bool m_menuMouse = false;
+    SDL_MouseButtonFlags m_mouseButtons = 0u;
     SDL_MouseButtonFlags m_mouseSuppressed = 0u;
     uint64_t m_keyboardMouseAt = 0u;
     uint64_t m_mouseMotionAt = 0u;

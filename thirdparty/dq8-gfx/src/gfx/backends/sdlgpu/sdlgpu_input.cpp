@@ -109,11 +109,6 @@ PadBinding PadBinding::wheel(int direction) {
 PadConfig PadConfig::defaults() {
     PadConfig config;
     const auto pad = [&](PadInput input, PadBinding binding) { config.controller[index(input)][0] = binding; };
-    const auto keys = [&](PadInput input, SDL_Scancode first, SDL_Scancode second = SDL_SCANCODE_UNKNOWN) {
-        config.keyboard[index(input)][0] = PadBinding::key(first);
-        if (second != SDL_SCANCODE_UNKNOWN)
-            config.keyboard[index(input)][1] = PadBinding::key(second);
-    };
     pad(PadInput::Cross, PadBinding::button(SDL_GAMEPAD_BUTTON_SOUTH));
     pad(PadInput::Circle, PadBinding::button(SDL_GAMEPAD_BUTTON_EAST));
     pad(PadInput::Square, PadBinding::button(SDL_GAMEPAD_BUTTON_WEST));
@@ -361,6 +356,7 @@ void SdlPadInput::clearState() {
     m_held = m_pressed = 0u;
     m_sticks = 0x80808080u;
     m_walking = false;
+    m_mouseButtons = 0u;
 }
 
 void SdlPadInput::setConfig(const PadConfig &config) {
@@ -403,36 +399,62 @@ void SdlPadInput::handleEvent(const SDL_Event &event) {
                 }
         return;
     }
-    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && m_config.keyboardEnabled) {
+    // The mouse: only in the game's window while it has the keyboard focus
+    // (Windows scrolls a window under the cursor without it), never a touch
+    // screen's (SDL makes clicks of touches, a Steam Deck's screen too).
+    // Using it counts with the keyboard switched off; its bindings do not.
+    const auto fromMouse = [](SDL_MouseID which, SDL_WindowID window) {
+        SDL_Window *focus = SDL_GetKeyboardFocus();
+        return which != SDL_TOUCH_MOUSEID && focus != nullptr && SDL_GetWindowID(focus) == window;
+    };
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+        if (event.button.which != SDL_TOUCH_MOUSEID && event.button.button >= SDL_BUTTON_LEFT &&
+            event.button.button <= SDL_BUTTON_X2)
+            m_mouseButtons &= ~SDL_BUTTON_MASK(event.button.button);
+        return;
+    }
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+        const int button = event.button.button;
+        if (!fromMouse(event.button.which, event.button.windowID) || button < SDL_BUTTON_LEFT ||
+            button > SDL_BUTTON_X2)
+            return;
+        m_mouseButtons |= SDL_BUTTON_MASK(button);
         m_keyboardMouseAt = SDL_GetTicks();
-        if (m_menuMouse && event.button.button == SDL_BUTTON_RIGHT) {
+        if (!m_config.keyboardEnabled)
+            return;
+        if (m_menuMouse && button == SDL_BUTTON_RIGHT) {
             m_pressed |= Circle;
             return;
         }
         for (size_t input = 0; input < kPadInputCount; ++input)
             for (const auto &binding : m_config.keyboard[input])
-                if (binding.kind == PadBinding::Kind::Mouse && binding.code == event.button.button)
+                if (binding.kind == PadBinding::Kind::Mouse && binding.code == button)
                     m_pressed |= kInputs[input].mask;
         return;
     }
-    if (event.type == SDL_EVENT_MOUSE_WHEEL && m_config.keyboardEnabled) {
-        float turn = event.wheel.y;
+    if (event.type == SDL_EVENT_MOUSE_WHEEL) {
+        // Whole notches: a touchpad or a fine wheel sends parts of one.
+        int notches = event.wheel.integer_y;
         if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
-            turn = -turn;
-        if (turn != 0.0f && m_menuMouse) {
-            m_keyboardMouseAt = SDL_GetTicks();
-            m_pressed |= turn > 0.0f ? Up : Down;
-        } else if (turn != 0.0f) {
-            m_keyboardMouseAt = SDL_GetTicks();
-            for (size_t input = 0; input < kPadInputCount; ++input)
-                for (const auto &binding : m_config.keyboard[input])
-                    if (binding.kind == PadBinding::Kind::Wheel && binding.direction == (turn > 0.0f ? 1 : -1))
-                        m_pressed |= kInputs[input].mask;
+            notches = -notches;
+        if (notches == 0 || !fromMouse(event.wheel.which, event.wheel.windowID))
+            return;
+        m_keyboardMouseAt = SDL_GetTicks();
+        if (!m_config.keyboardEnabled)
+            return;
+        if (m_menuMouse) {
+            m_pressed |= notches > 0 ? Up : Down;
+            return;
         }
+        for (size_t input = 0; input < kPadInputCount; ++input)
+            for (const auto &binding : m_config.keyboard[input])
+                if (binding.kind == PadBinding::Kind::Wheel && binding.direction == (notches > 0 ? 1 : -1))
+                    m_pressed |= kInputs[input].mask;
         return;
     }
     if (event.type == SDL_EVENT_MOUSE_MOTION) {
-        m_mouseMotionAt = SDL_GetTicks();
+        if (fromMouse(event.motion.which, event.motion.windowID))
+            m_mouseMotionAt = SDL_GetTicks();
         return;
     }
     if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
@@ -487,12 +509,12 @@ void SdlPadInput::handleEvent(const SDL_Event &event) {
 }
 
 PadSnapshot SdlPadInput::preview() const {
-    return sample(SDL_GetKeyboardState(nullptr), SDL_GetMouseState(nullptr, nullptr));
+    return sample(SDL_GetKeyboardState(nullptr), m_mouseButtons & SDL_GetMouseState(nullptr, nullptr));
 }
 
 void SdlPadInput::setMenuMouse(bool on) {
     if (on != m_menuMouse)
-        m_mouseSuppressed = SDL_GetMouseState(nullptr, nullptr);
+        m_mouseSuppressed = m_mouseButtons;
     m_menuMouse = on;
 }
 
@@ -552,9 +574,12 @@ void SdlPadInput::poll(const bool *keys, bool focused) {
         clearState();
         return;
     }
-    // Mouse buttons held since the menus came or went stay released until
-    // they are let go.
-    const SDL_MouseButtonFlags mouse = SDL_GetMouseState(nullptr, nullptr);
+    // The mouse buttons pressed in the window (handleEvent: no touches), let
+    // go of when SDL says they are up, which also covers a release the menu
+    // took. Those held since the menus came or went stay released until they
+    // are let go.
+    m_mouseButtons &= SDL_GetMouseState(nullptr, nullptr);
+    const SDL_MouseButtonFlags mouse = m_mouseButtons;
     m_mouseSuppressed &= mouse;
     const PadSnapshot state = sample(keys, mouse & ~m_mouseSuppressed);
     uint32_t held = state.held;

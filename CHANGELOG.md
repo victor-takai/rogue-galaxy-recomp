@@ -35,8 +35,8 @@
   keys always push the stick all the way. In the game's menus the right
   click goes back and the wheel moves up and down. The game's text shows
   the keys and mouse buttons instead of the PlayStation's while you play
-  with them. Keys you never changed move to the new ones; keys you changed
-  stay.
+  with them. If you never changed a key, the new keys replace the old
+  ones; if you changed any, all of yours stay.
 
 ### Changed
 

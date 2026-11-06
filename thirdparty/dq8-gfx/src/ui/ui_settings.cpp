@@ -243,6 +243,15 @@ void parseSettings(const std::string &text, Settings &settings) {
         if (untouched) {
             settings.pad.keyboard = gfx::PadConfig::defaults().keyboard;
             std::fprintf(stderr, "[ui] keyboard: the first default keys, untouched, give way to the new ones\n");
+        } else {
+            // Their own keys: Walk keeps its default only on a key they left
+            // free.
+            auto &walk = settings.pad.keyboard[static_cast<size_t>(PadInput::Walk)];
+            for (size_t input = 0; input < gfx::kPadInputCount; ++input)
+                for (const gfx::PadBinding &binding : settings.pad.keyboard[input])
+                    for (gfx::PadBinding &own : walk)
+                        if (static_cast<PadInput>(input) != PadInput::Walk && own.bound() && own == binding)
+                            own = {};
         }
         settings.pad.keyboardLayout = gfx::PadConfig::kKeyboardLayout;
     }
