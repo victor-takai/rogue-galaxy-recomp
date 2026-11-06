@@ -954,6 +954,9 @@ constexpr uint32_t kSaveMsgBoxShow = 0x00376BF0u;
 constexpr uint32_t kUiSetTextCenteredX = 0x0028F300u;
 constexpr uint32_t kSaveMsgBoxId = 0x0047FB04u;
 constexpr uint32_t kButtonsFirst = 9u;
+// A widget's texts (+0x28), 0x10 bytes each, x an s16 at +0.
+constexpr uint32_t kWidgetTexts = 0x28u;
+constexpr uint32_t kTextStride = 0x10u;
 constexpr int16_t kButtonMiddle = 0x1A;
 PS2Runtime::RecompiledFunction g_originalSaveMsgBox = nullptr;
 
@@ -966,9 +969,13 @@ void saveMsgBoxShow(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         return;
     }
     const uint16_t id = static_cast<uint16_t>(readHalf(rdram, kSaveMsgBoxId));
-    const uint32_t sprites = widgetSprites(rdram, ui, id);
-    // The buttons are up only for a question.
-    if (sprites == 0u || readHalf(rdram, sprites + kButtonsFirst * kSpriteBytes + kSpriteWidth) == 0)
+    const uint32_t widget = findWidget(rdram, ui, id);
+    const uint32_t sprites = widget ? readWord(rdram, widget + kWidgetSprites) : 0u;
+    const uint32_t texts = widget ? readWord(rdram, widget + kWidgetTexts) : 0u;
+    // A question: the US code has just put "Yes" 12 into its button (the
+    // buttons are sized later, so their width says nothing yet).
+    if (sprites == 0u || texts == 0u ||
+        readHalf(rdram, texts + kTextStride) != readHalf(rdram, sprites + kButtonsFirst * kSpriteBytes) + 12)
     {
         return;
     }
