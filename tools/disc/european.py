@@ -829,15 +829,78 @@ def wrap_text_file(data: bytes, limit: int, widths: dict[int, int]) -> tuple[byt
             continue
         first, sep, rest = block.partition(b"\n")
         out += first + sep
-        for line in rest.splitlines(keepends=True):
+        lines = rest.splitlines(keepends=True)
+        k = 0
+        while k < len(lines):
+            line = lines[k]
             body = line.rstrip(b"\r\n")
             if body.startswith(b"//") or body.startswith(b"@"):
                 out += line
+                k += 1
+                continue
+            # A paragraph: this line and those after it that go on with its
+            # sentence. One too long is laid out again whole, so its rest does
+            # not stand alone on a line ("(para" / "PlayStation®2)" / "de la
+            # ranura...").
+            end = k + 1
+            while end < len(lines) and continues(lines[end].rstrip(b"\r\n")):
+                end += 1
+            bodies = [x.rstrip(b"\r\n") for x in lines[k:end]]
+            if (end - k > 1 and any(line_width(b, widths) > limit for b in bodies)
+                    and not any(BREAK.search(b) for b in bodies)):
+                words = b" ".join(bodies).split(b" ")
+                laid = balanced_lines(words, limit, widths)
+                out += b"\n".join(laid) + lines[end - 1][len(bodies[-1]):]
+                breaks += len(laid) - (end - k)
+                k = end
                 continue
             wrapped, n = wrap_text(body, limit, b"\n", widths)
             out += wrapped + line[len(body):]
             breaks += n
+            k += 1
     return bytes(out), breaks
+
+
+def continues(line: bytes) -> bool:
+    """A message's line that goes on with the sentence before it: it starts with a
+    lower-case letter."""
+    return bool(line) and not line.startswith((b"//", b"@")) and 0x61 <= line[0] <= 0x7A
+
+
+def balanced_lines(words: list[bytes], limit: int, widths: dict[int, int]) -> list[bytes]:
+    """The words in as few lines as fit `limit`, the longest line as short as it can
+    be (a word wider than `limit` alone on its line)."""
+    sizes = [line_width(w, widths) for w in words]
+    n = len(words)
+
+    def span(i: int, j: int) -> int:
+        return sum(sizes[i:j]) + SPACE_WIDTH * (j - i - 1)
+
+    count, start = 0, 0
+    while start < n:  # the fewest lines, greedily
+        end = start + 1
+        while end < n and span(start, end + 1) <= limit:
+            end += 1
+        count, start = count + 1, end
+    worst = float("inf")
+    best = [[worst] * (n + 1) for _ in range(count + 1)]
+    cut = [[0] * (n + 1) for _ in range(count + 1)]
+    best[0][0] = 0
+    for k in range(1, count + 1):
+        for j in range(1, n + 1):
+            for i in range(k - 1, j):
+                width = span(i, j)
+                if best[k - 1][i] == worst or (width > limit and j - i > 1):
+                    continue
+                longest = max(best[k - 1][i], width)
+                if longest < best[k][j]:
+                    best[k][j], cut[k][j] = longest, i
+    out, j = [], n
+    for k in range(count, 0, -1):
+        i = cut[k][j]
+        out.append(b" ".join(words[i:j]))
+        j = i
+    return out[::-1]
 
 
 def split_pages(text: bytes, lines: int) -> bytes:
