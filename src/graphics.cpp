@@ -686,24 +686,18 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "How fast the party's action gauge fills again in battle, against the game's (1.0x).",
          false, 25, 400, 100, kTimes, 25},
         {"director_cut_balance", "Director's Cut balance",
-         "Battles with the numbers of the Japanese Director's Cut, which the US release did not get: smaller "
-         "groups of enemies, the Rosencaster and Starship Factory enemies and three story fights weaker, the Area "
-         "Masters stronger, more money from many enemies, bigger enemies harder to knock down, bosses never "
-         "knocked down, three boss attacks without their poison or paralysis. The damage formula is the same. "
-         "It needs that disc: run Install-Undub.bat in the game's folder and pick your Japanese disc image. "
-         "Takes effect the next time the game starts.",
+         "Battles with the Japanese Director's Cut's numbers: smaller enemy groups, more money, some enemies "
+         "weaker and the Area Masters stronger, bosses never knocked down. Needs your Japanese disc "
+         "(Install-Undub.bat). Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"director_cut_enemies", "Director's Cut enemy behavior",
-         "The enemies' attacks and AI of the Japanese Director's Cut: the reach, timing and kind of their hits, "
-         "enemies that turn to face you before they attack, some that attack from farther away. The party's "
-         "jump attacks also home in on two jellyfish and on flying enemies knocked out of the air. It needs "
-         "that disc: run Install-Undub.bat in the game's folder and pick your Japanese disc image. Takes effect "
-         "the next time the game starts.",
+         "The Japanese Director's Cut's enemy attacks and AI: enemies face you before they attack, some attack "
+         "from farther away. Needs your Japanese disc (Install-Undub.bat). Takes effect the next time the game "
+         "starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"director_cut_party_ai", "Director's Cut party AI",
-         "The allies' AI of the Japanese Director's Cut: an ally low on health sometimes falls back to the "
-         "leader and guards. It needs that disc: run Install-Undub.bat in the game's folder and pick your "
-         "Japanese disc image. Takes effect the next time the game starts.",
+         "The Japanese Director's Cut's ally AI: an ally low on health sometimes falls back to the leader and "
+         "guards. Needs your Japanese disc (Install-Undub.bat). Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"text_language", "Text",
          "The game's text, menus and scenes, in one of the European release's languages, from your European disc "
