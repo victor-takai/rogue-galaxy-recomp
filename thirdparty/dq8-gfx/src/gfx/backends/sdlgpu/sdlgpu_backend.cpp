@@ -5313,8 +5313,30 @@ PresentationFrame SdlGpuBackend::Present(const GSPresentationRequest &request) {
 }
 
 GSPresentationTicket SdlGpuBackend::PreparePresentation(const GSPresentationRequest &request) {
+    return prepare(&request);
+}
+
+PresentationFrame SdlGpuBackend::presentNativeFrame() {
+    return DisplayPreparedPresentation(prepare(nullptr));
+}
+
+void SdlGpuBackend::serveNativeReads() {
+    if (!native::colorReadsWaiting() && !m_impl->nativeRenderer.dumpPending())
+        return;
+    std::lock_guard lock(m_impl->mutex);
+    if (!native::enabled() || !m_impl->device.valid())
+        return;
+    // What is pending goes to the GPU first.
+    std::string error;
+    if (!m_impl->device.submitPending(error))
+        std::fprintf(stderr, "[native-pipeline] before colour reads: %s\n", error.c_str());
+    m_impl->nativeRenderer.serveColorReads(m_impl->device.handle());
+}
+
+// Null `request`: the native pipeline's present, not the GS's.
+GSPresentationTicket SdlGpuBackend::prepare(const GSPresentationRequest *request) {
     auto prepared = m_impl->leasePresentation();
-    prepared->sourceVsyncTick = request.vsyncTick;
+    prepared->sourceVsyncTick = request ? request->vsyncTick : 0u;
     auto &slot = prepared->pool->slots[prepared->slot];
     Impl::PresentStage stage;
     {
@@ -5332,7 +5354,13 @@ GSPresentationTicket SdlGpuBackend::PreparePresentation(const GSPresentationRequ
         m_impl->reportStats();
         m_impl->lastError.clear();
         m_impl->applyRequestedScale();
-        m_impl->acquirePresentation(request, stage);
+        if (request) {
+            m_impl->acquirePresentation(*request, stage);
+        } else if (m_impl->window != nullptr) {
+            ++m_impl->stats.presents;
+            stage.gsActive = true;
+            m_impl->presentNative(stage);
+        }
         m_impl->finishPresentation(stage);
         if (!m_impl->lastError.empty())
             throw std::runtime_error(m_impl->lastError);

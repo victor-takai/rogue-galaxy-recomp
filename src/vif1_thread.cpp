@@ -1430,6 +1430,91 @@ void watchTransfers(const uint8_t *data, uint32_t size)
     }
 }
 
+// (native2D, below.)
+bool native2D();
+
+// Step 6 of docs/NATIVE-PIPELINE.md, finished: under the pipeline (with its
+// 2D on), what is left of a packet after the converter and the upload
+// withholding no longer goes to the GS. The renderer draws from records, the
+// draw-state mirror and the converter follow the packets, and the GS draws
+// nothing. What the game still sees of the GS is SIGNAL, FINISH and LABEL in
+// the privileged registers (CSR, SIGLBLID), set here as the GS would.
+// RG_NATIVE_ABSORB=0 sends it to the GS as before.
+bool absorbing()
+{
+    static const bool on = [] {
+        const char *value = std::getenv("RG_NATIVE_ABSORB");
+        return uploadsTaken() && native2D() && !(value && std::strcmp(value, "0") == 0);
+    }();
+    return on;
+}
+std::atomic<uint64_t> g_absorbedPackets{0u};
+
+void absorbRegister(uint8_t reg, uint64_t value)
+{
+    GSRegisters *regs = g_runtime ? &g_runtime->memory().gs() : nullptr;
+    if (!regs)
+        return;
+    switch (reg)
+    {
+    case 0x60u: // SIGNAL
+    {
+        const uint32_t id = static_cast<uint32_t>(value), mask = static_cast<uint32_t>(value >> 32);
+        uint32_t lo = static_cast<uint32_t>(regs->siglblid);
+        lo = (lo & ~mask) | (id & mask);
+        regs->siglblid = (regs->siglblid & 0xFFFFFFFF00000000ull) | lo;
+        regs->csr.fetch_or(0x1u);
+        break;
+    }
+    case 0x61u: // FINISH
+        regs->csr.fetch_or(0x2u);
+        break;
+    case 0x62u: // LABEL
+    {
+        const uint32_t id = static_cast<uint32_t>(value), mask = static_cast<uint32_t>(value >> 32);
+        uint32_t hi = static_cast<uint32_t>(regs->siglblid >> 32);
+        hi = (hi & ~mask) | (id & mask);
+        regs->siglblid = (uint64_t(hi) << 32) | (regs->siglblid & 0xFFFFFFFFull);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+// The packet's SIGNAL, FINISH and LABEL (A+D writes; the GIF has no other
+// way to them), as the GS would take them.
+void absorb(const uint8_t *data, uint32_t size)
+{
+    g_absorbedPackets.fetch_add(1u, std::memory_order_relaxed);
+    uint32_t pos = 0u;
+    while (pos + 16u <= size)
+    {
+        uint64_t lo = 0u, hi = 0u;
+        std::memcpy(&lo, data + pos, 8u);
+        std::memcpy(&hi, data + pos + 8u, 8u);
+        const uint32_t nloop = static_cast<uint32_t>(lo & 0x7FFFu);
+        const uint32_t flg = static_cast<uint32_t>((lo >> 58) & 3u);
+        uint32_t nreg = static_cast<uint32_t>((lo >> 60) & 0xFu);
+        nreg = nreg ? nreg : 16u;
+        pos += 16u;
+        if (flg == 0u)
+        {
+            for (uint32_t i = 0; i < nloop * nreg && pos + 16u <= size; ++i, pos += 16u)
+                if (((hi >> ((i % nreg) * 4u)) & 0xFu) == 0xEu)
+                {
+                    uint64_t value = 0u;
+                    std::memcpy(&value, data + pos, 8u);
+                    absorbRegister(data[pos + 8u], value);
+                }
+        }
+        else if (flg == 1u)
+            pos += ((nloop * nreg * 8u) + 15u) & ~15u;
+        else
+            pos += std::min<uint32_t>(nloop * 16u, size - std::min(size, pos));
+    }
+}
+
 // A packet to the GS as it is.
 void sendRaw(GS &gs, const uint8_t *data, uint32_t size)
 {
@@ -1444,6 +1529,12 @@ void sendRaw(GS &gs, const uint8_t *data, uint32_t size)
             size = static_cast<uint32_t>(kept.size());
         }
         watchTransfers(data, size);
+        if (absorbing())
+        {
+            rg::drawstate::observe(data, size);
+            absorb(data, size);
+            return;
+        }
     }
     // The native pipeline's draw-state mirror follows every packet, in the
     // order the GS gets them.
@@ -2200,6 +2291,26 @@ template <size_t Index>
 void gsWaiter(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     g_thread->drain();
+    // Step 7a (docs/NATIVE-PIPELINE.md): under the native pipeline's 2D the
+    // stub's register writes (its draw environments, and the clear sprite)
+    // are taken instead of written to the GS (patch 0034), and go through
+    // the converter as one A+D packet, in order with the lists just drained:
+    // the mirror follows them, and the clear is a 2D piece like any other.
+    // The GS's own clear shortcut is dropped.
+    if (native2D())
+    {
+        thread_local GS::RegisterSink writes;
+        writes.clear();
+        GS::setRegisterSink(&writes);
+        g_gsWaiters[Index].second(rdram, ctx, runtime);
+        GS::setRegisterSink(nullptr);
+        if (!writes.empty())
+        {
+            const std::vector<uint8_t> packet = rg::native2d::registerPacket(writes);
+            sendPacket(runtime->gs(), packet.data(), static_cast<uint32_t>(packet.size()));
+        }
+        return;
+    }
     g_gsWaiters[Index].second(rdram, ctx, runtime);
     // The stubs write the front end's registers themselves (sceGsPutDrawEnv,
     // sceGsSwapDBuff's environments and clear): the native pipeline's
@@ -2308,6 +2419,8 @@ void install(PS2Runtime &runtime)
             if (size == 0u)
                 return;
             feedCapture(data, size);
+            if (absorbing())
+                return;
         }
         if (g_stage && t_onVif1Thread)
         {
