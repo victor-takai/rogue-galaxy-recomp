@@ -65,6 +65,9 @@ F1 > Settings > Game, in these sections:
 | Field of view | 40 to 90 degrees (the game's is 52). |
 | Camera distance | 0.7x to 1.6x the game's. |
 | Faster camera rotation | The camera turns twice as fast. |
+| Mouse camera | Off by default. The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right looks right and up looks up, whatever the game's camera options. The tilt stays where the mouse leaves it; locked on a target in battle, the camera only turns, as with the stick. While it is on, the mouse stays in the window with the cursor hidden; F1, the pause (F2) or Alt+Tab lets it go. |
+| Mouse sensitivity | 0.25x to 4.0x; at 1.0x an inch at 1,600 dpi turns about 100 degrees. |
+| Invert mouse vertical | Off by default. Moving the mouse up looks down. |
 | Draw distance | 1.0x to 4.0x the game's, from the next map loaded. |
 | Controller's buttons | The buttons in the game's text follow an Xbox controller: A, B, X, Y, LB, RB, LT and RT, as bound in Controls. On by default. |
 | Free camera (F6) | The party stands still and the controller moves the camera. Start or F6 to leave. |
@@ -132,9 +135,9 @@ Most of the same options, and Display > Borders, are on the game's Settings
 screen (System > Settings in the main menu): L1 and R1 turn the page, and
 a number's - and + buttons lower and raise it. With the text in French,
 German, Spanish or Italian, the options are named in that language there too.
-Controller's buttons, Check for new versions, the three Director's Cut
-options, Native renderer, the text's language, the undub and the texture
-packs are in F1 alone.
+Controller's buttons, the mouse camera's three options, Check for new
+versions, the three Director's Cut options, Native renderer, the text's
+language, the undub and the texture packs are in F1 alone.
 
 <p align="center">
   <img src="images/settings-switches.jpg" width="49%" alt="The game's Settings screen: the switches">

@@ -39,6 +39,15 @@ class PS2Runtime;
 // at either frame rate. The following battle camera's tilt is not a turn:
 // the stick sets how far it tilts, which it eases toward, so it stays as
 // the game has it.
+//
+// With "Mouse camera" on (src/mouse_camera.h), the mouse's turn and tilt go
+// in at the same places, after those factors, whatever the game's camera
+// options: the field's turn and tilt as CameraObjOrbitControl gets them from
+// the player's input (and its own read of the stick, which at the lowest
+// tilt brings the camera in to look up), the battle cameras' reads of the
+// stick, the first-person view's angles. What the mouse holds (the field
+// camera's height and look up, the following battle camera's tilt) is let go
+// when the camera changes mode (a battle, a scene, a map) or its presets.
 namespace rg::cameraview
 {
 

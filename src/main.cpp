@@ -33,6 +33,7 @@
 #include "battle_rates.h"
 #include "button_glyphs.h"
 #include "camera_view.h"
+#include "mouse_camera.h"
 #include "dc_balance.h"
 #include "dev_tools.h"
 #include "draw_distance.h"
@@ -173,6 +174,7 @@ int run(int argc, char **argv)
     rg::opening::install(runtime);
     rg::devtools::install(runtime);
     rg::cameraview::install(runtime);
+    rg::mousecamera::install();
     rg::drawdistance::install(runtime);
     rg::battlerates::install(runtime);
     rg::dcbalance::install(runtime);

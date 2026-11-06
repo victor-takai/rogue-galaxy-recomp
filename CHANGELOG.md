@@ -23,6 +23,10 @@
   are named in that language too. The voices stay as they are. Played in
   Spanish and tested in all four up to the first scenes; the rest of the
   story has not been seen in them yet.
+- Mouse camera (Game, off by default): the mouse turns and tilts the
+  camera, exploring, in battle and in the first-person view, with its own
+  sensitivity and an option to invert the vertical. While it is on, the
+  mouse stays in the game's window; F1, the pause or Alt+Tab lets it go.
 
 ### Changed
 
