@@ -2194,6 +2194,11 @@ void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data)
         const GSDrawState state = rg::drawstate::current();
         if (rg::nativeproducer::mesh(mesh, &state, vu1Data, 0u))
             return;
+        // Refused here only for a buffer the game never named (counted as a
+        // target miss): with no GS behind the pipeline nothing can draw it,
+        // so it goes where the absorbed packets go, not to the tripwire.
+        if (absorbing())
+            return;
     }
     meshToGs(gs, mesh);
 }

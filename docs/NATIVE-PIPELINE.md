@@ -156,9 +156,9 @@ Under the pipeline the screen shows the renderer's frame alone. Known
 limits: targets clamp alpha above 0x80; 7b needs D32_FLOAT depth; 7c is
 served from the last frame drawn; the title screen has 2D pieces whose
 source is unknown; the Flash Sword's trail is parked (it draws wrong on
-the archive branch too).
-Those, the pipeline's own present, and a check that nothing reaches the GS
-any more, come next.
+the archive branch too). A mesh into a buffer the game never named has
+no target and is dropped with the absorbed packets (counted as a target
+miss in the `[native-producer]` line), not sent to the tripwire.
 
 Memory: the renderer keeps the cameras the producer can still name (the
 newest `2 * kCameraWindow`); textures are evicted over a byte budget and
