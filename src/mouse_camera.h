@@ -13,9 +13,10 @@ struct SDL_Window;
 // it, up and down tilts it, the other way with `mouse_invert_vertical`. The
 // game's cameras take it in src/camera_view.cpp. `mouse_sensitivity` (25 to
 // 400, 1.0x at 100) scales both; at 1.0x a count turns 0.063 degrees, an
-// inch at 1,600 counts per inch 100 degrees. Motion the game does not take
-// within half a second of its own frames (a menu of the game's, a scene) is
-// dropped; while it is paused (F2) the mouse is let go too. RG_MOUSE_CAMERA,
+// inch at 1,600 counts per inch 100 degrees. Motion made while the cameras
+// stop taking it (a menu of the game's, a scene, a battle's pause: twice
+// their usual gap between takes, half a second at most) is dropped; while the
+// game is paused (F2) the mouse is let go too. RG_MOUSE_CAMERA,
 // RG_MOUSE_SENSITIVITY (25 to 400, or 0.25 to 4) and RG_MOUSE_INVERT over the
 // menu. Without the SDL window (the software GS) it does nothing.
 namespace rg::mousecamera

@@ -21,10 +21,16 @@ namespace
 
 // Radians a count at 1.0x: 0.063 degrees.
 constexpr float kRadiansPerCount = 0.0011f;
-// Motion kept for the game at most this many of its frames (vsyncs) without a
-// take, half a second: longer than a camera's frame at the slowest frame rate
-// it is played at, shorter than a menu or a scene.
+// Motion is kept for a camera while it takes it as often as it has been
+// (twice its usual gap between takes, in the game's frames, vsyncs, and at
+// least kMinGap), and never longer than kStaleFrames, half a second: a camera
+// that stops for longer (a menu of the game's, a scene, a battle's pause)
+// gets none of what the mouse did meanwhile, and the usual gap follows the
+// frame rate down to 4 frames a second within a few takes.
 constexpr uint64_t kStaleFrames = 30u;
+constexpr uint64_t kMinGap = 4u;
+// How much of a new gap the usual one takes in.
+constexpr float kGapFollow = 0.25f;
 // Counts are kept in 1/1024ths.
 constexpr float kFixed = 1024.0f;
 constexpr int kSensitivityMin = 25;
@@ -34,23 +40,28 @@ std::atomic<bool> g_enabled{false};
 std::atomic<int> g_sensitivity{100};
 std::atomic<bool> g_invert{false};
 
-// One axis's counts not taken yet, and the game's frame of its last take.
+// One axis's counts not taken yet, the game's frame of its last take, and its
+// usual gap between takes.
 struct Axis
 {
     std::atomic<int64_t> moved{0};
     std::atomic<uint64_t> takenAt{0};
+    std::atomic<float> usualGap{static_cast<float>(kMinGap)};
 };
 Axis g_x; // right
 Axis g_y; // down, as SDL counts it
 
-bool stale(const Axis &axis)
+// Whether the camera has stopped taking this axis, `now`.
+bool stale(const Axis &axis, uint64_t now)
 {
-    return ps2PadCurrentGuestFrame() - axis.takenAt.load(std::memory_order_relaxed) > kStaleFrames;
+    const float usual = axis.usualGap.load(std::memory_order_relaxed);
+    const uint64_t allowed = std::clamp(static_cast<uint64_t>(std::lround(2.0f * usual)), kMinGap, kStaleFrames);
+    return now - axis.takenAt.load(std::memory_order_relaxed) > allowed;
 }
 
 void add(Axis &axis, float counts)
 {
-    if (stale(axis))
+    if (stale(axis, ps2PadCurrentGuestFrame()))
     {
         axis.moved.store(0, std::memory_order_relaxed);
     }
@@ -59,8 +70,15 @@ void add(Axis &axis, float counts)
 
 float take(Axis &axis)
 {
-    const bool old = stale(axis);
-    axis.takenAt.store(ps2PadCurrentGuestFrame(), std::memory_order_relaxed);
+    const uint64_t now = ps2PadCurrentGuestFrame();
+    const bool old = stale(axis, now);
+    const uint64_t gap = now - axis.takenAt.exchange(now, std::memory_order_relaxed);
+    if (gap > 0u)
+    {
+        const float usual = axis.usualGap.load(std::memory_order_relaxed);
+        const float latest = static_cast<float>(std::min(gap, kStaleFrames));
+        axis.usualGap.store(usual + kGapFollow * (latest - usual), std::memory_order_relaxed);
+    }
     const int64_t moved = axis.moved.exchange(0, std::memory_order_relaxed);
     return old ? 0.0f : static_cast<float>(moved) / kFixed;
 }

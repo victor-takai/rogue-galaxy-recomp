@@ -58,24 +58,37 @@ constexpr uint32_t kTurnReturns[] = {
 constexpr uint32_t kSignVertical = 0x254u;
 constexpr uint32_t kSignHorizontal = 0x258u;
 // The field's: CameraObjOrbitControl's one call, from CameraObjApplyInput
-// (0x1619E0, s3 its input, 0 without one), returns here. The field camera's
+// (0x1619E0, which CameraFollowLeaderStep alone calls, every frame, with the
+// player's stick), returns here. Every camera that follows the party takes
+// it: exploring, and in battle the free camera. The field camera's
 // +0x214 has 2 while it may not turn, +0x250 the frames it may not yet (made
 // one fewer before the call), +0x244 its turn a frame at full stick, +0x248
 // its tilt (a height the camera rises by), +0xE0 the point it looks at and
 // +0xF0 its eye; its nearest distance is the first float of its parameters
 // (+0x15C, kDistanceBlock), and nearer than that (a wall) the turn is
-// multiplied by how much nearer. With no tilt in a frame, the height eases
-// back toward the middle of its range. Its own read of the stick's up and
-// down, which at the lowest tilt (0x481120 set) brings the camera in to look
-// up, returns to kOrbitTiltReturn (s4 the camera).
+// multiplied by how much nearer. The height is the parameters' +0x10, kept
+// from +0x18 (the lowest; reaching it sets 0x481120) to +0x14; with no tilt
+// in a frame, it eases back into +0x20 to +0x1C by an nth of the way
+// (0x481118's float, 20). The ground and ceilings under and over the eye
+// move it too, and set 0x481120 while the ground holds the camera up. Its
+// own read of the stick's up and down returns to kOrbitTiltReturn (s4 the
+// camera): there, with 0x481120 set, holding it down brings the camera in to
+// look up, and anything else clears 0x481120 again.
 constexpr uint32_t kCameraApplyInput = 0x001619E0u;
 constexpr uint32_t kOrbitFromInput = 0x00161B30u;
 constexpr uint32_t kOrbitTiltReturn = 0x0016154Cu;
 constexpr uint32_t kOrbitLowest = 0x00481120u;
+constexpr uint32_t kOrbitEase = 0x00481118u;
 constexpr uint32_t kFieldTarget = 0xE0u;
 constexpr uint32_t kFieldEye = 0xF0u;
+constexpr uint32_t kHeight = 0x10u;
+constexpr uint32_t kHighest = 0x14u;
+constexpr uint32_t kLowest = 0x18u;
 // A tilt too small to move the camera, which keeps it from easing back.
 constexpr float kHoldTilt = 1e-7f;
+// Every change of a camera's mode (CameraApplyMode: a battle, a scene, a
+// map, the first-person view and back).
+constexpr uint32_t kCameraApplyMode = 0x00309490u;
 constexpr uint32_t kFieldFlags = 0x214u;
 constexpr uint32_t kFieldTurnSpeed = 0x244u;
 constexpr uint32_t kFieldTiltSpeed = 0x248u;
@@ -87,8 +100,13 @@ constexpr uint32_t kLockTurnSpeed = 0x0047D8E8u;
 constexpr uint32_t kLockFar = 0x004E72A8u;
 // The following one (s0) by the stick times +0x18 of its parameters
 // (GetCameraFollowParams, 0x4B6800), and tilts toward the stick's up and
-// down times +0x1C: the mouse moves a tilt it holds.
+// down times +0x1C: the mouse moves a tilt it holds. Each frame it moves
+// +0x34 of the way (a quarter) to where that turn puts it and starts again
+// from where it is, so the stick turns it that share of +0x18 a frame.
 constexpr uint32_t kFollowParams = 0x004B6800u;
+constexpr uint32_t kFollowTurn = 0x18u;
+constexpr uint32_t kFollowTilt = 0x1Cu;
+constexpr uint32_t kFollowCatchUp = 0x34u;
 constexpr uint32_t kTiltReturn = 0x003073C4u; // its read of the right stick's up and down
 // The first-person view's turn and tilt (CameraFirstPersonUpdate), which it
 // clamps after adding the sticks.
@@ -112,14 +130,15 @@ PS2Runtime::RecompiledFunction g_cameraOrbitControl = nullptr;
 PS2Runtime::RecompiledFunction g_padReads[std::size(kPadReads)] = {};
 PS2Runtime::RecompiledFunction g_firstPersonUpdate = nullptr;
 PS2Runtime::RecompiledFunction g_cameraApplyInput = nullptr;
+PS2Runtime::RecompiledFunction g_cameraApplyMode = nullptr;
 // The game thread's: whether the field camera may turn this frame, as
 // CameraObjApplyInput found it before it ran; whether the mouse holds the
-// field camera's height, and the look up from its lowest the mouse holds (a
-// push of the stick, 0 to 1), with what goes to the camera's own read this
-// frame; the tilt the mouse holds for the following battle camera (out of
-// battle, 0).
+// field camera's height, and which; the look up from its lowest the mouse
+// holds (a push of the stick, 0 to 1), with what goes to the camera's own
+// read this frame; the tilt the mouse holds for the following battle camera.
 bool g_fieldTurnBlocked = false;
 bool g_fieldHold = false;
+float g_heldHeight = 0.0f;
 float g_fieldLookUp = 0.0f;
 float g_fieldTiltPush = 0.0f;
 float g_followTilt = 0.0f;
@@ -259,10 +278,23 @@ void viewSetProjection(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     g_viewSetProjection(rdram, ctx, runtime);
 }
 
-// The battle camera's: 150 to 190 up, 120 to 160 down.
+// What the mouse holds, let go: the camera's heights and tilts are the
+// game's again.
+void letGo()
+{
+    g_fieldHold = false;
+    g_fieldLookUp = 0.0f;
+    g_fieldTiltPush = 0.0f;
+    g_followTilt = 0.0f;
+}
+
+// The battle camera's: 150 to 190 up, 120 to 160 down. Also when a camera
+// that follows the party finds a ceiling over it or loses it, with heights
+// of their own.
 void cameraSetPresetParams(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     const uint32_t block = getRegU32(ctx, 4);
+    letGo();
     g_cameraSetPresetParams(rdram, ctx, runtime);
     distancesWritten(rdram, block);
 }
@@ -271,8 +303,15 @@ void cameraSetPresetParams(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtim
 void cameraSetDefaultParams(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     const uint32_t camera = getRegU32(ctx, 4);
+    letGo();
     g_cameraSetDefaultParams(rdram, ctx, runtime);
     distancesWritten(rdram, camera + kDistanceBlock);
+}
+
+void cameraApplyMode(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    letGo();
+    g_cameraApplyMode(rdram, ctx, runtime);
 }
 
 // What a frame's turn by the stick is multiplied by: the frame's share of a
@@ -326,12 +365,14 @@ float fieldNearness(const uint8_t *rdram, uint32_t self)
     return nearest > 0.0f && distance > 0.0f && distance < nearest ? distance / nearest : 1.0f;
 }
 
-// The field camera's turn and tilt this frame, with the mouse's: only for the
-// player's input, and the turn only while the camera may turn, at the same
-// angle near a wall. The tilt is a height, so the mouse's is in the camera's
-// tilt for its turn, and it stays where the mouse leaves it until the stick
-// tilts the camera. At the lowest tilt, moving on up looks up, as holding
-// the stick does, and stays so until the mouse comes down.
+// The field camera's turn and tilt this frame, with the mouse's: the turn
+// only while the camera may turn, at the same angle near a wall. The tilt is
+// a height, so the mouse's is in the camera's tilt for its turn, and the
+// height stays where the mouse leaves it (the ground or a ceiling moving it,
+// it eases back there as the game eases it into its range) until the stick
+// tilts the camera or the camera changes (letGo). At the lowest tilt, moving
+// on up looks up, as holding the stick does, and stays so until the mouse
+// comes down.
 void addFieldMouse(const uint8_t *rdram, const R5900Context *ctx, float (&turn)[2])
 {
     g_fieldTiltPush = 0.0f;
@@ -341,13 +382,9 @@ void addFieldMouse(const uint8_t *rdram, const R5900Context *ctx, float (&turn)[
         g_fieldLookUp = 0.0f;
         return;
     }
-    if (g_cameraApplyInput == nullptr || getRegU32(ctx, 31) != kOrbitFromInput || getRegU32(ctx, 19) == 0u)
+    if (g_cameraApplyInput == nullptr || getRegU32(ctx, 31) != kOrbitFromInput)
     {
         return;
-    }
-    if (read<uint32_t>(rdram, kGameMode) != kModeBattle)
-    {
-        g_followTilt = 0.0f;
     }
     const uint32_t self = getRegU32(ctx, 4);
     const float mouseTurn = rg::mousecamera::takeTurn();
@@ -356,7 +393,6 @@ void addFieldMouse(const uint8_t *rdram, const R5900Context *ctx, float (&turn)[
     {
         turn[0] -= mouseTurn * fieldNearness(rdram, self);
     }
-    const float turnSpeed = read<float>(rdram, self + kFieldTurnSpeed);
     if (turn[1] != 0.0f)
     {
         // The stick's: the game's own again.
@@ -364,17 +400,29 @@ void addFieldMouse(const uint8_t *rdram, const R5900Context *ctx, float (&turn)[
         g_fieldLookUp = 0.0f;
         return;
     }
+    const uint32_t heights = self + kDistanceBlock;
+    const float height = read<float>(rdram, heights + kHeight);
+    const float lowest = read<float>(rdram, heights + kLowest);
+    const float highest = read<float>(rdram, heights + kHighest);
     if (mouseTilt != 0.0f)
     {
-        g_fieldHold = true;
-        g_fieldLookUp = read<uint32_t>(rdram, kOrbitLowest) != 0u || mouseTilt < 0.0f
+        const float turnSpeed = read<float>(rdram, self + kFieldTurnSpeed);
+        const float rise = -mouseTilt * stickFor(read<float>(rdram, self + kFieldTiltSpeed), turnSpeed);
+        // At the lowest as the game will find it in this call: its flag from
+        // the last one lasts only while the ground holds the camera up.
+        const bool atLowest = read<uint32_t>(rdram, kOrbitLowest) != 0u || height + rise < lowest;
+        g_fieldLookUp = atLowest || mouseTilt < 0.0f
                             ? std::clamp(g_fieldLookUp + stickFor(mouseTilt, turnSpeed), 0.0f, 1.0f)
                             : 0.0f;
+        g_fieldHold = true;
+        g_heldHeight = lowest <= highest ? std::clamp(height + rise, lowest, highest) : height + rise;
+        turn[1] = rise;
     }
-    turn[1] = -mouseTilt * stickFor(read<float>(rdram, self + kFieldTiltSpeed), turnSpeed);
-    if (turn[1] == 0.0f && g_fieldHold)
+    else if (g_fieldHold)
     {
-        turn[1] = kHoldTilt;
+        const float ease = read<float>(rdram, kOrbitEase);
+        const float back = (g_heldHeight - height) / (ease > 1.0f ? ease : 1.0f);
+        turn[1] = std::fabs(back) > kHoldTilt ? back : kHoldTilt;
     }
     g_fieldTiltPush = g_fieldLookUp;
 }
@@ -396,9 +444,9 @@ void cameraOrbitControl(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 }
 
 // The following battle camera's tilt the mouse holds, as the stick's up and
-// down on Normal (down, +1, looks up), until the field camera takes the
-// mouse out of battle (game mode 7) or the option is turned off. Its turn
-// goes through the camera's easing, as the stick's does.
+// down on Normal (down, +1, looks up), until the camera changes (letGo) or
+// the option is turned off. Its turn goes through the camera's easing, as
+// the stick's does.
 float followTilt(float mouseTilt, float perPush)
 {
     g_followTilt = std::clamp(g_followTilt + stickFor(mouseTilt, perPush), -1.0f, 1.0f);
@@ -426,12 +474,17 @@ void addStickMouse(const uint8_t *rdram, R5900Context *ctx, uint32_t site)
     }
     else if (site == kFollowTurnReturn)
     {
-        ctx->f[0] -= stickFor(rg::mousecamera::takeTurn(), read<float>(rdram, kFollowParams + 0x18u)) *
+        // The whole angle, as exploring: of a frame's turn the camera moves
+        // only a share, and drops the rest.
+        const float catchUp = read<float>(rdram, kFollowParams + kFollowCatchUp);
+        const float perFrame =
+            read<float>(rdram, kFollowParams + kFollowTurn) * (catchUp > 0.0f && catchUp < 1.0f ? catchUp : 1.0f);
+        ctx->f[0] -= stickFor(rg::mousecamera::takeTurn(), perFrame) *
                      optionSign(rdram, getRegU32(ctx, 16), kSignHorizontal);
     }
     else if (site == kTiltReturn)
     {
-        const float held = followTilt(rg::mousecamera::takeTilt(), read<float>(rdram, kFollowParams + 0x1Cu));
+        const float held = followTilt(rg::mousecamera::takeTilt(), read<float>(rdram, kFollowParams + kFollowTilt));
         ctx->f[0] = std::clamp(ctx->f[0] + held * optionSign(rdram, getRegU32(ctx, 16), kSignVertical), -1.0f, 1.0f);
     }
 }
@@ -535,6 +588,10 @@ void install(PS2Runtime &runtime)
     if (!rg::timing::hookFunction(runtime, kFirstPersonUpdate, &cameraFirstPersonUpdate, g_firstPersonUpdate))
     {
         std::fprintf(stderr, "[rg] the mouse does not turn the first-person view\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kCameraApplyMode, &cameraApplyMode, g_cameraApplyMode))
+    {
+        std::fprintf(stderr, "[rg] a tilt held by the mouse lasts into the next scene or battle\n");
     }
 }
 

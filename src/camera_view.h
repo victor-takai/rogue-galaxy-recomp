@@ -45,8 +45,9 @@ class PS2Runtime;
 // options: the field's turn and tilt as CameraObjOrbitControl gets them from
 // the player's input (and its own read of the stick, which at the lowest
 // tilt brings the camera in to look up), the battle cameras' reads of the
-// stick, the first-person view's angles. The following battle camera's tilt
-// is a push the mouse holds until the field camera takes the mouse again.
+// stick, the first-person view's angles. What the mouse holds (the field
+// camera's height and look up, the following battle camera's tilt) is let go
+// when the camera changes mode (a battle, a scene, a map) or its presets.
 namespace rg::cameraview
 {
 
