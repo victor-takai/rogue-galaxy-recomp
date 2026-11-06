@@ -29,11 +29,12 @@
   of the game's or click, the mouse stays in the game's window; F1, the
   pause, Alt+Tab or a few seconds on the controller alone let it go.
 - Keyboard and mouse: new default keys made for them (the sword on the
-  left click, the guard on the right, jump on Space, the gun on Q, the
-  menus on Tab; the table is in the README), mouse buttons and the wheel
-  in F1 > Settings > Controls, and Walk (hold), Left Ctrl, since keys
-  always push the stick all the way. Keys you never changed move to the
-  new ones; keys you changed stay.
+  left click, the guard on E or the right click, jump on Space, the gun on
+  F, the menus on Tab; the table is in the README), mouse buttons and the
+  wheel in F1 > Settings > Controls, and Walk (hold), Left Ctrl, since
+  keys always push the stick all the way. In the game's menus the right
+  click goes back and the wheel moves up and down. Keys you never changed
+  move to the new ones; keys you changed stay.
 
 ### Changed
 

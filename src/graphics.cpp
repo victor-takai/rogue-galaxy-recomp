@@ -385,6 +385,10 @@ bool pump(void *userData)
         {
         }
     }
+    // In the game's menus the right click goes back and the wheel moves up
+    // and down, before the events are read.
+    backend->padInput().setMenuMouse(g_runtime != nullptr &&
+                                     rg::mousecamera::inGameMenu(g_runtime->memory().getRDRAM()));
     if (!backend->pumpEvents())
     {
         return false;

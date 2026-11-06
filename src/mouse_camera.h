@@ -45,6 +45,12 @@ struct Use
 // open or the game paused.
 void pump(SDL_Window *window, bool letGo, const Use &use);
 
+// Whether the player is not in control of the party but in one of the game's
+// menus, a scene or a talk (where the right click goes back and the wheel
+// moves up and down; dq8::gfx::SdlPadInput::setMenuMouse). Read from the
+// game's memory, any thread.
+bool inGameMenu(const uint8_t *rdram);
+
 // The game thread, at a camera's update: the turn to the right and the tilt
 // up in radians the mouse made since the last take of that axis.
 bool enabled();

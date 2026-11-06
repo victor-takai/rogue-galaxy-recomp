@@ -60,17 +60,18 @@ PCSX2 and uninstalling, is in [docs/INSTALL.md](docs/INSTALL.md).
 ## Controls
 
 A gamepad, or the keyboard and mouse: the sword on the left click, the
-guard on the right, jump on Space, the gun on Q, the menus on Tab. All of
-it can be changed in F1 > Settings > Controls.
+guard on E or the right click, jump on Space, the gun on F, the menus on
+Tab. In the game's menus the right click goes back and the wheel moves up
+and down. All of it can be changed in F1 > Settings > Controls.
 
 | Pad | Keyboard and mouse |
 |---|---|
 | Left stick | W A S D (hold Left Ctrl to walk) |
 | Right stick | The mouse, or I J K L |
 | D-pad | Arrow keys; the wheel is left and right |
-| ✕ / ○ / ▢ / △ | Left click or E / Space or Esc / Q / Tab |
-| L1 / R1 / L2 / R2 | 1 / Right click / 2 / C |
-| L3 / R3 | 3 / V |
+| ✕ / ○ / ▢ / △ | Left click / Space or Esc / F / Tab |
+| L1 / R1 / L2 / R2 | Q / E or right click / 1 / 2 |
+| L3 / R3 | C / V |
 | Start / Select | Enter / M |
 
 F11 or Alt+Enter toggles fullscreen. F12 takes a screenshot.

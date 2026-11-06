@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #if defined(RG_HAS_SDLGPU)
 #include <SDL3/SDL.h>
@@ -127,7 +128,57 @@ float scale()
     return kRadiansPerCount * static_cast<float>(g_sensitivity.load(std::memory_order_relaxed)) / 100.0f;
 }
 
+// The game's state (GameModeDispatch 0x27C670): the mode on top of its stack
+// and that mode's phase. Exploring (mode 6) the party is the player's in
+// phase 100 and in R3's look (300); in battle (mode 7) in its start (200),
+// the fight (201) and R3's look, and in the attack chains and abilities
+// (modes 9 and 10). Anything else is a menu (the main menu is mode 17; the
+// battle's commands 7/2000, its escape 7/2100, its results 7/500 to 505; the
+// map 6/400, the leader's choice 6/500; the transporter, ship and factory
+// menus 20, 19, 16), a talk or a shop (12), or a scene (11). The pause step
+// (PauseStepUpdate 0x2F5FB0: 2 paused, 3 its Yes/No to quit) and the system
+// mode (1 on the way to the title, which runs without the dispatcher) say
+// menu whatever the mode.
+constexpr uint32_t kGameMode = 0x004B51A0u;
+constexpr uint32_t kGamePhase = 0x004B51E0u;
+constexpr uint32_t kPauseStep = 0x0048276Cu;
+constexpr uint32_t kSystemMode = 0x0047E224u;
+
+template <typename T>
+T readGuest(const uint8_t *rdram, uint32_t address)
+{
+    T value{};
+    std::memcpy(&value, rdram + address, sizeof(value));
+    return value;
+}
+
 } // namespace
+
+bool inGameMenu(const uint8_t *rdram)
+{
+    if (rdram == nullptr)
+    {
+        return false;
+    }
+    if (readGuest<uint8_t>(rdram, kSystemMode) != 0u || readGuest<int32_t>(rdram, kPauseStep) != 0)
+    {
+        return true;
+    }
+    const uint32_t mode = readGuest<uint32_t>(rdram, kGameMode);
+    const int32_t phase = readGuest<int32_t>(rdram, kGamePhase);
+    switch (mode)
+    {
+    case 6u:
+        return phase != 100 && phase != 300;
+    case 7u:
+        return phase != 200 && phase != 201 && phase != 300;
+    case 9u:
+    case 10u:
+        return false;
+    default:
+        return true;
+    }
+}
 
 void install()
 {

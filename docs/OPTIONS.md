@@ -34,7 +34,9 @@ Settings has seven pages, written here as F1 > Settings > Game and so on:
 - **Sound**: volume and muting.
 - **Controls**: controller and keyboard remapping (a key, a mouse button
   or the wheel), dead zones, and **Walk (hold)**, which makes the keys,
-  which always push the stick all the way, walk instead of run.
+  which always push the stick all the way, walk instead of run. In the
+  game's menus, talks and scenes the right click is Circle (back) and the
+  wheel the D-pad's up and down, whatever they are bound to.
 - **Game**: the game options below.
 - **Language**: the text's language and the undub, [below](#language).
 - **Textures**: a switch for each texture pack found

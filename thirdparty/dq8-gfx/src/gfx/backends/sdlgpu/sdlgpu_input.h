@@ -135,6 +135,12 @@ public:
     uint64_t keyboardMouseAt() const { return m_keyboardMouseAt; }
     uint64_t mouseMotionAt() const { return m_mouseMotionAt; }
     uint64_t controllerAt() const { return m_controllerAt; }
+    // In the game's own menus (the host says when, before the events): the
+    // right click is Circle, back, and the wheel D-pad up and down, whatever
+    // they are bound to. Mouse buttons held when this changes count as
+    // released until they are let go, so a guard held as a menu opens does
+    // not close it.
+    void setMenuMouse(bool on);
     // The pad as the bindings read the devices now, even while the menu
     // keeps it from the game; for a live preview of the bindings.
     PadSnapshot preview() const;
@@ -149,7 +155,7 @@ private:
         std::string serial;
         std::array<bool, SDL_GAMEPAD_AXIS_COUNT * 2> axisPressed{};
     };
-    PadSnapshot sample(const bool *keys) const;
+    PadSnapshot sample(const bool *keys, SDL_MouseButtonFlags mouse) const;
     void openGamepad(SDL_JoystickID id);
     void openAll();
     void clearState();
@@ -167,6 +173,8 @@ private:
     bool m_suppressPending = false;
     uint32_t m_sticks = 0x80808080u;
     bool m_walking = false;
+    bool m_menuMouse = false;
+    SDL_MouseButtonFlags m_mouseSuppressed = 0u;
     uint64_t m_keyboardMouseAt = 0u;
     uint64_t m_mouseMotionAt = 0u;
     uint64_t m_controllerAt = 0u;
