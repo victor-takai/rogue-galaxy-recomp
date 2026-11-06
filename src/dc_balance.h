@@ -26,10 +26,10 @@ class PS2Runtime;
 // says where it ends. A European text (src/text_language.h) has tables of its
 // own, the US numbers with its names; the same step makes the Japanese numbers
 // with those names for each language in disc/EU, listed in tables.txt under
-// the language's names (monster_param_FR.cfg.bin), matched the same way, and
-// only while the game's text is in that language (the code at 0x481528). A
-// language without them keeps the US numbers, with a line in the log; a table
-// whose file is not whole is left out, the others still apply.
+// the language's names (monster_param_FR.cfg.bin) and matched the same way. A
+// text without them keeps the US numbers, with a line in the log (its code at
+// 0x481528); one with a table missing or not whole keeps them in all of its
+// tables, so its battles never mix the two releases' numbers.
 //
 // The rule in code: the Director's Cut's CharaResolveActionHit (JP 0x3B7068)
 // sets the target's knockdown resistance to 10, never knocked down, for a

@@ -52,9 +52,13 @@ A European text in `disc/EU` has tables of its own (the US numbers with its
 names), so the same step also writes, for each language there, the Japanese
 numbers with that language's names (`monster_param_FR.cfg.bin` and so on,
 listed in `tables.txt` too). It keeps the four Japanese tables in
-`disc/JA/balance/ja`, so `extract-european` (and `setup.py install`) makes a
-language added later without the Japanese image; a balance made before it
-kept them needs the image once more.
+`disc/JA/balance/ja` (their sizes and CRCs in `ja.txt`), so `extract-european`
+and `setup.py install` make the tables of a language added or built again
+later, or of one whose files are gone, without the Japanese image. When those
+are missing or damaged they read the image `disc/JA/manifest.json` names, if
+it is still there; otherwise that text keeps the US numbers until
+`Install-Undub.bat` runs again. A text whose tables could not be made is noted
+in `not_made.txt` and tried again once it is built again.
 
 ## The European disc (texts)
 

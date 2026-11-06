@@ -9,8 +9,9 @@ Japanese numbers the US strings, so the names stay English, and writes each
 under the US table's name with a list, tables.txt, that the game reads
 (src/dc_balance.h). With the European texts built into <disc>/EU, the same for
 each language's tables (the US numbers with that language's names): the
-Japanese numbers with its names. The Japanese tables stay in <out>/ja, so
-`rebuild` makes a language's tables when its text comes later.
+Japanese numbers with its names. The Japanese tables stay in <out>/ja, with
+their sizes and CRCs in ja.txt, so `rebuild` makes a language's tables when
+its text comes later or is built again.
 
 It also changed 76 enemies' files (chara\\mob\\*.chr: their attacks' reach,
 timing and kind, a few models) and 98 AI scripts (chara\\spt\\*.stb, the
@@ -79,20 +80,53 @@ def build(ja_pack: bytes, disc: Path, out: Path) -> list[str]:
         raise ValueError(f"{missing[0]} is not in the Japanese pack")
     sources = out / "ja"
     sources.mkdir(parents=True, exist_ok=True)
+    # Each with its size and CRC-32 in ja.txt, written last, which `rebuild` checks them by.
+    rows = []
     for _, ja_name in TABLES:
         part = sources / (ja_name + ".part")
         part.write_bytes(ja[ja_name])
         part.replace(sources / ja_name)
+        rows.append(f"{ja_name} {len(ja[ja_name])} {zlib.crc32(ja[ja_name]):08x}")
+    _write_text(sources / "ja.txt", "# The Japanese tables, from the disc: name, size, CRC-32\n" + "\n".join(rows) + "\n")
     return _write_tables({ja_name: ja[ja_name] for _, ja_name in TABLES}, disc, out)
 
 
 def rebuild(disc: Path, out: Path) -> list[str] | None:
     """The tables again, for the text languages there now, from the Japanese tables `build`
-    kept in <out>/ja; None when they are not there (a balance made before it kept them)."""
+    kept in <out>/ja; None when they are not there whole (a balance made before it kept them,
+    or one of them damaged since)."""
     sources = out / "ja"
-    if not all((sources / ja_name).is_file() for _, ja_name in TABLES):
+    kept = {}
+    for name, size, crc in _rows(sources / "ja.txt", 3):
+        try:
+            data = (sources / name).read_bytes()
+        except OSError:
+            return None
+        if len(data) != size or zlib.crc32(data) != crc:
+            return None
+        kept[name] = data
+    if any(ja_name not in kept for _, ja_name in TABLES):
         return None
-    return _write_tables({ja_name: (sources / ja_name).read_bytes() for _, ja_name in TABLES}, disc, out)
+    return _write_tables(kept, disc, out)
+
+
+def forget(out: Path, codes: list[str]) -> None:
+    """Takes the European texts `codes` out of tables.txt, and their tables with them: tables
+    for another build of a text, which can no longer be made, leave it the US numbers, which the
+    game then says in its log. English stays."""
+    codes = [code for code in codes if code != "EN"]
+    if not codes or not (out / "tables.txt").is_file():
+        return
+    text = (out / "tables.txt").read_text(encoding="utf-8", errors="replace")
+    kept, dropped = [], []
+    for line in text.splitlines():
+        name = line.split()[0] if line.split() and not line.startswith("#") else ""
+        (dropped if any(name.endswith(f"_{code}.cfg.bin") for code in codes) else kept).append(line)
+    if not dropped:
+        return
+    _write_text(out / "tables.txt", "\n".join(kept) + "\n")
+    for line in dropped:
+        (out / line.split()[0]).unlink(missing_ok=True)
 
 
 def text_languages(disc: Path) -> list[str]:
@@ -103,33 +137,77 @@ def text_languages(disc: Path) -> list[str]:
 
 
 def languages_stale(disc: Path, out: Path) -> list[str]:
-    """The text languages of <disc>/EU whose tables tables.txt lacks, or lists for other
-    bytes than that language's tables now (its text built again since)."""
-    listed = _listed(out)
+    """The texts (EN, and each European one in <disc>/EU) whose tables are not made as they
+    should be: tables.txt lacks them, or lists them for other bytes than that text's tables now
+    (its text built again since), or their files are missing or not whole. A European text whose
+    tables could not be made stays out of it until that text is built again (not_made.txt)."""
+    # A line not understood leaves the game without any table (src/dc_balance.cpp): all again.
+    listed = {name: (base_size, base_crc, size)
+              for name, base_size, base_crc, size in _rows(out / "tables.txt", 4, strict=True) or []}
+    not_made = dict(_rows(out / NOT_MADE, 2))
     stale = []
-    for code in text_languages(disc):
+    for code in ["EN"] + text_languages(disc):
         try:
+            if code != "EN" and not_made.get(code) == _text_signature(disc, code):
+                continue
             bases = _base_tables(disc, code)
-        except (OSError, ValueError):
-            stale.append(code)  # the rebuild says what is wrong
-            continue
-        if any(listed.get(name) != (len(base), zlib.crc32(base)) for name, (_, base) in bases.items()):
+        except Exception:  # a text that cannot be read: the rebuild says what is wrong
             stale.append(code)
+            continue
+        for name, (_, base) in bases.items():
+            row = listed.get(name)
+            if (row is None or row[:2] != (len(base), zlib.crc32(base))
+                    or not (out / name).is_file() or (out / name).stat().st_size != row[2]):
+                stale.append(code)
+                break
     return stale
 
 
-def _listed(out: Path) -> dict[str, tuple[int, int]]:
-    """tables.txt's rows: name -> the size and CRC-32 of the table each replaces."""
+# The European texts whose tables could not be made, each with its text's signature
+# (_text_signature): tried again once that text is built again, or by `build`.
+NOT_MADE = "not_made.txt"
+
+
+def _rows(path: Path, count: int, strict: bool = False) -> list[tuple] | None:
+    """A list file's rows of `count` fields, as tables.txt's (name, sizes in decimal, CRCs in
+    hex: name size crc size), ja.txt's (name size crc) and not_made.txt's (code signature);
+    "# ..." and empty lines left out, and rows that are not right too, or with `strict`, None
+    for the file; none for a missing file."""
     try:
-        text = (out / "tables.txt").read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return {}
-    rows = {}
+        return []
+    rows = []
     for line in text.splitlines():
-        fields = line.split()
-        if len(fields) == 4 and not line.startswith("#"):
-            rows[fields[0]] = (int(fields[1]), int(fields[2], 16))
+        if line.startswith("#") or not line.strip():
+            continue
+        fields = line.split(None, count - 1) if count == 2 else line.split()
+        try:
+            if len(fields) != count:
+                raise ValueError(line)
+            if count == 2:
+                rows.append((fields[0], fields[1].strip()))
+            elif count == 3:
+                rows.append((fields[0], int(fields[1]), int(fields[2], 16)))
+            else:
+                rows.append((fields[0], int(fields[1]), int(fields[2], 16), int(fields[3])))
+        except ValueError:
+            if strict:
+                return None
     return rows
+
+
+def _text_signature(disc: Path, code: str) -> str:
+    """A European text's files as they are now, which change when it is built again."""
+    eu = disc / "EU"
+    dat = (eu / f"{code}.DAT").stat()
+    return f"{zlib.crc32((eu / f'{code}.idx').read_bytes()):08x} {dat.st_size} {dat.st_mtime_ns}"
+
+
+def _write_text(path: Path, text: str) -> None:
+    part = path.with_name(path.name + ".part")
+    part.write_text(text, encoding="utf-8", newline="\n")
+    part.replace(path)
 
 
 def _language_pack(disc: Path, code: str) -> bytes:
@@ -161,8 +239,8 @@ def _base_tables(disc: Path, code: str) -> dict[str, tuple[str, bytes]]:
     return tables
 
 
-def _merge(base: bytes, numbers: bytes, name: str) -> tuple[bytes, str]:
-    merged, changed, kept = cfgbin.merge_numbers(base, numbers)
+def _merge(base: bytes, numbers: bytes, name: str, packed: bool) -> tuple[bytes, str]:
+    merged, changed, kept = cfgbin.merge_numbers(base, numbers, packed=packed)
     if cfgbin.numbers_view(merged) != cfgbin.numbers_view(numbers) and kept == 0:
         raise ValueError(f"{name}: the numbers did not all come over")
     if cfgbin.strings_view(merged) != cfgbin.strings_view(base):
@@ -176,19 +254,28 @@ def _merge(base: bytes, numbers: bytes, name: str) -> tuple[bytes, str]:
 def _write_tables(sources: dict[str, bytes], disc: Path, out: Path) -> list[str]:
     """Each table the game may run, the US English one and each European language's, with the
     Japanese numbers and its own strings (names), then tables.txt, which lists them all. A
-    language whose tables cannot be made is left out, with a line saying why; English must be."""
+    language whose tables cannot be made is left out, with a line saying why, and noted in
+    not_made.txt; English must be."""
     out.mkdir(parents=True, exist_ok=True)
-    rows, report = [], []
+    rows, report, not_made = [], [], []
     for code in ["EN"] + text_languages(disc):
         try:
             made = []
             for name, (ja_name, base) in _base_tables(disc, code).items():
-                merged, line = _merge(base, sources[ja_name], name)
+                # A European text's tables have their strings right after the ops
+                # (european.py, cfg_write); the game's own, on the next 16-byte boundary.
+                merged, line = _merge(base, sources[ja_name], name, packed=code != "EN")
                 made.append((name, base, merged, line))
-        except (OSError, ValueError) as error:
+        except Exception as error:  # a damaged text: whatever reading its tables raises
             if code == "EN":
                 raise
-            report.append(f"{code}: not made ({error}); its text keeps the US numbers")
+            report.append(f"{code}: not made ({type(error).__name__}: {error}); its text keeps the US numbers")
+            # Not tried again until the text changes; a file that could not be read, next time.
+            if not isinstance(error, OSError):
+                try:
+                    not_made.append(f"{code} {_text_signature(disc, code)}")
+                except OSError:
+                    pass
             continue
         # Written once the language's tables are all made, each in place whole.
         for name, base, merged, line in made:
@@ -197,14 +284,15 @@ def _write_tables(sources: dict[str, bytes], disc: Path, out: Path) -> list[str]
             part.replace(out / name)
             rows.append(f"{name} {len(base)} {zlib.crc32(base):08x} {len(merged)}")
             report.append(line)
-    text = (
-        "# The Japanese Director's Cut's battle balance (setup.py director-cut-balance).\n"
-        "# file, the size and CRC-32 of the table it replaces (US English, or a European\n"
-        "# text's), the file's size\n" + "\n".join(rows) + "\n"
-    )
-    part = out / "tables.txt.part"
-    part.write_text(text, encoding="utf-8", newline="\n")
-    part.replace(out / "tables.txt")
+    _write_text(out / "tables.txt",
+                "# The Japanese Director's Cut's battle balance (setup.py director-cut-balance).\n"
+                "# file, the size and CRC-32 of the table it replaces (US English, or a European\n"
+                "# text's), the file's size\n" + "\n".join(rows) + "\n")
+    if not_made:
+        _write_text(out / NOT_MADE, "# Texts whose tables could not be made, until built again: code, "
+                                    "signature\n" + "\n".join(not_made) + "\n")
+    else:
+        (out / NOT_MADE).unlink(missing_ok=True)
     return report
 
 

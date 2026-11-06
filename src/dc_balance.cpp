@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -70,6 +71,8 @@ std::atomic<bool> g_balance{false};
 std::atomic<bool> g_enemyBehavior{false};
 std::atomic<bool> g_partyAi{false};
 std::vector<Table> g_tables;
+// The texts whose tables were left out, not all there (already in the log).
+std::set<std::string> g_leftOut;
 // files.idx: archive path (lower case, backslashes) -> where in files.dat.
 std::unordered_map<std::string, File> g_files;
 std::mutex g_filesMutex;
@@ -164,9 +167,24 @@ std::string languageOf(const std::string &name)
     return code;
 }
 
+// "a, b, c", for the log.
+template <typename Items>
+std::string joined(const Items &items)
+{
+    std::string out;
+    for (const std::string &item : items)
+    {
+        out += (out.empty() ? "" : ", ") + item;
+    }
+    return out;
+}
+
 // disc/JA/balance/tables.txt: "# ..." comments, then one table a line: its
 // file name, the size and CRC-32 (hex) of the table it replaces, the file's
-// size. A line or a file that is not right is left out, with a line in the log.
+// size. A text's tables go together: one that is not right (its line not
+// understood, its file missing or not whole) leaves that text's out, with a
+// line in the log, so its battles never mix the two releases' numbers; one
+// for every text (btl_eff_param3) leaves them all out.
 bool loadTables(const std::filesystem::path &folder)
 {
     std::ifstream list(folder / "tables.txt");
@@ -175,25 +193,27 @@ bool loadTables(const std::filesystem::path &folder)
         return false;
     }
     std::vector<Table> tables;
+    std::set<std::string> broken; // the texts with a table that is not right
     std::string line;
     while (std::getline(list, line))
     {
-        if (line.empty() || line[0] == '#')
+        std::istringstream fields(line);
+        Table table;
+        if (line.empty() || line[0] == '#' || !(fields >> table.name))
         {
             continue;
         }
-        std::istringstream fields(line);
-        Table table;
+        table.language = languageOf(table.name);
         std::string crc;
         size_t size = 0;
-        if (!(fields >> table.name >> table.usSize >> crc >> size))
+        if (!(fields >> table.usSize >> crc >> size))
         {
             std::fprintf(stderr, "[rg] Director's Cut balance: a line of tables.txt is not understood: %s\n",
                          line.c_str());
+            broken.insert(table.language);
             continue;
         }
         table.usCrc = static_cast<uint32_t>(std::strtoul(crc.c_str(), nullptr, 16));
-        table.language = languageOf(table.name);
         std::ifstream file(folder / table.name, std::ios::binary);
         table.data.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
         if (!file.good() && !file.eof())
@@ -201,15 +221,29 @@ bool loadTables(const std::filesystem::path &folder)
             table.data.clear();
         }
         // A table runs in place of the one it replaces, in its buffer: never larger.
-        // One that is not whole is left out; the others still apply.
         if (table.data.size() != size || size == 0 || size > table.usSize)
         {
-            std::fprintf(stderr, "[rg] Director's Cut balance: %s is missing or not whole, left out; run "
-                                 "Install-Undub.bat again\n",
-                         table.name.c_str());
+            std::fprintf(stderr, "[rg] Director's Cut balance: %s is missing or not whole\n", table.name.c_str());
+            broken.insert(table.language);
             continue;
         }
         tables.push_back(std::move(table));
+    }
+    if (broken.count(std::string()) != 0u)
+    {
+        std::fprintf(stderr, "[rg] Director's Cut balance: a table every text uses is not right, so none is used\n");
+        return false;
+    }
+    if (!broken.empty())
+    {
+        std::fprintf(stderr,
+                     "[rg] Director's Cut balance: the text in %s keeps the US numbers, its tables are not all "
+                     "there: Update.bat makes them again, or Install-Undub.bat\n",
+                     joined(broken).c_str());
+        tables.erase(std::remove_if(tables.begin(), tables.end(),
+                                    [&](const Table &table) { return broken.count(table.language) != 0u; }),
+                     tables.end());
+        g_leftOut = broken;
     }
     if (tables.empty())
     {
@@ -500,51 +534,45 @@ void charaJumpToTarget(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 
 // The game's text language: the code its paths' `?` becomes ("EN"; another
 // once a text in another language is served, at boot). Its param pack, and so
-// its tables, are that language's, with their names: the balance replaces them
-// with its own for that language (monster_param_FR.cfg.bin and so on), made at
-// install when that text was there. A text with none gets a line in the log.
-std::string currentLanguage(const uint8_t *rdram)
+// its tables, are that language's, with their names, which match the balance's
+// tables for that language (monster_param_FR.cfg.bin and so on), made at
+// install when that text was there. A text with none says so in the log, once
+// it is set (the code's address, read at each table, changes then).
+void tellIfNoTables(const uint8_t *rdram)
 {
+    static uint32_t seen = 0u;
     const uint32_t code = readWord(rdram, kTextLanguage);
-    std::string name = code ? guestString(rdram, code, 4u) : std::string();
-    for (char &c : name)
-    {
-        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    }
-    return name.empty() ? std::string("EN") : name;
-}
-
-void tellIfNoTables(const std::string &language)
-{
-    static bool told = false;
-    if (told || language == "EN")
+    if (code == 0u || code == seen)
     {
         return;
     }
-    told = true;
-    for (const Table &table : g_tables)
+    seen = code;
+    std::string language = guestString(rdram, code, 4u);
+    for (char &c : language)
     {
-        if (table.language == language)
-        {
-            return;
-        }
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    if (language.empty() || language == "EN" || g_leftOut.count(language) != 0u ||
+        std::any_of(g_tables.begin(), g_tables.end(), [&](const Table &table) { return table.language == language; }))
+    {
+        return;
     }
     std::fprintf(stderr,
-                 "[rg] Director's Cut balance: no tables for the text in %s, so the enemies' numbers stay the US "
-                 "ones (the boss rule still applies): Install-European.bat or Update.bat makes them, or "
-                 "Install-Undub.bat again\n",
+                 "[rg] Director's Cut balance: no tables for the text in %s, so its enemies, groups and fixed "
+                 "battles keep the US numbers (the attacks' effects and the boss rule still apply): "
+                 "Install-European.bat or Update.bat makes them, or Install-Undub.bat again\n",
                  language.c_str());
 }
 
 void dataTableRunCfg(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
-    const std::string language = currentLanguage(rdram);
-    tellIfNoTables(language);
+    tellIfNoTables(rdram);
     const uint32_t buffer = getRegU32(ctx, 5) & 0x1FFFFFFFu;
     const uint32_t size = getRegU32(ctx, 6);
+    // Any text's table that matches: two with the same bytes are the same table.
     for (Table &table : g_tables)
     {
-        if ((!table.language.empty() && table.language != language) || size != table.usSize || buffer == 0 || buffer > PS2_RAM_SIZE || size > PS2_RAM_SIZE - buffer)
+        if (size != table.usSize || buffer == 0 || buffer > PS2_RAM_SIZE || size > PS2_RAM_SIZE - buffer)
         {
             continue;
         }
@@ -621,20 +649,15 @@ std::string installBalance(PS2Runtime &runtime, const std::filesystem::path &fol
     {
         std::fprintf(stderr, "[rg] Director's Cut balance: bosses can still be knocked down (hook missing)\n");
     }
-    std::vector<std::string> languages;
+    std::set<std::string> languages;
     for (const Table &table : g_tables)
     {
-        if (!table.language.empty() &&
-            std::find(languages.begin(), languages.end(), table.language) == languages.end())
+        if (!table.language.empty())
         {
-            languages.push_back(table.language);
+            languages.insert(table.language);
         }
     }
-    std::string list;
-    for (const std::string &language : languages)
-    {
-        list += (list.empty() ? "" : ", ") + language;
-    }
+    const std::string list = joined(languages);
     return "balance (tables for " + (list.empty() ? std::string("every text") : list) + ")" +
            (bossRule ? ", bosses never knocked down" : "");
 }
@@ -718,12 +741,7 @@ void install(PS2Runtime &runtime)
     {
         return;
     }
-    std::string list;
-    for (const std::string &what : on)
-    {
-        list += (list.empty() ? "" : ", ") + what;
-    }
-    std::fprintf(stderr, "[rg] Director's Cut on, from %s: %s\n", folder.string().c_str(), list.c_str());
+    std::fprintf(stderr, "[rg] Director's Cut on, from %s: %s\n", folder.string().c_str(), joined(on).c_str());
 }
 
 void setBalance(bool on)

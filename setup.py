@@ -397,9 +397,7 @@ def cmd_extract_european(args: argparse.Namespace) -> int:
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"built {', '.join(c.upper() for c in languages)} into {out} in {time.time() - started:.0f} s")
     # The Director's Cut balance, when it is there, for these texts' own tables.
-    if balance_languages(disc) == "needs disc":
-        print("   the Director's Cut balance needs your Japanese disc once more for these texts: run "
-              "Install-Undub.bat (the voices it copied stay), or Update.bat while its image is where it was")
+    balance_languages(args.version, disc)
     return 0
 
 
@@ -922,59 +920,72 @@ def cmd_portable(args: argparse.Namespace) -> int:
     return 0
 
 
-def balance_languages(disc: Path) -> str:
-    """The Director's Cut balance's tables for each European text in <disc>/EU that has none,
-    or has them for another build of that text, from the Japanese tables the balance keeps.
-    Returns "none" (nothing to do, or no balance), "made", "needs disc" (the balance was made
-    before it kept them) or "failed". Never stops the step it is part of."""
+def undub_image(disc: Path) -> str | None:
+    """The Japanese disc image the undub was installed from, when it is still where it was."""
+    try:
+        image = json.loads((disc / "JA" / "manifest.json").read_text(encoding="utf-8")).get("image")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return image if isinstance(image, str) and Path(image).is_file() else None
+
+
+def balance_languages(version: str, disc: Path) -> str:
+    """The Director's Cut balance's tables for each text that lacks them (a European text in
+    <disc>/EU made or built again after the balance, or a table gone), from the Japanese tables
+    the balance keeps, or else from the Japanese image the undub came from. Returns "none"
+    (nothing to do, or no balance), "made", "needs disc" or "failed"; a European text left
+    without them is taken out of tables.txt, so the game's log says so. Never stops the step
+    it is part of."""
     from disc import balance
 
     out = disc / "JA" / "balance"
-    if not (out / "tables.txt").is_file():
-        return "none"
-    stale = balance.languages_stale(disc, out)
-    if not stale:
-        return "none"
-    print(f"== the Director's Cut balance for the text in {', '.join(stale)}", flush=True)
+    stale: list[str] = []
     try:
+        if not (out / "tables.txt").is_file():
+            return "none"
+        stale = balance.languages_stale(disc, out)
+        if not stale:
+            return "none"
+        print(f"== the Director's Cut balance's tables for the text in {', '.join(stale)}", flush=True)
         report = balance.rebuild(disc, out)
-    except Exception as error:  # the English tables or the kept ones damaged: whatever parsing raises
-        print(f"   not made: {type(error).__name__}: {error}")
-        return "failed"
-    if report is None:
+        if report is not None:
+            for line in report:
+                print(f"   {line}", flush=True)
+            return "made"
+        # The kept Japanese tables missing or damaged: the four from the image, not the enemy files.
+        image = undub_image(disc)
+        if image:
+            print("   from the Japanese disc image the undub came from", flush=True)
+            if make_balance(argparse.Namespace(version=version, iso=image, disc=str(disc), tables_only=True)):
+                return "made"
+        balance.forget(out, stale)
+        print("   they need your Japanese disc once more: run Install-Undub.bat (the voices it copied stay)")
         return "needs disc"
-    for line in report:
-        print(f"   {line}", flush=True)
-    return "made"
+    except Exception as error:  # a damaged balance or text: whatever reading them raises
+        print(f"   not made: {type(error).__name__}: {error}")
+        try:
+            balance.forget(out, stale)
+        except Exception:
+            pass
+        return "failed"
 
 
 def balance_for_undub(version: str, disc: Path) -> None:
-    """An undub installed before the Director's Cut balance (or its enemy files, or a European
-    text's tables) existed gets them, from the Japanese image it came from when that is still
-    where it was; never stops the install."""
+    """An undub installed before the Director's Cut options existed gets their files, from the
+    Japanese image it came from when that is still where it was, and a balance whose texts lack
+    tables gets them; never stops the install."""
     ja = disc / "JA"
     whole = all((ja / "balance" / name).is_file() for name in ("tables.txt", "files.idx", "files.dat"))
-    if not (ja / "manifest.json").is_file():
+    if whole or not (ja / "manifest.json").is_file():
+        balance_languages(version, disc)
         return
-    if whole and balance_languages(disc) != "needs disc":
+    image = undub_image(disc)
+    if not image:
+        print("== the Director's Cut options need your Japanese disc once: run Install-Undub.bat")
+        balance_languages(version, disc)
         return
-    try:
-        image = json.loads((ja / "manifest.json").read_text(encoding="utf-8")).get("image")
-    except (OSError, ValueError):
-        image = None
-    if not image or not Path(image).is_file():
-        if whole:
-            print("   the European texts' tables need your Japanese disc once more: run Install-Undub.bat "
-                  "(the voices it copied stay)")
-        else:
-            print("== the Director's Cut options need your Japanese disc once: run Install-Undub.bat")
-        return
-    if whole:
-        # Only the European texts' tables: the four Japanese tables, not the enemy files again.
-        print("   from the Japanese disc image the undub came from", flush=True)
-    else:
-        print("== the Director's Cut options' files, from the Japanese disc image the undub came from", flush=True)
-    if not make_balance(argparse.Namespace(version=version, iso=image, disc=str(disc), tables_only=whole)):
+    print("== the Director's Cut options' files, from the Japanese disc image the undub came from", flush=True)
+    if not make_balance(argparse.Namespace(version=version, iso=image, disc=str(disc))):
         print("   Install-Undub.bat makes it")
 
 
