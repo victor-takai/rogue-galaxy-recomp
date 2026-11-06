@@ -996,6 +996,39 @@ void saveMsgBoxShow(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     }
 }
 
+// The battle's warning with the gauge empty (widget 0x83 of the normal
+// overlay's FieldHudWidget83Open, 0x4F95B0: "You can't fight until [atg]
+// recharges!" over "Guard against attacks with [r1] to recharge it!"): the US
+// code centres the second line (UiSetTextCenteredX at 0xEC) and leaves the
+// first where the layout puts it, made for the English line, so a longer
+// European one ran out of the window's right side. After that call, the
+// first line is centred at the same place. Told by where the call returns
+// (0x4F962C, the overlay's) and its arguments, as other overlays use those
+// addresses.
+constexpr uint32_t kWarningCentreReturn = 0x004F962Cu;
+constexpr uint32_t kWarningWidget = 0x83u;
+constexpr uint32_t kWarningMiddle = 0xECu;
+PS2Runtime::RecompiledFunction g_originalCentredX = nullptr;
+
+void uiSetTextCenteredX(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t from = getRegU32(ctx, 31);
+    const uint32_t ui = getRegU32(ctx, 4), id = getRegU32(ctx, 5) & 0xFFFFu, x = getRegU32(ctx, 6);
+    const uint32_t text = getRegU32(ctx, 7);
+    g_originalCentredX(rdram, ctx, runtime);
+    if (europeanColumn() < 0 || from != kWarningCentreReturn || id != kWarningWidget || x != kWarningMiddle ||
+        text != 1u)
+    {
+        return;
+    }
+    R5900Context local = *ctx;
+    local.r[4] = _mm_set_epi64x(0, static_cast<int64_t>(ui));
+    local.r[5] = _mm_set_epi64x(0, static_cast<int64_t>(id));
+    local.r[6] = _mm_set_epi64x(0, static_cast<int64_t>(x));
+    local.r[7] = _mm_set_epi64x(0, 0);
+    g_originalCentredX(rdram, &local, runtime);
+}
+
 // The open state's labels, centred on the language's list (in the label
 // call's a3: the US W/2+11, 73 or 53).
 void centrePartyLabel(R5900Context *ctx)
@@ -1193,6 +1226,10 @@ void install(PS2Runtime &runtime)
     if (!rg::timing::hookFunction(runtime, kSaveMsgBoxShow, &saveMsgBoxShow, g_originalSaveMsgBox))
     {
         std::fprintf(stderr, "[rg] the save screens' Yes and No keep the US places\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kUiSetTextCenteredX, &uiSetTextCenteredX, g_originalCentredX))
+    {
+        std::fprintf(stderr, "[rg] the battle's empty-gauge warning keeps its first line where English has it\n");
     }
 }
 
