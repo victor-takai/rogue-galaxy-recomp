@@ -944,6 +944,51 @@ void partyCmdHighlight(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     }
 }
 
+// The save screens' Yes/No box (SaveMsgBoxShow, 0x376BF0, a1 the UI): the US
+// code puts its two labels at fixed places in their buttons (the box's
+// sprites 9 and 10, its widget id at 0x47FB04), 12 and 18 in, where "Yes"
+// and "No" sit in the middle; the PAL code centres them on the buttons
+// (UiSetTextCenteredX, 0x28F300, at a button's x + 26), so "Sí" or "Oui" do
+// not sit to one side. As it, after the original, in a European text.
+constexpr uint32_t kSaveMsgBoxShow = 0x00376BF0u;
+constexpr uint32_t kUiSetTextCenteredX = 0x0028F300u;
+constexpr uint32_t kSaveMsgBoxId = 0x0047FB04u;
+constexpr uint32_t kButtonsFirst = 9u;
+constexpr int16_t kButtonMiddle = 0x1A;
+PS2Runtime::RecompiledFunction g_originalSaveMsgBox = nullptr;
+
+void saveMsgBoxShow(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t ui = getRegU32(ctx, 5);
+    g_originalSaveMsgBox(rdram, ctx, runtime);
+    if (europeanColumn() < 0 || ui == 0u)
+    {
+        return;
+    }
+    const uint16_t id = static_cast<uint16_t>(readHalf(rdram, kSaveMsgBoxId));
+    const uint32_t sprites = widgetSprites(rdram, ui, id);
+    // The buttons are up only for a question.
+    if (sprites == 0u || readHalf(rdram, sprites + kButtonsFirst * kSpriteBytes + kSpriteWidth) == 0)
+    {
+        return;
+    }
+    const PS2Runtime::RecompiledFunction centre = runtime->lookupFunction(kUiSetTextCenteredX);
+    if (!centre)
+    {
+        return;
+    }
+    for (uint32_t label = 1u; label <= 2u; ++label)
+    {
+        const int16_t x = readHalf(rdram, sprites + (kButtonsFirst + label - 1u) * kSpriteBytes);
+        R5900Context local = *ctx;
+        local.r[4] = _mm_set_epi64x(0, static_cast<int64_t>(ui));
+        local.r[5] = _mm_set_epi64x(0, static_cast<int64_t>(id));
+        local.r[6] = _mm_set_epi64x(0, static_cast<int64_t>(x + kButtonMiddle));
+        local.r[7] = _mm_set_epi64x(0, static_cast<int64_t>(label));
+        centre(rdram, &local, runtime);
+    }
+}
+
 // The open state's labels, centred on the language's list (in the label
 // call's a3: the US W/2+11, 73 or 53).
 void centrePartyLabel(R5900Context *ctx)
@@ -1137,6 +1182,10 @@ void install(PS2Runtime &runtime)
         !rg::timing::hookFunction(runtime, kPartyCmdHighlight, &partyCmdHighlight, g_originalPartyHighlight))
     {
         std::fprintf(stderr, "[rg] a party member's commands keep the US widths\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kSaveMsgBoxShow, &saveMsgBoxShow, g_originalSaveMsgBox))
+    {
+        std::fprintf(stderr, "[rg] the save screens' Yes and No keep the US places\n");
     }
 }
 

@@ -609,7 +609,8 @@ def roomier(pal: list[CfgEntry], us: list[CfgEntry]) -> bool:
 
 
 def merge_layout_sprites(us: list[CfgEntry], pal_lang: list[CfgEntry], pal_en: list[CfgEntry] | None,
-                         every: bool, words: set[bytes] = frozenset()) -> tuple[list[CfgEntry], int]:
+                         every: bool, words: set[bytes] = frozenset(),
+                         keep: frozenset[int] = frozenset()) -> tuple[list[CfgEntry], int]:
     """The US layout with sprite groups of the PAL layout (same widget id, nth
     occurrence): the rectangles of the PAL pictures, the US ids. Taken: those drawn
     with a texture of `words` (the pictures the PAL language has otherwise, taken from
@@ -640,7 +641,7 @@ def merge_layout_sprites(us: list[CfgEntry], pal_lang: list[CfgEntry], pal_en: l
         n = seen.get(wid, 0)
         seen[wid] = n + 1
         options = pal_groups.get(wid, [])
-        if n >= len(options):
+        if n >= len(options) or wid in keep:
             continue
         pa, pb = options[n]
         group = pal_lang[pa:pb]
@@ -658,6 +659,15 @@ def merge_layout_sprites(us: list[CfgEntry], pal_lang: list[CfgEntry], pal_en: l
     out += us[at:]
     return out, replaced
 
+
+# The transporter's save screen: its Slot buttons' highlight (group 30911),
+# drawn with btl_st01, a picture the PAL language has otherwise, is 44 wide in
+# the PAL layout, but the US code (SavePortSelectDraw, 0x37B6E0) keeps the
+# US buttons 64 wide and never sizes the highlight, which the PAL code
+# fits to them: the PAL one left a strip of the button bare. It stays US,
+# as the title's Load screen's own has.
+TRANSPORT_LAYOUT = re.compile(r"transport_menu_def_", re.IGNORECASE)
+TRANSPORT_KEEP = frozenset({30911})
 
 TITLE_LAYOUT = re.compile(r"title_menu_def2_", re.IGNORECASE)
 TITLE_LEGAL = 30070                               # the legal text under the menu
@@ -987,7 +997,8 @@ def build_pack(us_pack: bytes, pal_pack: bytes, pal_en_pack: bytes | None, code:
                     layout, pal_layout = cfg_read(data), cfg_read(p.data)
                     english = cfg_read(bridge.data) if bridge else None
                     if layout is not None and pal_layout is not None:
-                        layout, groups = merge_layout_sprites(layout, pal_layout, english, atlas_moved, words)
+                        keep = TRANSPORT_KEEP if TRANSPORT_LAYOUT.search(lower) else frozenset()
+                        layout, groups = merge_layout_sprites(layout, pal_layout, english, atlas_moved, words, keep)
                         layout, texts = merge_layout_text(layout, pal_layout)
                         layout, cells = widen_text_cells(layout, pal_layout)
                         texts += cells
