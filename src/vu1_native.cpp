@@ -1609,9 +1609,11 @@ void buildProjector(const Program &program, const VuData &vu, uint32_t top,
 // the GPU): the UV the position through the projector, divided by its w,
 // per vertex (the shader then interpolates it as ST / Q, as the GS does the
 // program's ST), the color (128, 128, 128, 82.w * 81.w * 128), the guard
-// band and the facing as C tests them; C skips a triangle when cross *
-// winding > 0 with the cross the other way round to D's, which is
-// gsNativeMeshSkips' rule with its own winding.
+// band and the facing as C tests them. C flips its sign before judging each
+// vertex and gsNativeMeshSkips after, so at every triangle the mesh's sign is
+// the opposite of C's: the header holds C's starting sign negated, as
+// readChunk's does for D (a triangle list, which C judges with the starting
+// sign throughout, takes -winding there, so it agrees too).
 void projectorMesh(const Program &program, const VuData &vu, uint32_t top, GSNativeMesh &mesh)
 {
     Vec4 projector[4], texture[4];
@@ -1626,7 +1628,7 @@ void projectorMesh(const Program &program, const VuData &vu, uint32_t top, GSNat
     GSNativeMesh::Header &h = mesh.header;
     h.guardBand = 1u;
     h.backface = 1u;
-    h.winding = vu.quad(111).z * ((vu.half(87, 1) & 0x1000u) ? -1.0f : 1.0f);
+    h.winding = vu.quad(111).z * ((vu.half(87, 1) & 0x1000u) ? 1.0f : -1.0f);
     h.depthScale = vu.quad(87).z;
     h.depthMax = vu.quad(1).y;
     for (float &c : h.colorMax)
@@ -1869,6 +1871,9 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
 const char *declineChunk(const Program &program, const uint8_t *data, uint32_t top, bool clips)
 {
     const VuData vu(data);
+    // Only a mesh carries the planes: a program buildMesh sends as packets
+    // (the affine D, the float-colour D) would go out unclipped.
+    clips = clips && hasMesh(program);
     if (program.kind == Kind::Overlay || program.kind == Kind::Base)
         return nullptr;
     if (program.decode == Decode::Plain && vu.half(76, 2) != 0u)

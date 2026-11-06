@@ -63,16 +63,19 @@ const uint32_t g_checkEvery = [] {
     const unsigned long every = value ? std::strtoul(value, nullptr, 10) : 1ul;
     return static_cast<uint32_t>(every == 0ul ? 1ul : every);
 }();
-// Whether the GPU path takes the chunks slot E clips: with the native
-// renderer, unless RG_VU1_CLIP_ON_VU1=1 (the VU1 clips them, as before).
-// Read at first use, after the menu's setting.
+// Whether the GPU path takes the chunks slot E clips: only with the native
+// renderer and RG_VU1_CLIP_ON_GPU=1. Off by default: the field walk of
+// October 29 lost the near wall's texture and part of the ledge with them
+// on the GPU (the clipper's new vertices take a depth made of each corner's
+// capped, clamped one, which is not linear outside E's planes). Read at
+// first use, after the menu's setting.
 struct GpuClips
 {
     operator bool() const
     {
         static const bool on = [] {
-            const char *vu1 = std::getenv("RG_VU1_CLIP_ON_VU1");
-            return rg::nativerenderer::enabled() && !(vu1 && *vu1 && std::strcmp(vu1, "0") != 0);
+            const char *gpu = std::getenv("RG_VU1_CLIP_ON_GPU");
+            return rg::nativerenderer::enabled() && gpu && *gpu && std::strcmp(gpu, "0") != 0;
         }();
         return on;
     }
@@ -742,10 +745,10 @@ public:
             {
                 const bool gpu = nativeMode() == rg::vu1native::Mode::Gpu;
                 // The chunks that clip (slot E) go to the GPU with the native
-                // renderer: the mesh carries E's near and far planes and the
-                // shader clips there (gl_ClipDistance), so no driver is left
-                // to cut at the eye on its own. Otherwise, and in the packet
-                // modes, they go to the VU1.
+                // renderer and RG_VU1_CLIP_ON_GPU=1: the mesh carries E's near
+                // and far planes and the shader clips there (gl_ClipDistance),
+                // so no driver is left to cut at the eye on its own.
+                // Otherwise, and in the packet modes, they go to the VU1.
                 const char *reason =
                     rg::vu1native::declineChunk(*m_nativeProgram, memory.getVU1Data(), top, gpu && g_gpuClips);
                 if (reason)

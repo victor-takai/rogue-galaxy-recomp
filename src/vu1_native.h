@@ -139,7 +139,8 @@ const Program *identify(const uint8_t *code, uint32_t startPC);
 
 // Why the chunk an MSCNT runs (its header at `top`, in quadwords) is left to
 // the VU1, or null when it is done natively. `clips`: what draws it clips
-// triangles itself (the GPU), so slot E's chunks are done too.
+// triangles itself (the GPU), so slot E's chunks are done too, for the
+// programs with a mesh (hasMesh) only.
 const char *declineChunk(const Program &program, const uint8_t *data, uint32_t top, bool clips = false);
 
 // Which of the pieces this file knows the code at `startPC` has, slot by

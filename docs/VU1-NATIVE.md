@@ -207,9 +207,17 @@ From `11b3890` (2026-10-30) `gpu` mode did too, because the GPU's clipping
 of triangles across the eye plane differed from the VU1's on one driver.
 Since 2026-11-01 the mesh carries E's near and far planes (quads 72-75,
 patch 0028) and `gs_native.vert` clips there with `gl_ClipDistance`, so no
-driver cuts at the eye on its own: with the native renderer the clipping
-chunks go to the GPU again (`RG_VU1_CLIP_ON_VU1=1` sends them back to the
-VU1; `src/vif1_thread.cpp`).
+driver cuts at the eye on its own. With the native renderer and
+`RG_VU1_CLIP_ON_GPU=1` the clipping chunks of the programs with a mesh
+(`hasMesh`) go to the GPU (`src/vif1_thread.cpp`); by default they stay
+on the VU1 (review of 2026-11-05). The October 29 field walk is 30% off
+with them on the GPU (no texture on the near left wall, part of the ledge
+in front of the camera missing), exact with them on the VU1. One cause
+found by reading, not yet fixed: `gs_native.vert` writes `depth * w` from
+each corner's capped and clamped depth (87.z, 1.y), which is not linear in
+clip space for a corner outside E's planes, so the vertices the clipper
+makes get the wrong depth. The fix is to clip on the linear depth and cap
+and clamp after the clipper, then the walk again.
 
 ### Pieces written from the code alone
 
