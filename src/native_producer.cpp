@@ -2001,6 +2001,241 @@ void hostUpload(uint32_t dbp, uint32_t dbw, uint32_t dpsm, uint32_t x, uint32_t 
     image.seq = s.uploadedSeq[dbp] = ++s.sequence;
 }
 
+bool piece(const GSNativeMesh &mesh, const GSDrawState *drawState, bool texels)
+{
+    if (!native::enabled())
+        return false;
+    State &s = state();
+    std::lock_guard lock(s.mutex);
+    forgetEvicted(s);
+    ++s.counts.pieces;
+    if (!drawState)
+    {
+        ++s.counts.piecesNoState;
+        return false;
+    }
+    const GSContext &c = drawState->context;
+    const GSNativeMesh::Header &h = mesh.header;
+    native::MeshDraw draw;
+    const uint32_t frameBase = c.frame.fbp * 32u;
+    uint32_t seqKey = frameBase; // the buffer's, or its narrow view's
+    const bool view = narrow(s, frameBase, c.frame.fbw);
+    if (view)
+    {
+        seqKey = viewKey(frameBase, c.frame.fbw);
+        draw.target = viewTarget(s, frameBase, c.frame.fbw, c.scissor.x1 + 1u, c.scissor.y1 + 1u);
+        ++s.counts.viewWrites;
+    }
+    else
+        draw.target = s.targetAt.count(frameBase)
+                          ? targetFor(s, frameBase, c.scissor.x1 + 1u, c.scissor.y1 + 1u, c.frame.psm)
+                          : targetFor(s, frameBase, std::max(c.frame.fbw, 1u) * 64u, c.scissor.y1 + 1u, c.frame.psm);
+    if (draw.target == 0u)
+    {
+        ++s.counts.piecesNoTarget;
+        return false;
+    }
+    // A CT16 copy of a 32-bit buffer onto itself (shifted 8 pixels: on the
+    // GS's memory a pixel's RG half lands on its BA half): green into alpha,
+    // as the colour filter's kGreenToAlpha op. The shadow map's blur ends so
+    // (2a00 at FBW 1): the decal that projects it reads that alpha.
+    if (drawState->prim.tme && (c.tex0.psm & 0x3Fu) == kCT16 && (c.frame.psm & 0x3Fu) == kCT16 &&
+        c.tex0.tbp0 == frameBase && c.tex0.tbw == c.frame.fbw)
+    {
+        native::Material &g = draw.material;
+        g.sourceTarget = draw.target;
+        g.textureWidth = g.textureHeight = 1u;
+        g.function = native::TextureFunction::Decal;
+        g.textureAlpha = true;
+        g.shuffle = native::ChannelShuffle::GreenToAlpha;
+        g.colorWrite = 0x8u;
+        g.known = true;
+        const float x1 = float(std::min<uint32_t>(std::max(c.frame.fbw, 1u) * 64u, c.scissor.x1 + 1u));
+        const float y1 = float((c.scissor.y1 + 1u) / 2u); // the CT16 view is twice the 32-bit rows
+        const float corners[4][2] = {{0.0f, 0.0f}, {x1, 0.0f}, {0.0f, y1}, {x1, y1}};
+        draw.vertices.resize(4);
+        for (int v = 0; v < 4; ++v)
+        {
+            native::Vertex &out = draw.vertices[v];
+            out.position[0] = out.uv[0] = corners[v][0];
+            out.position[1] = out.uv[1] = corners[v][1];
+            for (int ch = 0; ch < 4; ++ch)
+                out.color[ch] = 128.0f;
+        }
+        draw.indices = {0u, 1u, 2u, 1u, 3u, 2u};
+        draw.scissor = {0, 0, int32_t(x1), int32_t(y1)};
+        draw.fog[0] = draw.fog[1] = 255.0f;
+        ++s.counts.piecesMade;
+        ++s.counts.opsGreenToAlpha;
+        s.drawnSeq[seqKey] = ++s.sequence;
+        native::push(native::MeshDraw(std::move(draw)));
+        return true;
+    }
+    native::Material &m = draw.material;
+    bool known = true;
+    uint32_t why = 0u; // RG_NATIVE_UNKNOWN_LOG: 1 source psm, 2 clamp, 4 blend, 8 FBA, 16 write mask, 32 fog
+    if (drawState->prim.tme)
+    {
+        if (!sourceOf(s, c.tex0, m))
+        {
+            ++s.counts.piecesNoSource;
+            if (s.targetAt.count(c.tex0.tbp0 & ~31u))
+                ++s.counts.piecesSubTarget;
+            // The first few, by what they read (docs/NATIVE-PIPELINE.md step 6).
+            static std::vector<uint64_t> told;
+            const uint64_t what = (uint64_t(c.tex0.tbp0) << 32) | (uint64_t(c.tex0.psm & 0x3Fu) << 24) | c.tex0.cbp;
+            if (told.size() < 12u && std::find(told.begin(), told.end(), what) == told.end())
+            {
+                told.push_back(what);
+                const bool texture = s.residentTexture.count(c.tex0.tbp0) != 0u;
+                std::fprintf(stderr,
+                             "[native-producer] a 2D piece's source is unknown: TBP0 %05x PSM %02x CBP %05x CSA %u "
+                             "%ux%u, %s, %zu vertices\n",
+                             c.tex0.tbp0, c.tex0.psm & 0x3Fu, c.tex0.cbp, c.tex0.csa, 1u << c.tex0.tw,
+                             1u << c.tex0.th,
+                             texture ? "a texture of another format or no palette there" : "nothing uploaded there",
+                             mesh.vertices.size());
+            }
+            return false;
+        }
+        if (m.sourceTarget)
+            ++s.counts.piecesFromTarget;
+        // A buffer read as CT24 (the character layers are, by the scene):
+        // the GS takes its alpha from TEXA, not the buffer, 0 for black
+        // texels with AEM. A 16-bit view of a 32-bit buffer has no meaning
+        // here yet.
+        if ((m.sourceTarget || m.texture) && (c.tex0.psm & 0x3Fu) == 0x01u)
+        {
+            m.fixedTextureAlpha = drawState->texa.ta0;
+            m.alphaZeroOnBlack = drawState->texa.aem;
+            ++s.counts.piecesCt24;
+        }
+        else if (m.sourceTarget && (c.tex0.psm & 0x3Fu) != 0x00u)
+        {
+            known = false;
+            why |= 1u;
+        }
+        m.textureWidth = texels ? 1u : static_cast<uint16_t>(1u << std::min<uint32_t>(c.tex0.tw, 10u));
+        m.textureHeight = texels ? 1u : static_cast<uint16_t>(1u << std::min<uint32_t>(c.tex0.th, 10u));
+        m.linear = drawState->linearFilter;
+        const uint32_t wms = static_cast<uint32_t>(c.clamp & 3u), wmt = static_cast<uint32_t>((c.clamp >> 2) & 3u);
+        m.clampU = wms != 0u;
+        m.clampV = wmt != 0u;
+        // Region clamp and repeat (a tile of a sheet): the renderer's.
+        m.wrapU = static_cast<uint8_t>(wms);
+        m.wrapV = static_cast<uint8_t>(wmt);
+        m.regionU[0] = static_cast<uint16_t>((c.clamp >> 4) & 0x3FFu);
+        m.regionU[1] = static_cast<uint16_t>((c.clamp >> 14) & 0x3FFu);
+        m.regionV[0] = static_cast<uint16_t>((c.clamp >> 24) & 0x3FFu);
+        m.regionV[1] = static_cast<uint16_t>((c.clamp >> 34) & 0x3FFu);
+        if ((wms > 1u || wmt > 1u) && m.sourceTarget)
+        {
+            known = false; // a target's region: not fetched so
+            why |= 2u;
+        }
+        static constexpr native::TextureFunction functions[4] = {
+            native::TextureFunction::Modulate, native::TextureFunction::Decal, native::TextureFunction::Highlight,
+            native::TextureFunction::Highlight2};
+        m.function = functions[c.tex0.tfx & 3u];
+        m.textureAlpha = c.tex0.tcc != 0u;
+    }
+    if (drawState->prim.abe)
+        if (!blendOf(c.alpha, m))
+        {
+            known = false;
+            why |= 4u;
+        }
+    testOf(c.test, c.zbuf.zmask, m);
+    if (c.fba & 1u)
+    {
+        known = false;
+        why |= 8u;
+    }
+    const uint32_t mask = c.frame.fbmsk;
+    m.colorWrite = 0u;
+    for (uint32_t ch = 0; ch < 4u; ++ch)
+    {
+        const uint32_t bits = (mask >> (ch * 8u)) & 0xFFu;
+        if (bits == 0u)
+            m.colorWrite |= static_cast<uint8_t>(1u << ch);
+        else if (bits != 0xFFu)
+        {
+            known = false;
+            why |= 16u;
+        }
+    }
+    if (view)
+    {
+        m.depthTest = native::Compare::Always; // a view has no depth of its own
+        m.depthWrite = false;
+    }
+    if (m.depthTest != native::Compare::Always || m.depthWrite)
+    {
+        draw.depthTarget = depthTarget(s, c.zbuf.zbp * 32u, frameBase, draw.target);
+        draw.camera = s.lastCamera;
+    }
+
+    // build2D's encoding: a fogged piece has w = 1 + F / 255 with x, y (and
+    // texel UVs) multiplied by it; positions keep XYOFFSET; the Z is `depth`.
+    const bool fogged = h.matrix[2][3] == 1.0f && h.matrix[3][3] == 0.0f;
+    if (fogged)
+    {
+        ++s.counts.piecesFogged; // its F per vertex (Vertex::fog)
+    }
+    const float ofx = static_cast<float>(c.xyoffset.ofx) / 16.0f;
+    const float ofy = static_cast<float>(c.xyoffset.ofy) / 16.0f;
+    draw.vertices.resize(mesh.vertices.size());
+    for (size_t k = 0; k < mesh.vertices.size(); ++k)
+    {
+        const GSNativeMesh::Vertex &in = mesh.vertices[k];
+        native::Vertex &out = draw.vertices[k];
+        const float w = fogged && in.z != 0.0f ? in.z : 1.0f;
+        out.position[0] = in.x / w - ofx;
+        out.position[1] = in.y / w - ofy;
+        out.position[2] = in.depth >= 0.0f ? in.depth : 0.0f;
+        out.uv[0] = fogged && texels ? in.u / w : in.u;
+        out.uv[1] = fogged && texels ? in.v / w : in.v;
+        out.color[0] = in.r;
+        out.color[1] = in.g;
+        out.color[2] = in.b;
+        out.color[3] = in.a;
+        // build2D's fogged form: w = 1 + (F + 0.25) / 255.
+        if (fogged)
+            out.fog = std::clamp((w - 1.0f) * 255.0f - 0.25f, 0.0f, 255.0f);
+    }
+    const uint32_t count = static_cast<uint32_t>(draw.vertices.size()) / 3u * 3u;
+    draw.indices.resize(count);
+    for (uint32_t k = 0; k < count; ++k)
+        draw.indices[k] = k;
+    draw.scissor = {c.scissor.x0, c.scissor.y0, c.scissor.x1 + 1, c.scissor.y1 + 1};
+    draw.fog[0] = draw.fog[1] = 255.0f; // a model's F: none (the vertices carry theirs)
+    m.fog = fogged;
+    draw.fogColor[0] = drawState->fogR;
+    draw.fogColor[1] = drawState->fogG;
+    draw.fogColor[2] = drawState->fogB;
+    m.known = known;
+    if (why && std::getenv("RG_NATIVE_UNKNOWN_LOG"))
+    {
+        static uint64_t seen = 0u;
+        if (!(seen & (1ull << why)))
+        {
+            seen |= 1ull << why;
+            std::fprintf(stderr,
+                         "[unknown] why %x: frame fbp %x psm %x fbmsk %08x fba %llx tex0 tbp %x psm %x tfx %u tcc %u "
+                         "clamp %llx alpha %llx test %llx texa %u/%d\n",
+                         why, c.frame.fbp, c.frame.psm, c.frame.fbmsk, (unsigned long long)c.fba, c.tex0.tbp0,
+                         c.tex0.psm, c.tex0.tfx, c.tex0.tcc, (unsigned long long)c.clamp,
+                         (unsigned long long)c.alpha, (unsigned long long)c.test, drawState->texa.ta0,
+                         int(drawState->texa.aem));
+        }
+    }
+    ++s.counts.piecesMade;
+    if (draw.target != s.layer || s.layer == 0u) // a routed draw leaves the buffer as it was
+        s.drawnSeq[seqKey] = ++s.sequence;
+    native::push(native::MeshDraw(std::move(draw)));
+    return true;
+}
+
 void noteEffect(const GSNativeEffect &e)
 {
     if (!native::enabled())
@@ -2414,6 +2649,7 @@ bool readDepth(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, std::
 void replaceUpload(bool, uint32_t, uint32_t, uint32_t, uint32_t, const uint8_t *, uint32_t) {}
 void hostUpload(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const uint8_t *, uint32_t) {}
 void noteEffect(const GSNativeEffect &) {}
+bool piece(const GSNativeMesh &, const GSDrawState *, bool) { return false; }
 bool effect(const GSNativeEffect &) { return false; }
 void noteLocalCopy(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
                    uint32_t, uint32_t) {}

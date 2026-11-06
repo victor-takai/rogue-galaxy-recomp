@@ -85,15 +85,26 @@ game built them. Every reference is an id (`native_records.h`):
   or the producer refuses goes on as packets, and the log says why once.
   `RG_NATIVE_<EFFECT>=0` turns one off; `RG_NATIVE_EFFECTS_LOG=1` prints the
   first of each built.
+- **2D as window-space draws** (step 5b, `src/native_2d.h`): every GIF
+  packet on its way to the GS goes through a converter first. Its
+  primitives (sprites, triangles, strips, fans; points and lines as thin
+  quads; fogged vertices keep their F) become meshes in the GS's window
+  coordinates, which `rg::nativeproducer::piece` makes mesh draws under
+  the draw-state mirror's state; the rest of the packet (register writes,
+  uploads) goes on to the GS, with a PRIM write of each mesh's attributes
+  just before it, so the mirror holds the mesh's state when it comes. The
+  GS draws nothing of a converted packet. A piece the producer refuses
+  (counted by why in its stats line) goes to the GS as a native mesh.
+  `RG_NATIVE_2D=0` turns the converter off.
 
-Under the pipeline the screen shows the 3D meshes and the effects. 2D (the
-HUD, the menus, text), the per-object composites, local copies and the
-game's colour and depth reads still go to the GS, which keeps running
-unseen. Known from the archive branch's runs: most of what the effects'
-offscreen buffers hold comes from 2D pieces (their clears among them), so
-until 2D comes the effects can read buffers the renderer never filled.
-Those, the composites as object layers, the pipeline's own present, and a
-check that nothing reaches the GS any more, come next.
+Under the pipeline the screen shows the 3D meshes, the effects and the 2D.
+Still on the GS, which keeps running unseen: the per-object composites
+(characters drawn through the object layers show boxes around them until
+they come: the layers' buffer holds what other draws left there), host
+uploads other than the named textures (a 2D piece reading one is refused:
+"source unknown"), local copies, and the game's colour and depth reads.
+Those, the pipeline's own present, and a check that nothing reaches the GS
+any more, come next.
 
 Memory: the renderer keeps the cameras the producer can still name (the
 newest `2 * kCameraWindow`); textures are evicted over a byte budget and
@@ -112,4 +123,4 @@ without the native renderer it is ignored and says so. The log says
 the renderer's `[native-pipeline]` line (records by kind, the readiness
 counters R1-R5) and the producer's `[native-producer]` line (textures,
 palettes and targets made, meshes made and why not, material misses,
-effects made and why not).
+effects and 2D pieces made and why not).

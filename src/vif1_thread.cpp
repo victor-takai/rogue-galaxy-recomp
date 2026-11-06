@@ -25,6 +25,7 @@
 #include "native_renderer.h"
 #include "vu1_native.h"
 #include "draw_state_mirror.h"
+#include "native_2d.h"
 #include "native_effects.h"
 #include "native_producer.h"
 #include "ps2_runtime.h"
@@ -1070,7 +1071,7 @@ private:
 Vif1Thread *g_thread = nullptr;
 
 // A packet to the GS as it is.
-void sendPacket(GS &gs, const uint8_t *data, uint32_t size)
+void sendRaw(GS &gs, const uint8_t *data, uint32_t size)
 {
     // The native pipeline's draw-state mirror follows every packet, in the
     // order the GS gets them.
@@ -1090,6 +1091,97 @@ void sendPacket(GS &gs, const uint8_t *data, uint32_t size)
     ps2_gs_detail::t_sourceTag = t_onVif1Thread ? t_vu1Tag : 0u;
     ps2_gs_detail::t_sourceCamera = t_onVif1Thread ? t_vu1Camera : 0u;
     gs.processGIFPacket(data, size);
+}
+
+// A native strip to the GS, in order with the packets.
+void meshToGs(GS &gs, const GSNativeMesh &mesh)
+{
+    if (g_stage && t_onVif1Thread)
+    {
+        g_stage->mesh(mesh);
+        return;
+    }
+    if (g_stage)
+    {
+        g_thread->drain();
+    }
+    gs.submitNativeMesh(mesh);
+}
+
+// The native pipeline's 2D (src/native_2d.h); read at first use, after the
+// menu's setting.
+bool native2D()
+{
+    static const bool on = rg::native2d::enabled();
+    return on;
+}
+std::atomic<uint64_t> g_packetsConverted{0u}, g_packetsRefused{0u}, g_piecesMade{0u}, g_piecesToGs{0u};
+
+// Step 5b: a converter mesh as the producer's window-space draw, under the
+// draw state the packets before it left (the PRIM write just before it
+// among them); one it refuses goes to the GS.
+void deliverPiece(GS &gs, const rg::native2d::Piece &piece)
+{
+    if (!t_onVif1Thread)
+    {
+        g_thread->drain(); // the lists in flight first, as for the GS
+    }
+    const GSDrawState state = rg::drawstate::current();
+    if (rg::nativeproducer::piece(piece.mesh, &state, piece.texelUvs))
+    {
+        ++g_piecesMade;
+        return;
+    }
+    ++g_piecesToGs;
+    meshToGs(gs, piece.mesh);
+}
+
+// A packet on to the GS. Under the native pipeline's 2D its primitives
+// become the producer's draws and only the rest goes on (src/native_2d.h).
+void sendPacket(GS &gs, const uint8_t *data, uint32_t size)
+{
+    if (native2D() && data && size >= 16u)
+    {
+        thread_local std::vector<rg::native2d::Piece> pieces;
+        const rg::native2d::Span one{data, size};
+        std::string why;
+        if (rg::native2d::build(&one, 1u, pieces, why))
+        {
+            const bool anyMesh = std::any_of(pieces.begin(), pieces.end(),
+                                             [](const rg::native2d::Piece &p) { return !p.isPacket(); });
+            if (!anyMesh)
+            {
+                sendRaw(gs, data, size); // the converter has seen it
+                return;
+            }
+            for (const rg::native2d::Piece &piece : pieces)
+            {
+                if (piece.isPacket())
+                    sendRaw(gs, piece.bytes(), piece.size());
+                else
+                    deliverPiece(gs, piece);
+            }
+            const uint64_t count = ++g_packetsConverted;
+            if (count == 1u || count % 100000u == 0u)
+                std::fprintf(stderr, "[native2d] packets converted: %llu (pieces made %llu, to the GS %llu), %llu refused\n",
+                             static_cast<unsigned long long>(count),
+                             static_cast<unsigned long long>(g_piecesMade.load()),
+                             static_cast<unsigned long long>(g_piecesToGs.load()),
+                             static_cast<unsigned long long>(g_packetsRefused.load()));
+            return;
+        }
+        ++g_packetsRefused;
+        static std::mutex toldMutex;
+        static std::vector<std::string> told;
+        std::lock_guard lock(toldMutex);
+        if (told.size() < 8u && std::find(told.begin(), told.end(), why) == told.end())
+        {
+            told.push_back(why);
+            std::fprintf(stderr, "[native2d] a packet stays a packet: %s\n", why.c_str());
+        }
+        rg::native2d::observe(data, size);
+    }
+    sendRaw(gs, data, size);
 }
 
 // The packets of an effect the producer may draw (src/native_effects.h),
@@ -1271,16 +1363,7 @@ void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data)
         if (rg::nativeproducer::mesh(mesh, &state, vu1Data, 0u))
             return;
     }
-    if (g_stage && t_onVif1Thread)
-    {
-        g_stage->mesh(mesh);
-        return;
-    }
-    if (g_stage)
-    {
-        g_thread->drain();
-    }
-    gs.submitNativeMesh(mesh);
+    meshToGs(gs, mesh);
 }
 // The thread that runs guest code, as the first hooked DMA call sees it.
 std::thread::id g_gameThread;
