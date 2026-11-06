@@ -351,7 +351,7 @@ Composed compose(const KeyLabel &label, bool plate)
     Composed out;
     if (label.icon != KeyIcon::None)
     {
-        const Bitmap icon = art::keyIcon(label.icon, plate);
+        const Bitmap icon = art::keyIcon(label.icon);
         for (int y = 0; y < icon.count; ++y)
         {
             out.rows.emplace_back(icon.rows[y]);
@@ -394,13 +394,121 @@ Composed compose(const KeyLabel &label, bool plate)
     return out;
 }
 
-void drawKeyFace(Region &region, const Picture &pic, const Cell &cell, const KeyLabel &label)
+// A key as a keyboard's: a light keycap with a dark outline and a darker
+// front, its letters or picture dark on the cap; a mouse button as a mouse
+// of its own, the button pressed in the game's blue. Both on the clear
+// background, not on the PlayStation's circle or plate.
+struct KeyColours
 {
-    emptyFace(region, cell);
-    Composed composed = compose(label, false);
+    uint8_t clear, outline, cap, front, letter, body, pressed;
+};
+
+KeyColours keyColours(const Picture &pic, uint8_t clear)
+{
+    return {clear,
+            nearest(pic, art::kKeyOutline),
+            nearest(pic, art::kKeyCap),
+            nearest(pic, art::kKeyFront),
+            nearest(pic, art::kKeyLetter),
+            nearest(pic, art::kMouseBody),
+            nearest(pic, art::kMousePressed)};
+}
+
+// The mouse in the box at (x0, y0), `width` by `height`: an oval, its
+// buttons above a line across, split down the middle.
+template <int Height, int Width>
+void drawMouse(uint8_t (&at)[Height][Width], int x0, int y0, int width, int height, KeyIcon icon,
+               const KeyColours &colours)
+{
+    const int cx = x0 + width / 2 - 1;
+    const double cy = y0 + (height - 1) / 2.0;
+    const double a = (height >= 22 ? 6.0 : 5.0) + 0.5;
+    const double b = (height - 2) / 2.0 + 0.5;
+    const auto inside = [&](int x, int y) {
+        const double dx = (x - cx) / a, dy = (y - cy) / b;
+        return dx * dx + dy * dy <= 1.0;
+    };
+    const int split = static_cast<int>(std::floor(cy - b * 0.25));
+    for (int y = y0; y < y0 + height; ++y)
+    {
+        for (int x = x0; x < x0 + width; ++x)
+        {
+            if (y < 0 || x < 0 || y >= Height || x >= Width || !inside(x, y))
+            {
+                continue;
+            }
+            const bool edge = !inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y - 1) || !inside(x, y + 1);
+            uint8_t colour = colours.body;
+            if (edge || y == split || (y < split && x == cx))
+            {
+                colour = colours.outline;
+            }
+            else if (y < split && ((icon == KeyIcon::MouseLeft && x < cx) || (icon == KeyIcon::MouseRight && x > cx)))
+            {
+                colour = colours.pressed;
+            }
+            if (icon == KeyIcon::MouseMiddle && y > y0 + 2 && y < split - 1 && x >= cx - 1 && x <= cx + 1)
+            {
+                colour = colours.pressed;
+            }
+            at[y][x] = colour;
+        }
+    }
+}
+
+// A keycap in the box at (x0, y0), a pixel in from its sides, with `label`
+// on its cap.
+template <int Height, int Width>
+void drawKeyCap(uint8_t (&at)[Height][Width], int x0, int y0, int width, int height, const KeyLabel &label,
+                bool plate, const KeyColours &colours)
+{
+    const int left = x0 + 1, top = y0 + 1, right = x0 + width - 2, bottom = y0 + height - 2;
+    for (int y = top; y <= bottom; ++y)
+    {
+        for (int x = left; x <= right; ++x)
+        {
+            const bool corner = (x == left || x == right) && (y == top || y == bottom);
+            if (corner)
+            {
+                continue;
+            }
+            const bool border = x == left || x == right || y == top || y == bottom;
+            at[y][x] = border ? colours.outline : y >= bottom - 2 ? colours.front : colours.cap;
+        }
+    }
+    Composed composed = compose(label, plate);
     const Bitmap bitmap = composed.bitmap();
-    stamp(region.at, bitmap, cell.x + (kFaceSize - bitmap.width()) / 2, cell.y + (kFaceSize - bitmap.count) / 2,
-          nearest(pic, art::kPlateWhite), nearest(pic, art::kLetterEdge));
+    const int capWidth = right - left - 1, capHeight = bottom - top - 3;
+    stamp(at, bitmap, left + 1 + (capWidth - bitmap.width()) / 2, top + 1 + (capHeight - bitmap.count) / 2,
+          colours.letter, colours.cap);
+}
+
+bool mouseIcon(KeyIcon icon)
+{
+    return icon == KeyIcon::MouseLeft || icon == KeyIcon::MouseRight || icon == KeyIcon::MouseMiddle;
+}
+
+// A Key glyph in a face's cell or a plate's, on the clear background.
+void drawKey(Region &region, const Picture &pic, const Cell &cell, const KeyLabel &label)
+{
+    const int width = cell.face ? kFaceSize : kPlateWidth;
+    const int height = cell.face ? kFaceSize : kPlateHeight;
+    const KeyColours colours = keyColours(pic, originalAt(kCircle.x, kCircle.y));
+    for (int y = 0; y < height; ++y)
+    {
+        for (int x = 0; x < width; ++x)
+        {
+            region.at[cell.y + y][cell.x + x] = colours.clear;
+        }
+    }
+    if (mouseIcon(label.icon))
+    {
+        drawMouse(region.at, cell.x, cell.y, width, height, label.icon, colours);
+    }
+    else
+    {
+        drawKeyCap(region.at, cell.x, cell.y, width, height, label, !cell.face, colours);
+    }
 }
 
 // L1's plate, emptied, in `cell`.
@@ -441,16 +549,6 @@ void drawPlate(Region &region, const Picture &pic, const Cell &cell, Glyph glyph
     }
 }
 
-void drawKeyPlate(Region &region, const Picture &pic, const Cell &cell, const KeyLabel &label)
-{
-    emptyPlate(region, pic, cell);
-    Composed composed = compose(label, true);
-    const Bitmap bitmap = composed.bitmap();
-    const int faceHeight = art::kPlateFaceBottom - art::kPlateFaceTop + 1;
-    stamp(region.at, bitmap, cell.x + (kPlateWidth - bitmap.width()) / 2,
-          cell.y + art::kPlateFaceTop + (faceHeight - bitmap.count) / 2, nearest(pic, art::kPlateWhite),
-          nearest(pic, art::kPlateEdge));
-}
 
 bool faceGlyph(Glyph glyph)
 {
@@ -491,17 +589,13 @@ void apply(uint8_t *rdram, uint32_t packed)
         {
             drawFace(region, pic, cell, glyph);
         }
-        else if (cell.face && glyph == Glyph::Key)
-        {
-            drawKeyFace(region, pic, cell, labels[i]);
-        }
         else if (!cell.face && plateGlyph(glyph))
         {
             drawPlate(region, pic, cell, glyph);
         }
-        else if (!cell.face && glyph == Glyph::Key)
+        else if (glyph == Glyph::Key)
         {
-            drawKeyPlate(region, pic, cell, labels[i]);
+            drawKey(region, pic, cell, labels[i]);
         }
     }
     for (int y = 0; y < kRegionHeight; ++y)
@@ -671,18 +765,41 @@ void drawLoadingCross(uint8_t *rdram, uint32_t archive)
     put();
     const bool key = glyph == Glyph::Key;
     const uint8_t colour =
-        exact(pic, kLoadingWidth * kLoadingHeight, key ? art::kPlateWhite : art::faceColour(glyph), fill);
+        exact(pic, kLoadingWidth * kLoadingHeight, key ? art::kMousePressed : art::faceColour(glyph), fill);
     if (key)
     {
+        // The key on the screen's own background (its corners), the circle
+        // gone; the mouse's pressed button in the colour made free.
         KeyLabel label;
         {
             std::lock_guard lock(g_labelsMutex);
             label = g_wantedLabels[0];
         }
-        Composed composed = compose(label, false);
-        const Bitmap bitmap = composed.bitmap();
-        stamp(cell, bitmap, (kLoadingCross - bitmap.width()) / 2, (kLoadingCross - bitmap.count) / 2, colour,
-              nearest(pic, art::kLetterEdge));
+        const uint8_t corners[4] = {cell[0][0], cell[0][kLoadingCross - 1], cell[kLoadingCross - 1][0],
+                                    cell[kLoadingCross - 1][kLoadingCross - 1]};
+        uint8_t background = corners[0];
+        for (const uint8_t candidate : corners)
+        {
+            if (std::count(std::begin(corners), std::end(corners), candidate) >
+                std::count(std::begin(corners), std::end(corners), background))
+            {
+                background = candidate;
+            }
+        }
+        for (auto &row : cell)
+        {
+            std::fill(std::begin(row), std::end(row), background);
+        }
+        KeyColours colours = keyColours(pic, background);
+        colours.pressed = colour;
+        if (mouseIcon(label.icon))
+        {
+            drawMouse(cell, 0, 0, kLoadingCross, kLoadingCross, label.icon, colours);
+        }
+        else
+        {
+            drawKeyCap(cell, 0, 0, kLoadingCross, kLoadingCross, label, false, colours);
+        }
     }
     else
     {

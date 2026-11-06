@@ -14,8 +14,9 @@ class PS2Runtime;
 // and L1, R1, L2 and R2, 32x20 plates. With another controller in use they
 // are redrawn in the picture, in the game's style, as what that controller
 // calls the button each one is bound to (A, B, X and Y in their colours, LB,
-// RB, LT and RT), and on the keyboard and mouse as the key or mouse button
-// (white, bold), back to the PlayStation's otherwise. The picture is
+// RB, LT and RT), and on the keyboard and mouse as a keycap with the key's
+// name or a mouse with its button pressed, back to the PlayStation's
+// otherwise. The picture is
 // 8-bit indexed, stored as the GS keeps it, so the new pixels take the
 // nearest of its 256 colours. The loading screen's "Press X" is a picture
 // of its own, its cross redrawn the same way as it is registered (its

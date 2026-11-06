@@ -48,9 +48,9 @@ constexpr int kPlateLetterY = 5;
 // pixel thick (the stamp's edge makes it stand out); null rows for any other
 // character.
 Bitmap keyChar(char c, bool small);
-// A key's picture: in a circle 9x11 (the mouse) or 11x4 (the space bar) or
-// 7x7 (an arrow); on a plate, the mouse 7x10. Null rows for KeyIcon::None.
-Bitmap keyIcon(KeyIcon icon, bool plate);
+// A key's picture on its cap: the space bar 11x4, an arrow 7x7. Null rows
+// for any other (the mouse is drawn whole).
+Bitmap keyIcon(KeyIcon icon);
 constexpr int kKeyGap = 1;
 
 struct Rgb
@@ -62,6 +62,14 @@ struct Rgb
 Rgb faceColour(Glyph glyph);
 constexpr Rgb kLetterEdge{46, 46, 47};
 constexpr Rgb kPlateWhite{230, 230, 230};
+// The keys: a light cap, its front darker, a dark outline and letters; the
+// mouse light, its pressed button in the PlayStation cross's blue.
+constexpr Rgb kKeyCap{228, 228, 226};
+constexpr Rgb kKeyFront{150, 150, 152};
+constexpr Rgb kKeyOutline{32, 32, 34};
+constexpr Rgb kKeyLetter{36, 36, 40};
+constexpr Rgb kMouseBody{232, 232, 230};
+constexpr Rgb kMousePressed{84, 148, 244};
 constexpr Rgb kPlateEdge{35, 35, 35};
 constexpr Rgb kPlateShade{51, 50, 48};
 // The plate's face, cleared of the PlayStation's letters (and the shade

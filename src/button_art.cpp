@@ -109,22 +109,8 @@ const char *const kSmall[][5] = {
     {"XX.", "..X", ".X.", "...", ".X."}, // ?
 };
 
-// The keys' pictures: a mouse with its button (the left, the right, the
-// wheel) filled, the space bar, the arrows.
-const char *const kMouseLeft[] = {".XXXXXXX.", "XXXXX...X", "XXXXX...X", "XXXXX...X", "XXXXXXXXX", "X.......X",
-                                  "X.......X", "X.......X", "X.......X", ".X.....X.", "..XXXXX.."};
-const char *const kMouseRight[] = {".XXXXXXX.", "X...XXXXX", "X...XXXXX", "X...XXXXX", "XXXXXXXXX", "X.......X",
-                                   "X.......X", "X.......X", "X.......X", ".X.....X.", "..XXXXX.."};
-const char *const kMouseMiddle[] = {".XXXXXXX.", "X..XXX..X", "X..XXX..X", "X..XXX..X", "XXXXXXXXX", "X.......X",
-                                    "X.......X", "X.......X", "X.......X", ".X.....X.", "..XXXXX.."};
-constexpr int kMouseRows = 11;
-const char *const kSmallMouseLeft[] = {".XXXXX.", "XXXX..X", "XXXX..X", "XXXXXXX", "X.....X",
-                                       "X.....X", "X.....X", "X.....X", ".X...X.", "..XXX.."};
-const char *const kSmallMouseRight[] = {".XXXXX.", "X..XXXX", "X..XXXX", "XXXXXXX", "X.....X",
-                                        "X.....X", "X.....X", "X.....X", ".X...X.", "..XXX.."};
-const char *const kSmallMouseMiddle[] = {".XXXXX.", "X.XXX.X", "X.XXX.X", "XXXXXXX", "X.....X",
-                                         "X.....X", "X.....X", "X.....X", ".X...X.", "..XXX.."};
-constexpr int kSmallMouseRows = 10;
+// The keys' pictures on a keycap: the space bar, the arrows (the mouse is
+// drawn whole, src/button_glyphs.cpp).
 const char *const kSpace[] = {"X.........X", "X.........X", "X.........X", "XXXXXXXXXXX"};
 const char *const kUp[] = {"...X...", "..XXX..", ".XXXXX.", "XXXXXXX", "..XXX..", "..XXX..", "..XXX.."};
 const char *const kDown[] = {"..XXX..", "..XXX..", "..XXX..", "XXXXXXX", ".XXXXX.", "..XXX..", "...X..."};
@@ -225,16 +211,10 @@ Bitmap keyChar(char c, bool small)
     return small ? Bitmap{kSmall[index], 5} : Bitmap{kLarge[index], 7};
 }
 
-Bitmap keyIcon(KeyIcon icon, bool plate)
+Bitmap keyIcon(KeyIcon icon)
 {
     switch (icon)
     {
-    case KeyIcon::MouseLeft:
-        return plate ? Bitmap{kSmallMouseLeft, kSmallMouseRows} : Bitmap{kMouseLeft, kMouseRows};
-    case KeyIcon::MouseRight:
-        return plate ? Bitmap{kSmallMouseRight, kSmallMouseRows} : Bitmap{kMouseRight, kMouseRows};
-    case KeyIcon::MouseMiddle:
-        return plate ? Bitmap{kSmallMouseMiddle, kSmallMouseRows} : Bitmap{kMouseMiddle, kMouseRows};
     case KeyIcon::Space:
         return {kSpace, 4};
     case KeyIcon::Up:
@@ -246,6 +226,9 @@ Bitmap keyIcon(KeyIcon icon, bool plate)
     case KeyIcon::Right:
         return {kRight, 7};
     case KeyIcon::None:
+    case KeyIcon::MouseLeft:
+    case KeyIcon::MouseRight:
+    case KeyIcon::MouseMiddle:
         break;
     }
     return {nullptr, 0};
