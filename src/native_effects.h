@@ -30,7 +30,8 @@ class PS2Runtime;
 // (BloomExtractBlurMaybe, as the glare), RG_NATIVE_DOF (DofFilterDrawMaybe),
 // RG_NATIVE_REFRACTION (RefractionCaptureFrame), RG_NATIVE_FLIP (the flip's
 // copy), RG_NATIVE_COLOR_FILTER (ScreenColorFilterMaybe), RG_NATIVE_FOCUS
-// (FocusFilterDrawMaybe), RG_NATIVE_SHADOW_MAP (ShadowMapBlur).
+// (FocusFilterDrawMaybe), RG_NATIVE_SHADOW_MAP (ShadowMapBlur),
+// RG_NATIVE_COMPOSITE (the per-object composites, as object layers).
 // RG_NATIVE_EFFECTS_LOG=1 prints the first of each effect built;
 // RG_NATIVE_EFFECTS_TRACE=1 traces the sprites of a few and dumps refused
 // effects' packets.
@@ -59,6 +60,13 @@ enum class Effect : uint8_t
     // DrawListBeginPlaneShadowPass: its packets go on as they are; the
     // registers they set are where the shadow's sprites start from.
     ShadowSetup,
+    // ModelDrawOffscreenComposite (stage E), an object at a time: the head
+    // draws it into the offscreen buffer (its clear, its model), the tail
+    // lays that over the frame. The VIF1 thread draws each object into an
+    // object layer of the renderer's own and its tail from there
+    // (src/vif1_thread.cpp batches them). Place::unit: the object.
+    CompositeHead,
+    CompositeTail,
     // GfxFlipBuffersMaybe's copy of the frame into the display buffer: sent
     // from the game thread, not the VIF1 lists, so taken by flipPacket
     // rather than by packet memory.
@@ -74,7 +82,8 @@ enum class Effect : uint8_t
 };
 
 // What an EE address of the frame's packet memory holds: an effect's
-// packets, and for the colour filter its colour.
+// packets, and for the colour filter its colour, for a composite its
+// object's number.
 struct Place
 {
     Effect effect = Effect::None;
@@ -85,6 +94,8 @@ struct Place
 // variable is 0).
 bool enabled();
 const char *name(Effect effect);
+// RG_NATIVE_COMPOSITE (on unless 0): stage E's objects as object layers.
+bool compositesBatched();
 
 // After loadELF(): hooks the effects' functions.
 void install(PS2Runtime &runtime);
@@ -112,6 +123,18 @@ Place placeAt(uint32_t address);
 
 // A ShadowSetup packet: the registers it writes, for the next shadow.
 void observe(Effect effect, const uint8_t *data, uint32_t size);
+
+// A composite's head: the box its clear sprites cover in the offscreen
+// buffer (CT32 at `base`, `fbw`), in pixels, x1 and y1 exclusive.
+struct Box
+{
+    uint32_t base = 0u;
+    uint32_t fbw = 0u;
+    int32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+};
+bool clearBox(const std::vector<std::vector<uint8_t>> &packets, Box &box);
+// When a packet starts a transfer into GS memory: the pages it may write.
+bool uploadPages(const uint8_t *data, uint32_t size, uint32_t &first, uint32_t &last);
 
 // Debugging: the registers and primitives of `packets`, one line each.
 void dumpPackets(const char *what, const std::vector<std::vector<uint8_t>> &packets);

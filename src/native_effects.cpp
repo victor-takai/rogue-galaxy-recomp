@@ -24,6 +24,10 @@ namespace
 constexpr uint32_t kGlareFilterDraw = 0x0017A0D0u; // GlareFilterDrawMaybe
 constexpr uint32_t kPlaneShadowEnd = 0x00146CC0u;   // DrawListEndPlaneShadowPass
 constexpr uint32_t kPlaneShadowBegin = 0x00147B80u; // DrawListBeginPlaneShadowPass
+// ModelDrawOffscreenCompositeAtMaybe: the composite's only way in (it jumps
+// into ModelDrawOffscreenCompositeMaybe_16aac0 past the function table).
+constexpr uint32_t kCompositeAt = 0x0016B8A0u;
+constexpr uint32_t kModelEmitDrawPackets = 0x0014EC20u; // ModelEmitDrawPacketsMaybe
 constexpr uint32_t kDrawListFrameBegin = 0x001425D0u;
 constexpr uint32_t kCBlurTexBlur = 0x001789E0u; // CBlurTexBlurMaybe
 constexpr uint32_t kBloom = 0x00179360u;        // BloomExtractBlurMaybe
@@ -340,7 +344,127 @@ void dofFilterDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 }
 
 // RG_NATIVE_EFFECTS_PROBE: the effects still GS packets, hooked to see
+// Stage E, an object at a time. The composite draws offscreen when its
+// settings (a0) have +0x50 and +0x5C, a buffer at +0x20 and a strength at
+// +0x24 not negative (the archive branch's docs/NATIVE-RENDERER.md, "Stage E, why offscreen"):
+// the packets up to the end of its last ModelEmitDrawPackets are the head,
+// the rest the tail. (Game thread only.)
+struct Composite
+{
+    uint32_t unit = 0u;
+    uint32_t start = 0u;
+    uint32_t headEnd = 0u;
+};
+Composite g_composite;
+uint32_t g_units = 0u;
+PS2Runtime::RecompiledFunction g_compositeOriginal = nullptr;
+PS2Runtime::RecompiledFunction g_emitOriginal = nullptr;
+
+float readFloat(uint32_t address)
+{
+    const uint32_t bits = read32(address);
+    float value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+// The fixed DMA chain each composite's tail calls (GsPktAddDmaCallTag in
+// ModelDrawOffscreenCompositeMaybe at 0x16b180): the memory it sends from,
+// any tail's (unit 0). Walked once, when the first composite is marked.
+constexpr uint32_t kCompositeTailCall = 0x00445C60u;
+
+void markTailCall()
+{
+    static bool marked = false;
+    if (marked)
+        return;
+    marked = true;
+    uint32_t address = kCompositeTailCall;
+    std::vector<uint32_t> returns;
+    for (int step = 0; step < 256; ++step)
+    {
+        const uint32_t tag = read32(address);
+        const uint32_t qwc = tag & 0xFFFFu;
+        const uint32_t id = (tag >> 28) & 7u;
+        const uint32_t target = read32(address + 4u) & 0x7FFFFFF0u;
+        // The data after the tag (cnt, next, call, ret, end) or at its
+        // address (ref, refe, refs).
+        if (g_log)
+            std::fprintf(stderr, "[nativefx] tail call: tag at %08x id %u qwc %u address %08x\n", address, id, qwc, target);
+        if (id == 0u || id == 3u || id == 4u)
+            addRange(target, target + qwc * 16u, Effect::CompositeTail, 0u);
+        else
+            addRange(address, address + 16u + qwc * 16u, Effect::CompositeTail, 0u);
+        if (id == 0u || id == 7u)
+            break;
+        if (id == 1u)
+            address += 16u + qwc * 16u;
+        else if (id == 2u)
+            address = target;
+        else if (id == 3u || id == 4u)
+            address += 16u;
+        else if (id == 5u)
+        {
+            returns.push_back(address + 16u + qwc * 16u);
+            address = target;
+        }
+        else
+        {
+            if (returns.empty())
+                break;
+            address = returns.back();
+            returns.pop_back();
+        }
+    }
+}
+
+void afterComposite(uint8_t *, R5900Context *, PS2Runtime *, uint32_t unit)
+{
+    if (g_composite.unit != unit)
+        return;
+    markTailCall();
+    const uint32_t end = stackTop();
+    if (g_composite.headEnd > g_composite.start && g_composite.headEnd < end)
+    {
+        addRange(g_composite.start, g_composite.headEnd, Effect::CompositeHead, unit);
+        addRange(g_composite.headEnd, end, Effect::CompositeTail, unit);
+    }
+    g_composite = Composite{};
+}
+
+void compositeAt(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t settings = getRegU32(ctx, 4);
+    const bool offscreen = read32(settings + 0x5Cu) != 0u && read32(settings + 0x50u) != 0u &&
+                           read32(settings + 0x20u) != 0u && readFloat(settings + 0x24u) >= 0.0f;
+    if (!offscreen || g_composite.unit != 0u)
+    {
+        g_compositeOriginal(rdram, ctx, runtime);
+        return;
+    }
+    g_units = g_units + 1u == 0u ? 1u : g_units + 1u;
+    g_composite = Composite{g_units, stackTop(), 0u};
+    rg::hooks::callThen(g_compositeOriginal, rdram, ctx, runtime, &afterComposite, g_units);
+}
+
+void afterEmit(uint8_t *, R5900Context *, PS2Runtime *, uint32_t)
+{
+    if (g_composite.unit != 0u)
+        g_composite.headEnd = stackTop();
+}
+
+void modelEmitDrawPackets(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (g_composite.unit == 0u)
+    {
+        g_emitOriginal(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_emitOriginal, rdram, ctx, runtime, &afterEmit, 0u);
+}
+
 bool g_glare = false;
+bool g_composites = false;
 bool g_shadow = false;
 bool g_cblur = false;
 bool g_bloom = false;
@@ -460,6 +584,9 @@ struct Builder
     std::array<float, GSNativeEffect::kMaxBuffers> readBottom{};
     std::string missing;
     bool failed = false;
+    // A composite's tail: sprites from the object's buffer (its layer, not
+    // the GS's) over the frame, alpha tested.
+    bool tail = false;
     // The flip's copy: into the display buffer, which is CT24.
     bool flip = false;
     // Per op: how many CT16 strips a kGreenToAlpha op stands for.
@@ -833,7 +960,7 @@ struct Builder
         // A GS buffer drawn in a way the pipeline cannot is taken over
         // (kTakenOver): drawn as the effect's own from what it holds, and
         // what it ends with put back.
-        for (uint32_t n = 0; n < out.opCount; ++n)
+        for (uint32_t n = 0; n < out.opCount && !tail; ++n)
         {
             GSNativeEffect::Buffer &target = out.buffers[out.ops[n].target];
             if (target.external && intoGs(out.ops[n]) != nullptr)
@@ -867,7 +994,7 @@ struct Builder
             return "a CT16 channel copy of a GS buffer";
         if (op.source >= 0 && static_cast<uint32_t>(op.source) == op.target)
             return "a sprite into a GS target from itself";
-        if (op.test & 1u)
+        if ((op.test & 1u) && (!tail || ((op.test >> 12) & 3u) != 0u))
             return "a sprite into a GS target with the alpha test";
         if (!(op.flags & GSNativeEffect::kBlend))
             return nullptr;
@@ -878,7 +1005,7 @@ struct Builder
         const uint32_t c = static_cast<uint32_t>((op.alpha >> 4) & 3u);
         if (((op.alpha >> 6) & 3u) != 1u || c == 1u || (ab != 0x8u && ab != 0x2u && ab != 0x4u))
             return "a sprite into a GS target with a blend it cannot draw";
-        if (ab == 0x4u && !(op.flags & GSNativeEffect::kKeepAlpha))
+        if (ab == 0x4u && !(op.flags & GSNativeEffect::kKeepAlpha) && !tail)
             return "a sprite laid over a GS target that writes its alpha";
         return nullptr;
     }
@@ -899,12 +1026,19 @@ const char *name(Effect effect)
     case Effect::CBlurDraw: return "cblur draw";
     case Effect::Refraction: return "refraction";
     case Effect::ShadowSetup: return "shadow setup";
+    case Effect::CompositeHead: return "composite head";
+    case Effect::CompositeTail: return "composite tail";
     case Effect::Flip: return "flip";
     case Effect::ColorFilter: return "color filter";
     case Effect::Focus: return "focus";
     case Effect::ShadowMapBlur: return "shadow map blur";
     default: return "none";
     }
+}
+
+bool compositesBatched()
+{
+    return enabled() && g_composites;
 }
 
 bool enabled()
@@ -927,7 +1061,8 @@ bool enabled()
         g_colorFilter = flag("RG_NATIVE_COLOR_FILTER");
         g_focus = flag("RG_NATIVE_FOCUS");
         g_shadowMap = flag("RG_NATIVE_SHADOW_MAP");
-        return g_glare || g_shadow || g_cblur || g_bloom || g_dof || g_refraction || g_flip || g_colorFilter ||
+        g_composites = flag("RG_NATIVE_COMPOSITE");
+        return g_composites || g_glare || g_shadow || g_cblur || g_bloom || g_dof || g_refraction || g_flip || g_colorFilter ||
                g_focus || g_shadowMap;
     }();
     return on;
@@ -981,6 +1116,13 @@ void install(PS2Runtime &runtime)
     }
     if (debugColorFilter() != 0u)
         rg::timing::hookFunction(runtime, kGameSceneTintApply, &gameSceneTintApply, g_tintApplyOriginal);
+    if (g_composites &&
+        (!rg::timing::hookFunction(runtime, kCompositeAt, &compositeAt, g_compositeOriginal) ||
+         !rg::timing::hookFunction(runtime, kModelEmitDrawPackets, &modelEmitDrawPackets, g_emitOriginal)))
+    {
+        g_composites = false;
+        std::fprintf(stderr, "[nativefx] the composites stay GS packets\n");
+    }
     if (g_colorFilter &&
         !rg::timing::hookFunction(runtime, kColorFilter, &colorFilter, g_colorFilterOriginal))
     {
@@ -1141,6 +1283,109 @@ Effect effectAt(uint32_t address)
     return placeAt(address).effect;
 }
 
+bool clearBox(const std::vector<std::vector<uint8_t>> &packets, Box &box)
+{
+    Registers registers;
+    rg::gif::GifState state;
+    std::vector<rg::gif::GifEvent> events;
+    bool found = false;
+    uint32_t queued = 0u;
+    rg::gif::GifEvent first;
+    for (const std::vector<uint8_t> &packet : packets)
+    {
+        events.clear();
+        rg::gif::eachPacket(packet.data(), static_cast<uint32_t>(packet.size()),
+                   [&](uint32_t at, uint32_t size) { rg::gif::decodeGifPacket(packet.data() + at, size, state, events); });
+        for (const rg::gif::GifEvent &event : events)
+        {
+            if (event.kind == rg::gif::GifEvent::Kind::Register)
+            {
+                if (event.reg == 0x00u)
+                    queued = 0u;
+                registers.write(event.reg, event.value);
+                continue;
+            }
+            if ((event.prim & 7u) != 6u || ((event.prim >> 4) & 1u))
+                continue;
+            if (++queued < 2u)
+            {
+                first = event;
+                continue;
+            }
+            queued = 0u;
+            const uint32_t ctxt = (event.prim >> 9) & 1u;
+            const uint64_t frame = registers.value[kFrame + ctxt];
+            const uint64_t offset = registers.value[kXyoffset + ctxt];
+            const uint32_t base = static_cast<uint32_t>(frame & 0x1FFu) << 5u;
+            const uint32_t fbw = static_cast<uint32_t>((frame >> 16) & 0x3Fu);
+            if (((frame >> 24) & 0x3Fu) != 0u || (found && (base != box.base || fbw != box.fbw)))
+                return false;
+            const int32_t ox = static_cast<int32_t>(offset & 0xFFFFu), oy = static_cast<int32_t>((offset >> 32) & 0xFFFFu);
+            const int32_t x0 = (std::min<int32_t>(first.x, event.x) - ox) >> 4;
+            const int32_t y0 = (std::min<int32_t>(first.y, event.y) - oy) >> 4;
+            const int32_t x1 = (std::max<int32_t>(first.x, event.x) - ox + 15) >> 4;
+            const int32_t y1 = (std::max<int32_t>(first.y, event.y) - oy + 15) >> 4;
+            if (!found)
+                box = Box{base, fbw, x0, y0, x1, y1};
+            box.x0 = std::min(box.x0, x0);
+            box.y0 = std::min(box.y0, y0);
+            box.x1 = std::max(box.x1, x1);
+            box.y1 = std::max(box.y1, y1);
+            found = true;
+        }
+    }
+    return found && box.fbw != 0u;
+}
+
+bool uploadPages(const uint8_t *data, uint32_t size, uint32_t &first, uint32_t &last)
+{
+    // An upload's registers come as one A+D packet: BITBLTBUF, TRXPOS,
+    // TRXREG, TRXDIR.
+    if (size < 32u)
+        return false;
+    uint64_t tag, regs;
+    std::memcpy(&tag, data, sizeof(tag));
+    std::memcpy(&regs, data + 8, sizeof(regs));
+    if ((tag >> 58) & 3u || (tag >> 60) != 1u || (regs & 0xFu) != kAd)
+        return false;
+    const uint32_t nloop = static_cast<uint32_t>(tag & 0x7FFFu);
+    uint64_t bitblt = 0u, pos = 0u, reg = 0u;
+    bool host = false;
+    for (uint32_t i = 0; i < nloop && 32u + i * 16u <= size; ++i)
+    {
+        uint64_t value, address;
+        std::memcpy(&value, data + 16u + i * 16u, sizeof(value));
+        std::memcpy(&address, data + 24u + i * 16u, sizeof(address));
+        switch (address & 0xFFu)
+        {
+        case 0x50u: bitblt = value; break;
+        case 0x51u: pos = value; break;
+        case 0x52u: reg = value; break;
+        case 0x53u: host = (value & 3u) == 0u; break;
+        default: break;
+        }
+    }
+    if (!host)
+        return false;
+    const uint32_t dbp = static_cast<uint32_t>((bitblt >> 32) & 0x3FFFu);
+    const uint32_t dbw = std::max<uint32_t>(static_cast<uint32_t>((bitblt >> 48) & 0x3Fu), 1u);
+    const uint32_t dpsm = static_cast<uint32_t>((bitblt >> 56) & 0x3Fu);
+    const uint32_t dsay = static_cast<uint32_t>((pos >> 48) & 0x7FFu);
+    const uint32_t rrh = std::max<uint32_t>(static_cast<uint32_t>((reg >> 32) & 0xFFFu), 1u);
+    // A page's size in pixels by format: 64 x 32 (32 and 24 bits), 64 x 64
+    // (16), 128 x 64 (8), 128 x 128 (4); a row of pages spans the width.
+    const bool four = dpsm == 0x14u || dpsm == 0x24u || dpsm == 0x2Cu;
+    const bool eight = dpsm == 0x13u || dpsm == 0x1Bu;
+    const bool sixteen = dpsm == 0x02u || dpsm == 0x0Au || dpsm == 0x30u || dpsm == 0x31u || dpsm == 0x32u ||
+                         dpsm == 0x3Au;
+    const uint32_t pageW = (four || eight) ? 128u : 64u;
+    const uint32_t pageH = four ? 128u : (eight || sixteen) ? 64u : 32u;
+    const uint32_t perRow = std::max<uint32_t>(dbw * 64u / pageW, 1u);
+    first = dbp / 32u + (dsay / pageH) * perRow;
+    last = dbp / 32u + ((dsay + rrh - 1u) / pageH) * perRow + perRow - 1u;
+    return true;
+}
+
 void dumpPackets(const char *what, const std::vector<std::vector<uint8_t>> &packets)
 {
     rg::gif::GifState state;
@@ -1294,18 +1539,20 @@ bool build(Effect effect, const std::vector<std::vector<uint8_t>> &packets, GSNa
         return buildColorFilter(packets, unit, out, withheld, why);
     if (effect != Effect::Glare && effect != Effect::Shadow && effect != Effect::CBlur && effect != Effect::Bloom &&
         effect != Effect::Dof && effect != Effect::CBlurDraw && effect != Effect::Refraction &&
-        effect != Effect::Flip && effect != Effect::Focus && effect != Effect::ShadowMapBlur)
+        effect != Effect::CompositeTail && effect != Effect::Flip && effect != Effect::Focus &&
+        effect != Effect::ShadowMapBlur)
     {
         why = "no such effect";
         return false;
     }
     Builder builder{out, why};
+    builder.tail = effect == Effect::CompositeTail;
     builder.flip = effect == Effect::Flip;
     static const bool traceShadow = std::getenv("RG_NATIVE_EFFECTS_TRACE") != nullptr;
     static int traced[16] = {};
     builder.trace = traceShadow &&
                     (effect == Effect::Shadow || effect == Effect::Bloom || effect == Effect::Dof || effect == Effect::CBlurDraw || effect == Effect::Refraction ||
-                     effect == Effect::Flip) &&
+                     effect == Effect::CompositeTail) &&
                     traced[static_cast<int>(effect)]++ == 0;
     Registers registers = effect == Effect::Shadow ? t_shadowSetup : Registers{};
     rg::gif::GifState state;

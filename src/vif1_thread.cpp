@@ -60,6 +60,14 @@ bool nativeEffects()
     static const bool on = rg::nativefx::enabled();
     return on;
 }
+// RG_NATIVE_COMPOSITE: stage E's objects in object layers (deliverPacket).
+bool composites()
+{
+    static const bool on = rg::nativefx::compositesBatched();
+    return on;
+}
+// For the VIF code a VU1 program's packets came from (vif1Cursor, patch 0032).
+PS2Memory *g_vif1Memory = nullptr;
 // The VIF1 thread's list: its bytes and where each piece came from, for the
 // EE address of a packet in it (listAddress).
 thread_local const uint8_t *t_listData = nullptr;
@@ -555,6 +563,8 @@ void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data = null
 // An effect's packets held on the VIF1 thread go on, as the renderer's
 // effect or as they are (below).
 void flushEffect();
+// Stage E's batch, at a list's end or before what is no composite's.
+void flushComposites();
 // For busyReport's VU1 pair counts.
 PS2Runtime *g_runtime = nullptr;
 
@@ -985,6 +995,7 @@ private:
                     memory.processVIF1Data(m_current.data.data(), static_cast<uint32_t>(m_current.data.size()));
                 }
                 flushEffect();
+                flushComposites();
             }
             catch (const std::exception &error)
             {
@@ -1652,8 +1663,334 @@ void flushEffect()
     t_held.packets.clear();
 }
 
+// RG_NATIVE_COMPOSITE: stage E's objects, each drawn into the offscreen
+// buffer (its head: a clear of its box, its model) and then laid over the
+// frame (its tail), drawn by the renderer into object layers of its own
+// (GSNativeEffect::kRouteLayer): the head's draws into the buffer go to the
+// object's layer, the tail's sprites become a kObjectTail from that layer,
+// their kicks withheld, and the waiting tails are drawn together
+// (kComposite) before anything else reaches the GS. Uploads and TEXFLUSHes
+// between objects go on: the layers are not GS memory. So the GS's buffer is
+// never drawn, and the renderer switches target twice a run of objects
+// instead of twice an object.
+struct CompositeBatch
+{
+    enum class State : uint8_t
+    {
+        Outside,
+        Head,
+        Tail,
+    };
+    State state = State::Outside;
+    uint32_t unit = 0u;
+    bool decided = false;   // the head's box known and its packets sent
+    bool routed = false;    // its draws go to a layer, its tail held
+    bool waiting = false;   // tails sent that no kComposite has drawn yet
+    bool uploading = false; // an upload's data goes on too
+    GS *gs = nullptr;
+    rg::nativefx::Box box;
+    std::vector<std::vector<uint8_t>> head; // the head's packets until its box is known
+    std::vector<std::vector<uint8_t>> tail;
+};
+thread_local CompositeBatch t_batch;
+std::atomic<uint64_t> g_compositeUnits{0u}, g_compositeRouted{0u}, g_compositeRuns{0u}, g_compositeRefused{0u};
+
+// A layer command or a tail to the producer; false when it refused it.
+bool sendEffect(GS &, const GSNativeEffect &effect)
+{
+    rg::nativeproducer::noteEffect(effect);
+    return rg::nativeproducer::effect(effect);
+}
+
+void sendCommand(GS &gs, uint32_t command)
+{
+    thread_local GSNativeEffect effect;
+    effect = GSNativeEffect{};
+    effect.command = command;
+    sendEffect(gs, effect);
+}
+
+// The waiting tails drawn, before what comes next.
+void compositeRun()
+{
+    CompositeBatch &batch = t_batch;
+    if (!batch.waiting)
+        return;
+    batch.waiting = false;
+    ++g_compositeRuns;
+    sendCommand(*batch.gs, GSNativeEffect::kComposite);
+}
+
+// The head's box is known (or will not be): routed to a layer with it, or,
+// without one, drawn as the game draws it, after the waiting tails.
+void decideHead()
+{
+    CompositeBatch &batch = t_batch;
+    batch.routed = rg::nativefx::clearBox(batch.head, batch.box);
+    if (batch.routed)
+    {
+        thread_local GSNativeEffect route;
+        route = GSNativeEffect{};
+        route.command = GSNativeEffect::kRouteLayer;
+        route.bufferCount = 1u;
+        route.buffers[0].base = batch.box.base;
+        route.buffers[0].fbw = batch.box.fbw;
+        route.box[0] = batch.box.x0;
+        route.box[1] = batch.box.y0;
+        route.box[2] = batch.box.x1;
+        route.box[3] = batch.box.y1;
+        sendEffect(*batch.gs, route);
+        ++g_compositeRouted;
+    }
+    else
+    {
+        compositeRun();
+    }
+    for (const std::vector<uint8_t> &packet : batch.head)
+        sendPacket(*batch.gs, packet.data(), static_cast<uint32_t>(packet.size()));
+    batch.head.clear();
+    batch.decided = true;
+    const uint64_t units = ++g_compositeUnits;
+    if (units == 1u || units % 5000u == 0u)
+        std::fprintf(stderr, "[composite] %llu objects, %llu in layers, %llu runs drawn, %llu tails refused\n",
+                     static_cast<unsigned long long>(units), static_cast<unsigned long long>(g_compositeRouted.load()),
+                     static_cast<unsigned long long>(g_compositeRuns.load()),
+                     static_cast<unsigned long long>(g_compositeRefused.load()));
+}
+
+// A routed object's tail, whole: its sprites to the renderer, from the
+// layer, and its packets to the GS with their kicks withheld. Refused, the
+// object's layer goes back into the GS's buffer first (kObjectTail without
+// sprites) and the packets as they are.
+void finishTail()
+{
+    CompositeBatch &batch = t_batch;
+    if (batch.tail.empty())
+        return;
+    GS &gs = *batch.gs;
+    thread_local GSNativeEffect effect;
+    thread_local std::vector<std::vector<uint8_t>> withheld;
+    std::string why;
+    bool ok = rg::nativefx::build(rg::nativefx::Effect::CompositeTail, batch.tail, effect, withheld, why);
+    if (ok)
+    {
+        bool fromLayer = false;
+        for (uint32_t i = 0; i < effect.bufferCount; ++i)
+        {
+            GSNativeEffect::Buffer &buffer = effect.buffers[i];
+            if (buffer.base == batch.box.base && buffer.fbw == batch.box.fbw)
+            {
+                buffer.layer = 1u;
+                fromLayer = true;
+            }
+        }
+        ok = fromLayer;
+        why = ok ? why : "no sprite from the object's buffer";
+    }
+    if (ok)
+    {
+        effect.command = GSNativeEffect::kObjectTail;
+        ok = sendEffect(gs, effect);
+        why = ok ? why : "the producer cannot draw it (its stats line says why)";
+    }
+    if (ok)
+    {
+        for (const std::vector<uint8_t> &packet : withheld)
+            sendPacket(gs, packet.data(), static_cast<uint32_t>(packet.size()));
+        batch.waiting = true;
+    }
+    else
+    {
+        const bool nothing = why == "no sprites";
+        static std::vector<std::string> told;
+        if (!nothing && told.size() < 8u && std::find(told.begin(), told.end(), why) == told.end())
+        {
+            told.push_back(why);
+            std::fprintf(stderr, "[composite] a tail stays packets: %s\n", why.c_str());
+        }
+        if (!nothing)
+            ++g_compositeRefused;
+        static const bool trace = std::getenv("RG_COMPOSITE_TRACE") != nullptr;
+        static int dumped = 0;
+        if (trace && !nothing && dumped++ < 3)
+        {
+            std::fprintf(stderr, "[composite] refused (%s), box %d,%d-%d,%d:\n", why.c_str(), batch.box.x0, batch.box.y0,
+                         batch.box.x1, batch.box.y1);
+            rg::nativefx::dumpPackets("composite", batch.tail);
+        }
+        effect = GSNativeEffect{};
+        effect.command = GSNativeEffect::kObjectTail;
+        effect.bufferCount = nothing ? 0u : 1u;
+        effect.buffers[0].base = batch.box.base;
+        effect.buffers[0].fbw = batch.box.fbw;
+        sendEffect(gs, effect);
+        batch.waiting = false;
+        for (const std::vector<uint8_t> &packet : batch.tail)
+            sendPacket(gs, packet.data(), static_cast<uint32_t>(packet.size()));
+    }
+    batch.tail.clear();
+}
+
+// The object being read is over (what comes next is not its).
+void endObject()
+{
+    CompositeBatch &batch = t_batch;
+    if (batch.state == CompositeBatch::State::Head && !batch.decided)
+        decideHead();
+    if (batch.state == CompositeBatch::State::Head && batch.routed)
+        sendCommand(*batch.gs, GSNativeEffect::kRouteEnd);
+    finishTail();
+    batch.state = CompositeBatch::State::Outside;
+    batch.routed = false;
+}
+
+// At a list's end, or before anything that is no composite's.
+void flushComposites()
+{
+    if (!t_batch.gs)
+        return;
+    endObject();
+    compositeRun();
+    t_batch.uploading = false;
+}
+
+void compositeOther(const char *what = "?", uint32_t address = ~0u, uint32_t cursor = ~0u)
+{
+    static const bool trace = std::getenv("RG_COMPOSITE_TRACE") != nullptr;
+    static int traced = 0;
+    if (trace && traced < 40 && (t_batch.waiting || t_batch.state != CompositeBatch::State::Outside))
+    {
+        ++traced;
+        std::fprintf(stderr, "[composite]   run ended by %s @%08x cursor %08x (state %d)\n", what, address, cursor,
+                     int(t_batch.state));
+    }
+    flushComposites();
+}
+
+bool uploadOrFlush(const uint8_t *data, uint32_t size)
+{
+    uint32_t first, last;
+    if (rg::nativefx::uploadPages(data, size, first, last))
+        return true;
+    // A packet that only flushes the texture cache (TEXFLUSH: no state, no
+    // drawing).
+    if (size < 32u)
+        return false;
+    uint64_t tag, regs;
+    std::memcpy(&tag, data, 8);
+    std::memcpy(&regs, data + 8, 8);
+    const uint32_t nloop = static_cast<uint32_t>(tag & 0x7FFFu);
+    bool flushOnly = (tag >> 58) == 0x4u && (regs & 0xFu) == 0xEu && nloop != 0u && 16u + nloop * 16u <= size;
+    for (uint32_t i = 0; flushOnly && i < nloop; ++i)
+        flushOnly = data[16u + i * 16u + 8u] == 0x3Fu;
+    return flushOnly;
+}
+
+// A packet of a composite (its place in the list's EE memory, or for what a
+// VU1 program kicked, the part being run): true when it was taken.
+bool compositePacket(GS &gs, const uint8_t *data, uint32_t size, uint32_t address)
+{
+    CompositeBatch &batch = t_batch;
+    batch.gs = &gs;
+    rg::nativefx::Place place;
+    // What a VU1 program kicked: the part whose list holds the MSCAL.
+    uint32_t cursor = ~0u;
+    if (address == ~0u && g_vif1Memory)
+        cursor = listAddress(g_vif1Memory->vif1Cursor());
+    if (address != ~0u)
+        place = rg::nativefx::placeAt(address);
+    else if (cursor != ~0u)
+        place = rg::nativefx::placeAt(cursor);
+    // Until its tail, a head goes on through what it refers to: the model's
+    // packets from the model's memory, and what its VU1 programs kick.
+    // (Every object marked has a tail.)
+    if (batch.state == CompositeBatch::State::Head && place.effect == rg::nativefx::Effect::None)
+        place = {rg::nativefx::Effect::CompositeHead, batch.unit};
+    {
+        static const bool trace = std::getenv("RG_COMPOSITE_TRACE") != nullptr;
+        static int traced = 0;
+        if (trace && traced < 400 && (place.effect != rg::nativefx::Effect::None || batch.state != CompositeBatch::State::Outside))
+        {
+            ++traced;
+            std::fprintf(stderr, "[composite]   %s unit %u (state %d unit %u decided %d) @%08x cursor %08x %u bytes\n",
+                         rg::nativefx::name(place.effect), place.unit, int(batch.state), batch.unit, int(batch.decided),
+                         address, cursor, size);
+        }
+    }
+    if (place.effect == rg::nativefx::Effect::CompositeHead)
+    {
+        if (batch.state != CompositeBatch::State::Head || batch.unit != place.unit)
+        {
+            endObject();
+            batch.state = CompositeBatch::State::Head;
+            batch.unit = place.unit;
+            batch.decided = false;
+        }
+        batch.uploading = false;
+        if (!batch.decided)
+        {
+            if (address != ~0u && rg::nativefx::placeAt(address).effect == rg::nativefx::Effect::CompositeHead)
+            {
+                batch.head.emplace_back(data, data + size);
+                return true;
+            }
+            decideHead();
+        }
+        sendPacket(gs, data, size);
+        return true;
+    }
+    // (Unit 0: the fixed chain every tail calls.)
+    if (place.effect == rg::nativefx::Effect::CompositeTail && (place.unit == batch.unit || place.unit == 0u) &&
+        (batch.state == CompositeBatch::State::Head || batch.state == CompositeBatch::State::Tail))
+    {
+        if (batch.state == CompositeBatch::State::Head)
+        {
+            if (!batch.decided)
+                decideHead();
+            if (batch.routed)
+                sendCommand(gs, GSNativeEffect::kRouteEnd);
+            batch.state = CompositeBatch::State::Tail;
+        }
+        if (batch.routed)
+            batch.tail.emplace_back(data, data + size);
+        else
+            sendPacket(gs, data, size);
+        return true;
+    }
+    // The upload's data, as an IMAGE packet.
+    if (batch.uploading && size >= 16u)
+    {
+        uint64_t tag;
+        std::memcpy(&tag, data, 8);
+        if (((tag >> 58) & 3u) == 2u)
+        {
+            sendPacket(gs, data, size);
+            return true;
+        }
+    }
+    batch.uploading = false;
+    // Between objects the caller uploads textures (CLUTs) and flushes the
+    // texture cache: on ahead of the waiting tails, which read only their
+    // layers (each tail's packets set every register it draws with).
+    if (batch.state != CompositeBatch::State::Head && (batch.waiting || batch.state == CompositeBatch::State::Tail) &&
+        uploadOrFlush(data, size))
+    {
+        endObject();
+        uint32_t first, last;
+        batch.uploading = rg::nativefx::uploadPages(data, size, first, last);
+        sendPacket(gs, data, size);
+        return true;
+    }
+    compositeOther(rg::nativefx::name(place.effect), address, cursor);
+    return false;
+}
+
 void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
 {
+    if (composites() && t_onVif1Thread && compositePacket(gs, data, size, listAddress(data)))
+    {
+        return;
+    }
     // Step 5: an effect's packets, held until the effect's run ends.
     if (nativeEffects() && t_onVif1Thread)
     {
@@ -1709,6 +2046,19 @@ void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
 
 void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data)
 {
+    if (composites() && t_onVif1Thread)
+    {
+        t_batch.gs = &gs;
+        if (t_batch.state == CompositeBatch::State::Head)
+        {
+            if (!t_batch.decided)
+                decideHead();
+        }
+        else
+        {
+            compositeOther("a mesh");
+        }
+    }
     if (nativeEffects() && t_onVif1Thread)
     {
         flushEffect();
@@ -1892,6 +2242,7 @@ void install(PS2Runtime &runtime)
     }
     g_thread = new Vif1Thread(runtime);
     g_runtime = &runtime;
+    g_vif1Memory = &runtime.memory();
 
     // GS packets from the VIF1 thread and from the game's own GIF transfers
     // reach the GS through PS2Memory. Its GifArbiter queues them unlocked and
@@ -1930,6 +2281,19 @@ void install(PS2Runtime &runtime)
     // A texture split over DIRECT packets continues in place, without the
     // copy behind a synthesized IMAGE tag.
     memory.setGifImageCallback([&gs = runtime.gs()](const uint8_t *data, uint32_t size) {
+        if (composites() && t_onVif1Thread)
+        {
+            t_batch.gs = &gs;
+            if (t_batch.state == CompositeBatch::State::Head)
+            {
+                if (!t_batch.decided)
+                    decideHead();
+            }
+            else if (!t_batch.uploading)
+            {
+                compositeOther("an image");
+            }
+        }
         if (t_onVif1Thread)
         {
             flushEffect();
