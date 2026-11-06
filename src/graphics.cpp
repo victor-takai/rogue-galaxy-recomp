@@ -40,6 +40,7 @@
 #include "ps2_runtime.h"
 #include "stick_response.h"
 #include "runtime/gs/gs_cpu_backend.h"
+#include "Stubs/Pad.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/gs/gs_threaded_backend.h"
 
@@ -90,7 +91,7 @@ void applySpeed()
     }
 }
 
-// RG_SPEED (createMenu): set once its pad frame comes.
+// RG_SPEED (createMenu): set once its pad read comes.
 double g_scriptedSpeed = 1.0;
 uint64_t g_scriptedSpeedFrom = 0u;
 bool g_scriptedSpeedPending = false;
@@ -101,7 +102,9 @@ void followQuickScenes()
     {
         return;
     }
-    if (g_scriptedSpeedPending && ps2PadCurrentGuestFrame() >= g_scriptedSpeedFrom)
+    // Pad reads, the clock RG_INPUT_CLOCK=pad scripts count, not vsyncs.
+    if (g_scriptedSpeedPending &&
+        ps2_stubs::getPadDebugSnapshot().ports[0][0].readCount >= g_scriptedSpeedFrom)
     {
         g_scriptedSpeedPending = false;
         g_menuSpeed = g_scriptedSpeed;
@@ -579,17 +582,36 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         g_menuSpeed = speed;
         applySpeed();
     };
-    // RG_SPEED=N[@FRAME]: the game's speed, as the menu's fast-forward (0
-    // unpaced), from the start or from that pad frame on, for scripted runs
+    // RG_SPEED=N[@READ]: the game's speed, as the menu's fast-forward (0
+    // unpaced), from the start or from that pad read on, for scripted runs
     // whose window is hidden and so never runs the menu. A scripted walk
     // keeps to its timing only at the speed it was written for: start it
-    // once the input is done.
+    // once the input is done. A value that does not parse is refused, not
+    // taken as unpaced.
     if (const std::string speed = env("RG_SPEED", ""); !speed.empty())
     {
-        g_scriptedSpeed = std::max(0.0, std::atof(speed.c_str()));
-        const size_t at = speed.find('@');
-        g_scriptedSpeedFrom = at == std::string::npos ? 0u : std::strtoull(speed.c_str() + at + 1, nullptr, 10);
-        g_scriptedSpeedPending = true;
+        const char *text = speed.c_str();
+        char *end = nullptr;
+        const double value = std::strtod(text, &end);
+        bool ok = end != text && value >= 0.0;
+        uint64_t from = 0u;
+        if (ok && *end == '@')
+        {
+            const char *digits = end + 1;
+            ok = *digits >= '0' && *digits <= '9';
+            from = std::strtoull(digits, &end, 10);
+        }
+        ok = ok && *end == '\0';
+        if (ok)
+        {
+            g_scriptedSpeed = value;
+            g_scriptedSpeedFrom = from;
+            g_scriptedSpeedPending = true;
+            std::fprintf(stderr, "[speed] RG_SPEED: %g%s from pad read %llu\n", value,
+                         value == 0.0 ? " (unpaced)" : "", (unsigned long long)from);
+        }
+        else
+            std::fprintf(stderr, "[speed] RG_SPEED=\"%s\" ignored: N or N@READ, N >= 0 (0 unpaced)\n", text);
     }
     // The game's flips: frames it finished, not presents, which go on while
     // it is paused.
