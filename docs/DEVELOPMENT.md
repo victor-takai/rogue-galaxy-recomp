@@ -52,7 +52,12 @@ process can be dumped with `tools\hang\dumpmem.ps1` (its guest RAM and
 thread contexts) and a thread's call chain read from the dump with
 `python tools/hang/stackwalk.py DUMPDIR SP RA --exe build/game/src/roguegalaxy.exe`
 (the build that froze; the script runs `llvm-nm`, from the toolchain's
-`bin`, so that folder must be on PATH).
+`bin`, so that folder must be on PATH). The pc these give is the last one
+the generated code stored: with `lean_pc` on (`config/SCUS_974.90/recomp/main.toml`,
+the default) arithmetic stores none, so a thread spinning in a loop of it
+shows the loop's last load, store, branch or call, not the exact
+instruction. To hunt a hang to its instruction, set `lean_pc = false` and
+rebuild (`Update.bat`; it recompiles all game code).
 
 `debug\RogueGalaxy-hitches.bat` is the profile launcher with a stats line every 10 frames, for short hitches: each line also gives the longest frame of its interval (the longest gap between two presents), the longest the main thread was held up ("main stall"), the GPU pipelines created in it and what creating them cost (a first-time state compiles one), and the VU1 pairs that ran on the interpreter (a program the build lacks; the session records it into `build/vu1-profile`, see VU1 programs in [BUILDING.md](BUILDING.md)). Its profiler samples all the time (`RG_PROFILE_BEFORE=10`; about 9% of the VIF1 thread's time at the boss gate, so it is for hunting hitches, not for playing): it writes a profile by itself at a hitch nobody marked (`RG_PROFILE_AUTO_MS=50`: a frame of 50 ms or more and three times the usual, or the frame rate halved for a few frames), of the hitch and half a second either side, up to 30 a session, and the log says so in a `[profile] window N: a hitch` line; an F9 window holds the 10 seconds before the press and the 5 after. Press F9 at each hitch felt, then read the lines around the `[mark]` (`python tools/bench/hitches.py build/last-run.log`, one row per interval); a profile window still open when the game is closed is cut short and written.
 

@@ -177,7 +177,7 @@ index 54fdfcf..d1b9f18 100644
  
              if (m_bootstrapInfo.valid && m_codeGenerator)
 diff --git a/ps2xRuntime/include/ps2_runtime.h b/ps2xRuntime/include/ps2_runtime.h
-index 0615393..d915c7b 100644
+index 0615393..b1f9376 100644
 --- a/ps2xRuntime/include/ps2_runtime.h
 +++ b/ps2xRuntime/include/ps2_runtime.h
 @@ -375,6 +375,23 @@ public:
@@ -204,7 +204,22 @@ index 0615393..d915c7b 100644
      bool replaceFunction(uint32_t address, RecompiledFunction func);
      // TODO remove this later need to update all tests
      bool registerFunction(uint32_t address, RecompiledFunction func);
-@@ -611,5 +628,7 @@ extern const uint32_t g_ps2RecompiledFunctionTableBase;
+@@ -537,6 +554,14 @@ private:
+     void freeGuestBlockLocked(uint32_t guestAddr);
+     void coalesceGuestHeapLocked();
+     void HandleIntegerOverflow(R5900Context *ctx);
++    // A call's run of its function and the rule that tells a return from an
++    // unwind, shared by dispatchGuestBranch and directGuestCall (Rogue
++    // Galaxy: added).
++    bool callGuestFunction(uint8_t *rdram,
++                           R5900Context *ctx,
++                           RecompiledFunction fn,
++                           uint32_t targetPc,
++                           uint32_t fallthroughPc);
+ 
+     [[nodiscard]] ps2x::iop::RpcAbi selectIopRpcAbi(const ps2x::iop::RpcAbiRequest &request) const;
+     [[nodiscard]] ps2x::iop::RpcResult handleIopRpc(uint8_t *rdram, R5900Context *ctx, ps2x::iop::RpcRequest request);
+@@ -611,5 +636,7 @@ extern const uint32_t g_ps2RecompiledFunctionTableBase;
  extern const uint32_t g_ps2RecompiledFunctionTableEnd;
  extern const uint32_t g_ps2RecompiledFunctionTableSlotCount;
  extern PS2Runtime::RecompiledFunction g_ps2RecompiledFunctionTable[];
@@ -213,10 +228,10 @@ index 0615393..d915c7b 100644
  
  #endif // PS2_RUNTIME_H
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index b5472de..59fbce1 100644
+index 750c352..3d34e28 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
 +++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
-@@ -1170,6 +1170,20 @@ namespace
+@@ -1169,6 +1169,20 @@ namespace
      }
  }
  
@@ -237,7 +252,7 @@ index b5472de..59fbce1 100644
  void PS2Runtime::setFunctionRegionResolver(FunctionRegionResolver resolver, void *userData)
  {
      g_functionRegionResolverUserData.store(userData, std::memory_order_release);
-@@ -1190,6 +1204,15 @@ bool PS2Runtime::replaceFunction(uint32_t address, RecompiledFunction func)
+@@ -1189,6 +1203,15 @@ bool PS2Runtime::replaceFunction(uint32_t address, RecompiledFunction func)
      }
  
      *slot = func;
@@ -253,32 +268,18 @@ index b5472de..59fbce1 100644
      return true;
  }
  
-@@ -1544,6 +1567,47 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
-     return ctx->pc == fallthroughPc;
+@@ -1433,6 +1456,54 @@ void PS2Runtime::reportMissingFunction(uint8_t *rdram,
+     }
  }
  
-+bool PS2Runtime::directGuestCall(uint8_t *rdram,
-+                                 R5900Context *ctx,
-+                                 RecompiledFunction fn,
-+                                 uint32_t targetPc,
-+                                 uint32_t sourcePc,
-+                                 uint32_t fallthroughPc)
++// pc is targetPc on entry. Inline: it is the whole of the hot path of both
++// callers.
++inline bool PS2Runtime::callGuestFunction(uint8_t *rdram,
++                                          R5900Context *ctx,
++                                          RecompiledFunction fn,
++                                          uint32_t targetPc,
++                                          uint32_t fallthroughPc)
 +{
-+    if (!fn)
-+    {
-+        // Missing: the dispatcher reports it and applies the policy.
-+        return dispatchGuestBranch(rdram, ctx, targetPc, sourcePc, fallthroughPc,
-+                                   GuestBranchKind::DirectCall, "JAL");
-+    }
-+
-+    // The rest is dispatchGuestBranch's call path; see the reasons there.
-+    ctx->pc = targetPc;
-+    if (m_eeScheduler && m_eeScheduler->checkpointDue(EeScheduler::kGuestDispatchCycles))
-+    {
-+        m_eeScheduler->noteGuestUnwind();
-+        return false;
-+    }
-+
 +    pushDispatchPc(targetPc);
 +    const uint32_t entrySp = static_cast<uint32_t>(_mm_extract_epi32(ctx->r[29], 0));
 +    const uint64_t unwindSerial = m_eeScheduler ? m_eeScheduler->guestUnwindSerial() : 0u;
@@ -289,6 +290,27 @@ index b5472de..59fbce1 100644
 +        return false;
 +    }
 +
++    // A host replacement that leaves pc at the entry has returned: continue
++    // at the fallthrough, but only with the stack pointer back where the
++    // call left it. A scheduler checkpoint unwinds the guest the same way,
++    // with pc at the entry of the function the innermost frame was about to
++    // call; when that is also this frame's callee (indirect recursion: the
++    // config script VM while loading, the action dispatch on a knockdown,
++    // the script runner on a skill) taking the unwind for a return resumed
++    // the caller with the innermost frame's registers and stack pointer, and
++    // the next epilogue read a stale slot: the main thread ended at pc 0, or
++    // jumped into its own stack (Rogue Galaxy: fixed, freezes on 2026-10-19).
++    // The unwind comes from a deeper frame, so its sp differs; a stub never
++    // leaves sp moved. A flag set by the checkpoint was tried first and went
++    // stale: the scheduler resumed another thread suspended inside a stub,
++    // its return was taken for an unwind, and the stub ran a second time.
++    // The sp alone missed one case: a frameless leaf whose loop head is its
++    // own entry (StrCmpU8, 0x1834B0, comparing names in DirTableFindFile)
++    // unwinds from its back edge with pc at the entry and sp unmoved, and the
++    // lookup went on with a character for the comparison's result. So also
++    // no thread of this call's may have started an unwind during it; the
++    // count is per guest thread, so other threads' unwinds while a stub
++    // waited do not count (Rogue Galaxy: fixed, 2026-10-20).
 +    if (ctx->pc == targetPc && static_cast<uint32_t>(_mm_extract_epi32(ctx->r[29], 0)) == entrySp &&
 +        !(m_eeScheduler && m_eeScheduler->guestUnwoundSince(unwindSerial)))
 +    {
@@ -298,6 +320,72 @@ index b5472de..59fbce1 100644
 +    return ctx->pc == fallthroughPc;
 +}
 +
+ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+                                      R5900Context *ctx,
+                                      uint32_t targetPc,
+@@ -1501,46 +1572,32 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+         return false;
+     }
+ 
+-    pushDispatchPc(targetPc);
+-    RecompiledFunction targetFn = *slot;
+-    const uint32_t entryPc = ctx->pc;
+-    const uint32_t entrySp = static_cast<uint32_t>(_mm_extract_epi32(ctx->r[29], 0));
+-    const uint64_t unwindSerial = m_eeScheduler ? m_eeScheduler->guestUnwindSerial() : 0u;
+-    targetFn(rdram, ctx, this);
++    return callGuestFunction(rdram, ctx, *slot, targetPc, fallthroughPc);
++}
+ 
+-    if (isStopRequested() || ctx->pc == 0u)
++bool PS2Runtime::directGuestCall(uint8_t *rdram,
++                                 R5900Context *ctx,
++                                 RecompiledFunction fn,
++                                 uint32_t targetPc,
++                                 uint32_t sourcePc,
++                                 uint32_t fallthroughPc)
++{
++    if (!fn)
+     {
+-        return false;
++        // Missing: the dispatcher reports it and applies the policy.
++        return dispatchGuestBranch(rdram, ctx, targetPc, sourcePc, fallthroughPc,
++                                   GuestBranchKind::DirectCall, "JAL");
+     }
+ 
+-    // A host replacement that leaves pc at the entry has returned: continue
+-    // at the fallthrough, but only with the stack pointer back where the
+-    // call left it. A scheduler checkpoint unwinds the guest the same way,
+-    // with pc at the entry of the function the innermost frame was about to
+-    // call; when that is also this frame's callee (indirect recursion: the
+-    // config script VM while loading, the action dispatch on a knockdown,
+-    // the script runner on a skill) taking the unwind for a return resumed
+-    // the caller with the innermost frame's registers and stack pointer, and
+-    // the next epilogue read a stale slot: the main thread ended at pc 0, or
+-    // jumped into its own stack (Rogue Galaxy: fixed, freezes on 2026-10-19).
+-    // The unwind comes from a deeper frame, so its sp differs; a stub never
+-    // leaves sp moved. A flag set by the checkpoint was tried first and went
+-    // stale: the scheduler resumed another thread suspended inside a stub,
+-    // its return was taken for an unwind, and the stub ran a second time.
+-    // The sp alone missed one case: a frameless leaf whose loop head is its
+-    // own entry (StrCmpU8, 0x1834B0, comparing names in DirTableFindFile)
+-    // unwinds from its back edge with pc at the entry and sp unmoved, and the
+-    // lookup went on with a character for the comparison's result. So also
+-    // no thread of this call's may have started an unwind during it; the
+-    // count is per guest thread, so other threads' unwinds while a stub
+-    // waited do not count (Rogue Galaxy: fixed, 2026-10-20).
+-    if (ctx->pc == entryPc && static_cast<uint32_t>(_mm_extract_epi32(ctx->r[29], 0)) == entrySp &&
+-        !(m_eeScheduler && m_eeScheduler->guestUnwoundSince(unwindSerial)))
++    // dispatchGuestBranch's call path, without the table lookup.
++    ctx->pc = targetPc;
++    if (m_eeScheduler && m_eeScheduler->checkpointDue(EeScheduler::kGuestDispatchCycles))
+     {
+-        ctx->pc = fallthroughPc;
++        m_eeScheduler->noteGuestUnwind();
++        return false;
+     }
+ 
+-    return ctx->pc == fallthroughPc;
++    return callGuestFunction(rdram, ctx, fn, targetPc, fallthroughPc);
+ }
+ 
  void PS2Runtime::SignalException(R5900Context *ctx, PS2Exception exception)
- {
-     if (exception == EXCEPTION_INTEGER_OVERFLOW)
