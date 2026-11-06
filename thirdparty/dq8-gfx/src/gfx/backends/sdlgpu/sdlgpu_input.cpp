@@ -139,6 +139,51 @@ PadConfig PadConfig::defaults() {
     pad(PadInput::RightStickLeft, PadBinding::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1));
     pad(PadInput::RightStickRight, PadBinding::axis(SDL_GAMEPAD_AXIS_RIGHTX, 1));
 
+    // For the keyboard and mouse, what each button does in Rogue Galaxy: the
+    // sword (and talk, look, confirm) on the left click, the guard (R1, held)
+    // on the right, jump (and back) on Space, the gun on Q, the menus on Tab,
+    // the allies' suggestions on 1 and 2 (3 waves one off, or swaps the
+    // leader), the camera's reset on C, the first-person view on V, the
+    // target lock on the arrows and the next target on the wheel.
+    const auto bind = [&](PadInput input, PadBinding first, PadBinding second = {}) {
+        config.keyboard[index(input)] = {first, second};
+    };
+    const auto key = [](SDL_Scancode scancode) { return PadBinding::key(scancode); };
+    bind(PadInput::Up, key(SDL_SCANCODE_UP));
+    bind(PadInput::Down, key(SDL_SCANCODE_DOWN));
+    bind(PadInput::Left, key(SDL_SCANCODE_LEFT), PadBinding::wheel(1));
+    bind(PadInput::Right, key(SDL_SCANCODE_RIGHT), PadBinding::wheel(-1));
+    bind(PadInput::Cross, PadBinding::mouse(SDL_BUTTON_LEFT), key(SDL_SCANCODE_E));
+    bind(PadInput::Circle, key(SDL_SCANCODE_SPACE), key(SDL_SCANCODE_ESCAPE));
+    bind(PadInput::Square, key(SDL_SCANCODE_Q));
+    bind(PadInput::Triangle, key(SDL_SCANCODE_TAB));
+    bind(PadInput::L1, key(SDL_SCANCODE_1));
+    bind(PadInput::R1, PadBinding::mouse(SDL_BUTTON_RIGHT));
+    bind(PadInput::L2, key(SDL_SCANCODE_2));
+    bind(PadInput::R2, key(SDL_SCANCODE_C));
+    bind(PadInput::L3, key(SDL_SCANCODE_3));
+    bind(PadInput::R3, key(SDL_SCANCODE_V));
+    bind(PadInput::Start, key(SDL_SCANCODE_RETURN));
+    bind(PadInput::Select, key(SDL_SCANCODE_M));
+    bind(PadInput::LeftStickUp, key(SDL_SCANCODE_W));
+    bind(PadInput::LeftStickDown, key(SDL_SCANCODE_S));
+    bind(PadInput::LeftStickLeft, key(SDL_SCANCODE_A));
+    bind(PadInput::LeftStickRight, key(SDL_SCANCODE_D));
+    bind(PadInput::RightStickUp, key(SDL_SCANCODE_I));
+    bind(PadInput::RightStickDown, key(SDL_SCANCODE_K));
+    bind(PadInput::RightStickLeft, key(SDL_SCANCODE_J));
+    bind(PadInput::RightStickRight, key(SDL_SCANCODE_L));
+    bind(PadInput::Walk, key(SDL_SCANCODE_LCTRL));
+    return config;
+}
+
+std::array<PadBindingSlots, kPadInputCount> PadConfig::firstKeyboardLayout() {
+    std::array<PadBindingSlots, kPadInputCount> keyboard{};
+    const auto keys = [&](PadInput input, SDL_Scancode first, SDL_Scancode second = SDL_SCANCODE_UNKNOWN) {
+        keyboard[index(input)][0] = PadBinding::key(first);
+        if (second != SDL_SCANCODE_UNKNOWN)
+            keyboard[index(input)][1] = PadBinding::key(second);
+    };
     keys(PadInput::Up, SDL_SCANCODE_UP);
     keys(PadInput::Down, SDL_SCANCODE_DOWN);
     keys(PadInput::Left, SDL_SCANCODE_LEFT);
@@ -163,8 +208,7 @@ PadConfig PadConfig::defaults() {
     keys(PadInput::RightStickDown, SDL_SCANCODE_K);
     keys(PadInput::RightStickLeft, SDL_SCANCODE_J);
     keys(PadInput::RightStickRight, SDL_SCANCODE_L);
-    keys(PadInput::Walk, SDL_SCANCODE_LCTRL);
-    return config;
+    return keyboard;
 }
 
 uint32_t padButtonMask(PadInput input) {

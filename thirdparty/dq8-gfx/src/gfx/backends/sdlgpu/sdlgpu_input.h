@@ -67,7 +67,15 @@ struct PadConfig {
     bool invertCameraX = false;
     bool invertCameraY = false;
 
+    // Which keyboard defaults a settings file was written with: before 2 (no
+    // `layout` in [keyboard]), the emulator-like keys (X, C, Z, V...). A file
+    // whose keys are still all those gets the new ones.
+    static constexpr int kKeyboardLayout = 2;
+    int keyboardLayout = kKeyboardLayout;
+
     static PadConfig defaults();
+    // The keyboard's defaults of layout 1, Walk unbound.
+    static std::array<PadBindingSlots, kPadInputCount> firstKeyboardLayout();
     PadBindingSlots &slots(PadInput input, bool keyboardSlots) {
         return (keyboardSlots ? keyboard : controller)[static_cast<size_t>(input)];
     }

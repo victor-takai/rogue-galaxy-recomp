@@ -59,17 +59,19 @@ PCSX2 and uninstalling, is in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Controls
 
-Keyboard or gamepad (PlayStation layout).
+A gamepad, or the keyboard and mouse: the sword on the left click, the
+guard on the right, jump on Space, the gun on Q, the menus on Tab. All of
+it can be changed in F1 > Settings > Controls.
 
-| Pad | Keyboard |
+| Pad | Keyboard and mouse |
 |---|---|
-| Left stick | W A S D |
-| D-pad | Arrow keys |
-| ✕ / ○ / ▢ / △ | X or Space / C or Esc / Z / V |
-| L1 / R1 / L2 / R2 | Q / E / Left Shift / Right Shift |
-| L3 / R3 | R / F |
-| Start / Select | Enter / Tab |
-| Right stick | I J K L |
+| Left stick | W A S D (hold Left Ctrl to walk) |
+| Right stick | The mouse, or I J K L |
+| D-pad | Arrow keys; the wheel is left and right |
+| ✕ / ○ / ▢ / △ | Left click or E / Space or Esc / Q / Tab |
+| L1 / R1 / L2 / R2 | 1 / Right click / 2 / C |
+| L3 / R3 | 3 / V |
+| Start / Select | Enter / M |
 
 F11 or Alt+Enter toggles fullscreen. F12 takes a screenshot.
 
