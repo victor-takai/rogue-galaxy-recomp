@@ -659,6 +659,35 @@ def merge_layout_sprites(us: list[CfgEntry], pal_lang: list[CfgEntry], pal_en: l
     return out, replaced
 
 
+TITLE_LAYOUT = re.compile(r"title_menu_def2_", re.IGNORECASE)
+TITLE_LEGAL = 30070                               # the legal text under the menu
+TITLE_MENU = (30050, 30020, 30030, 30045, 30040)  # the highlight, NEW GAME, CONTINUE, the extra row, OPTIONS
+TITLE_LIFT = 24
+
+
+def lift_title_menu(entries: list[CfgEntry]) -> tuple[list[CfgEntry], int]:
+    """The title screen's menu 24 higher where the layout has the PAL legal text.
+
+    The PAL legal text is three lines, its picture's top 22 above the US two
+    lines' (its sprite's y below 0), and the PAL title overlay places the menu's
+    widgets 24 higher than the US one, which the US executable keeps: its
+    OPTIONS ran into the text. A widget is drawn at its place plus its
+    sprites', and nothing reads these sprites' y, so the menu's go up here."""
+    groups = layout_groups(entries)
+    legal = next((a for wid, a, _ in groups if wid == TITLE_LEGAL), None)
+    if (legal is None or legal + 1 >= len(entries) or entries[legal + 1].ident != LAYOUT_SPRITE
+            or signed(entries[legal + 1].params[1]) >= 0):
+        return entries, 0
+    moved = 0
+    for wid, a, b in groups:
+        if wid in TITLE_MENU:
+            for e in entries[a + 1:b]:
+                if e.ident == LAYOUT_SPRITE:
+                    e.params[1] = (signed(e.params[1]) - TITLE_LIFT) & 0xFFFFFFFF
+                    moved += 1
+    return entries, moved
+
+
 # ---------------------------------------------------------------- the menus' glyph list
 
 def encode_glyph_list(text: bytes) -> bytes:
@@ -962,6 +991,9 @@ def build_pack(us_pack: bytes, pal_pack: bytes, pal_en_pack: bytes | None, code:
                         layout, texts = merge_layout_text(layout, pal_layout)
                         layout, cells = widen_text_cells(layout, pal_layout)
                         texts += cells
+                        if TITLE_LAYOUT.search(lower):
+                            layout, lifted = lift_title_menu(layout)
+                            groups += 1 if lifted else 0
                         if groups or texts:
                             data = cfg_write(layout)
                             report.sprite_groups += groups
