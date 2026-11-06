@@ -41,19 +41,29 @@ void afterMakePath(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint3
         return;
     }
 
-    // Extract the relative path by skipping the 6-character "cddat:" prefix
-    std::string relativePath(fileDevicePath + 6);
+    std::string rawPath = fileDevicePath + 6;
 
-    // Bail out on any non-ASCII Shift-JIS bytes to prevent std::filesystem crashes
+    // Bail out on any non-ASCII bytes to prevent host filesystem issues
     const bool hasNonAsciiByte = std::any_of(
-        relativePath.begin(),
-        relativePath.end(),
+        rawPath.begin(),
+        rawPath.end(),
         [](unsigned char byte) { return byte > 0x7Fu; });
 
     if (hasNonAsciiByte)
     {
         return;
     }
+
+    // Normalize backslashes to forward slashes first
+    std::replace(rawPath.begin(), rawPath.end(), '\\', '/');
+
+    // Strip leading slash if present
+    if (!rawPath.empty() && rawPath.front() == '/')
+    {
+        rawPath.erase(0, 1);
+    }
+
+    std::string relativePath = "mods/" + rawPath;
 
     // Normalize backslashes to forward slashes for Steam Deck/Linux compatibility
     std::replace(relativePath.begin(), relativePath.end(), '\\', '/');
@@ -65,16 +75,23 @@ void afterMakePath(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint3
     }
 
     // Target the "mods/" folder at the game root
-    std::filesystem::path modFilePath = PS2Runtime::getIoPaths().cdRoot / "mods" / relativePath;
+    std::filesystem::path modFilePath = PS2Runtime::getIoPaths().cdRoot / relativePath;
 
     // Check if the loose file exists on the host OS
-    if (!std::filesystem::is_regular_file(modFilePath))
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(modFilePath, ec) || ec)
     {
         return;
     }
 
-    // The host file exists. Redirect the path to the host filesystem.
+    // Ensure the total new path fits inside the 128-byte guest buffer (including NUL terminator)
+    if (relativePath.length() >= 122)
+    {
+        return;
+    }
+
     std::memcpy(fileDevicePath, kOverridePrefix, 6);
+    std::memcpy(fileDevicePath + 6, relativePath.c_str(), relativePath.length() + 1);
 }
 
 void fileMakeDevicePath(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
