@@ -23,6 +23,7 @@
 #include "dev_tools.h"
 #include "draw_distance.h"
 #include "free_camera.h"
+#include "mouse_camera.h"
 #include "instant_text.h"
 #include "text_language.h"
 #include "voice_language.h"
@@ -77,6 +78,9 @@ std::string env(const char *name, const char *fallback)
 #if defined(RG_HAS_SDLGPU)
 bool g_hasMenu = false;
 dq8::ui::Overlay *g_menu = nullptr;
+// The menu's pause (F2, or with the window's focus lost): the mouse camera
+// lets the mouse go meanwhile.
+std::atomic<bool> g_hostPaused{false};
 PS2Runtime *g_runtime = nullptr;
 
 // The game's speed: the menu's (fast-forward, 0 unpaced) times a quick
@@ -255,6 +259,10 @@ void applyGameOption(const std::string &key, bool on)
         rg::freecamera::setEnabled(on);
     else if (key == "faster_camera")
         rg::cameraview::setFasterTurn(on);
+    else if (key == "mouse_camera")
+        rg::mousecamera::setEnabled(on);
+    else if (key == "mouse_invert_vertical")
+        rg::mousecamera::setInvertVertical(on);
     else if (key == "fast_transporter")
         rg::quickscenes::setFastTransporter(on);
 }
@@ -266,6 +274,8 @@ void applyGameNumber(const std::string &key, int value)
         rg::cameraview::setFieldOfView(value);
     else if (key == "camera_distance")
         rg::cameraview::setDistance(value);
+    else if (key == "mouse_sensitivity")
+        rg::mousecamera::setSensitivity(value);
     else if (key == "draw_distance")
         rg::drawdistance::setPercent(value);
     else if (key == "minimap_size")
@@ -363,6 +373,8 @@ bool pump(void *userData)
     {
         return false;
     }
+    rg::mousecamera::pump(backend->window(),
+                          (g_menu && g_menu->capturesInput()) || g_hostPaused.load(std::memory_order_relaxed));
     updateButtonGlyphs(*backend);
     // The shape the picture takes with Widescreen on, for the game's camera:
     // under Auto the window's.
@@ -568,6 +580,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     // The sound driver runs in step with the audio device, so stopping the
     // device stops the IOP along with the EE's clock.
     host.setPaused = [&runtime](bool paused) {
+        g_hostPaused.store(paused, std::memory_order_relaxed);
         runtime.eeScheduler().setHostPaused(paused);
         ps2_native_iop::setPaused(paused);
     };
@@ -610,6 +623,16 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "The stick turns the camera twice as fast, exploring, in battle and in the first-person view. Otherwise "
          "it turns at the game's speed, at 60 frames a second as at 30.",
          false},
+        {"mouse_camera", "Mouse camera",
+         "The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right "
+         "looks right and up looks up, whatever the game's camera options. Locked on a target in battle it only "
+         "turns, as with the stick. While it is on, the mouse stays in the window with the cursor hidden; F1, the "
+         "pause (F2) or Alt+Tab lets it go.",
+         false},
+        {"mouse_sensitivity", "Mouse sensitivity", "How far the mouse turns the camera, against 1.0x.", false, 25,
+         400, 100, kTimes, 25},
+        {"mouse_invert_vertical", "Invert mouse vertical",
+         "Moving the mouse up tilts the camera the other way.", false},
         {"draw_distance", "Draw distance",
          "How far away the scenery and the objects are still drawn, against the game's (1.0x), the fog thinned "
          "in step. Most of Salgin has no limit to raise; the open areas gain more. From the next map loaded.",

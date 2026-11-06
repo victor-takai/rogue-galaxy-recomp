@@ -87,6 +87,9 @@ Most of these set an option of the F1 menu for one run, without saving it.
 | `RG_FIELD_OF_VIEW=N` | The camera's field of view in the field and in battle, degrees across a 4:3 picture (the menu's "Field of view"; the game's is 52) |
 | `RG_CAMERA_DISTANCE=N` | The camera's distance from the party, percent of the game's (the menu's "Camera distance") |
 | `RG_FASTER_CAMERA=1` | The right stick turns the camera twice as fast (the menu's "Faster camera rotation") |
+| `RG_MOUSE_CAMERA=1` | The mouse turns and tilts the camera (the menu's "Mouse camera", `src/mouse_camera.h`) |
+| `RG_MOUSE_SENSITIVITY=N` | The mouse camera's sensitivity, 25 to 400 percent or 0.25 to 4 (the menu's "Mouse sensitivity") |
+| `RG_MOUSE_INVERT=1` | Moving the mouse up looks down (the menu's "Invert mouse vertical") |
 | `RG_DRAW_DISTANCE=N` | How far the scenery and objects are drawn, percent of the game's (the menu's "Draw distance") |
 | `RG_ENCOUNTER_RATE=N` | Random battles, percent of the game's rate; 0 turns them off (the menu's "Encounter rate") |
 | `RG_BATTLE_EXPERIENCE=N` | A won battle's experience, percent of the game's (the menu's "Experience from battles") |
@@ -120,6 +123,7 @@ the project's fixes off to compare.
 | Variable | Effect |
 |---|---|
 | `RG_UI_SCRIPT=file\|text` | Drive the menu for tests and screenshots: `<guest frame> <command> [args]` entries, `;`-separated (see `thirdparty/dq8-gfx/src/ui/ui_script.cpp`) |
+| `RG_MOUSE_TEST=DX,DY,FROM,TO` | With the mouse camera on, DX and DY counts of mouse motion (right and down) at each camera's take while the game's pad reads are from FROM to TO, for a bench run without a mouse (`src/mouse_camera.h`): compare a frame against the same push of the right stick in `RG_INPUT` (68 counts a frame are a full push exploring, at 1.0x) |
 | `RG_INPUT="30:CROSS:150,..."` | Scripted pad input: seconds, buttons (`+`-joined; `LUP` etc. for the left stick, `RUP` etc. for the right), milliseconds; with `RG_INPUT_CLOCK=pad` both numbers count the game's pad reads, so a script replays alike at any host speed |
 | `RG_MC0_DIR=path` | Memory card folder instead of `disc/mc0` (`mc1` is its sibling). The benchmarks point it at `build/run/mc0-bench`, a copy holding only the save they load, since a second save changes what the scripted load menu picks |
 | `RG_FORCE_ENCOUNTER=1` | A battle at the first steps wherever the field has enemies: the encounter countdown is cut before each tick (`src/debug/encounter.cpp`), and each battle's start is logged with its pad read; the battle bench (`walk.sh BATTLE=1`) sets it |
