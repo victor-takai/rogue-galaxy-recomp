@@ -73,7 +73,7 @@ F1 > Settings > Game, in these sections:
 | Mouse sensitivity | 0.25x to 4.0x; at 1.0x an inch at 1,600 dpi turns about 100 degrees. |
 | Invert mouse vertical | Off by default. Moving the mouse up looks down. |
 | Draw distance | 1.0x to 4.0x the game's, from the next map loaded. |
-| Controller's buttons | The buttons in the game's text follow an Xbox controller: A, B, X, Y, LB, RB, LT and RT, as bound in Controls. On by default. |
+| Controller's buttons | The buttons in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, RB, LT and RT, or on the keyboard and mouse the keys (a letter or digit, TAB, ESC and the like, the space bar) and mouse buttons, as bound in Controls. On by default. |
 | Free camera (F6) | The party stands still and the controller moves the camera. Start or F6 to leave. |
 
 **Convenience**

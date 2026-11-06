@@ -44,6 +44,15 @@ Bitmap plateLetter(Glyph glyph, bool second);
 int plateLetterX(Glyph glyph, bool second);
 constexpr int kPlateLetterY = 5;
 
+// A key's letter or digit (A to Z, 0 to 9, ?): `small` 3x5, else 5x7, one
+// pixel thick (the stamp's edge makes it stand out); null rows for any other
+// character.
+Bitmap keyChar(char c, bool small);
+// A key's picture: in a circle 9x11 (the mouse) or 11x4 (the space bar) or
+// 7x7 (an arrow); on a plate, the mouse 7x10. Null rows for KeyIcon::None.
+Bitmap keyIcon(KeyIcon icon, bool plate);
+constexpr int kKeyGap = 1;
+
 struct Rgb
 {
     int r, g, b;

@@ -33,8 +33,10 @@
   F, the menus on Tab; the table is in the README), mouse buttons and the
   wheel in F1 > Settings > Controls, and Walk (hold), Left Ctrl, since
   keys always push the stick all the way. In the game's menus the right
-  click goes back and the wheel moves up and down. Keys you never changed
-  move to the new ones; keys you changed stay.
+  click goes back and the wheel moves up and down. The game's text shows
+  the keys and mouse buttons instead of the PlayStation's while you play
+  with them. Keys you never changed move to the new ones; keys you changed
+  stay.
 
 ### Changed
 
