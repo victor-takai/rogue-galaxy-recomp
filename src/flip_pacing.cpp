@@ -169,28 +169,33 @@ std::atomic<uint64_t> g_flips{0u};
 // a Present of the scene target at each flip. The target itself is the
 // game's frame, declared where the game names it (native_producer.h); the
 // renderer takes 640x448 until then.
-void presentNative(uint64_t frame)
+bool presentNative(uint64_t frame)
 {
 #if defined(RG_HAS_SDLGPU)
     namespace native = dq8::gfx::native;
     if (!native::enabled())
-        return;
+        return false;
     native::Present present;
     present.target = rg::nativeproducer::kSceneTarget;
     present.rect = {0, 0, 640u, 448u};
     present.frame = frame;
     native::push(std::move(present));
+    return true;
 #else
     (void)frame;
+    return false;
 #endif
 }
 
 void afterFlip(uint8_t *, R5900Context *, PS2Runtime *, uint32_t)
 {
     rg::nativefx::endFlip();
-    presentNative(g_flips.load(std::memory_order_relaxed) + 1u);
-    g_flips.fetch_add(1u, std::memory_order_relaxed);
-    if (g_paced)
+    // Under the pipeline the presenting thread shows the frame the Present
+    // record closed (graphics.cpp's presentNative, step 7d), not the GS's
+    // display: nothing is prepared on the GS queue to pace.
+    const bool native = presentNative(g_flips.load(std::memory_order_relaxed) + 1u);
+    g_flips.fetch_add(1u, std::memory_order_release);
+    if (g_paced && !native)
     {
         g_paced->onGuestFlip();
     }

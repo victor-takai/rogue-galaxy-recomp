@@ -78,6 +78,7 @@ add_executable(roguegalaxy
     draw_distance.cpp
     ee_fpu.cpp
     flip_pacing.cpp
+    gs_tripwire.cpp
     free_camera.cpp
     mouse_camera.cpp
     movie_audio.cpp

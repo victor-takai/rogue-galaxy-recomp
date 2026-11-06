@@ -50,6 +50,11 @@ struct Carried
 thread_local Carried t_carried;
 } // namespace
 
+std::vector<uint8_t> registerPacket(const std::vector<std::pair<uint8_t, uint64_t>> &writes)
+{
+    return adPacket(writes);
+}
+
 bool enabled()
 {
     static const bool on = [] {
