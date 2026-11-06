@@ -76,7 +76,10 @@ if [ -z "$NAME" ]; then echo "usage: walk.sh NAME [SCALE] [FPS]"; exit 2; fi
 # other game running, a measurement would share the machine with it.
 GAME=${EXE:-build/game/src/roguegalaxy.exe}
 GAME_NAME=$(basename "$GAME")
-if tasklist | grep -qi -e "roguegalaxy.exe" -e "^${GAME_NAME:0:25}"; then echo "a game is running; not starting"; exit 2; fi
+# tasklist cuts names at 25 characters. The name is matched as it is, in
+# lower case, by bash (Git Bash's grep 3.0 aborts on -iF with a bracket).
+RUNNING=$(tasklist); RUNNING=${RUNNING,,}; SHORT=${GAME_NAME:0:25}; SHORT=${SHORT,,}
+if [[ $RUNNING == *roguegalaxy.exe* || $RUNNING == *"$SHORT"* ]]; then echo "a game is running; not starting"; exit 2; fi
 mkdir -p build/run
 INPUT=${INPUT:-build/run/input_pad3.txt}
 if [ "$BATTLE" = "1" ]; then
@@ -195,13 +198,12 @@ cat disc/*.DAT disc/*.HD6 > /dev/null 2>&1
 start=$(date +%s)
 # This instance, the one stopped below: its own executable, by its full
 # path, started with a forward-slash disc path (the launchers pass a
-# backslash one). The user's game, or another folder's, is never it. An
-# apostrophe in the path (a folder named after the Director's Cut) is
-# doubled for PowerShell, and escaped in the name for its WMI filter.
+# backslash one). The user's game, or another folder's, is never it. The
+# path goes in PowerShell's single quotes, where only an apostrophe (a
+# folder named after the Director's Cut) needs doubling.
 GAME_WIN=$(cygpath -w "$(realpath "$GAME")")
 GAME_WIN_PS=${GAME_WIN//\'/\'\'}
-GAME_NAME_WQL=${GAME_NAME//\'/\\\'}
-THIS_GAME="Get-CimInstance Win32_Process -Filter \"Name='$GAME_NAME_WQL'\" | Where-Object { \$_.ExecutablePath -eq '$GAME_WIN_PS' -and \$_.CommandLine -like '*disc/SCUS*' }"
+THIS_GAME="Get-CimInstance Win32_Process | Where-Object { \$_.ExecutablePath -eq '$GAME_WIN_PS' -and \$_.CommandLine -like '*disc/SCUS*' }"
 "$GAME" disc/SCUS_974.90 > "build/run/$NAME.log" 2>&1 &
 # AFFINITY=HEX: the instance's processor mask (5555: one logical processor
 # per core of an 8-core SMT machine), to see whether two busy threads
