@@ -513,8 +513,9 @@ bool pump(void *userData)
         {
         }
     }
-    // In the game's menus the right click goes back and the wheel moves up
-    // and down, before the events are read.
+    // In the game's menus the right click and Esc (on Triangle) go back and
+    // the wheel moves up and down; in play Esc opens the menu. Before the
+    // events are read.
     backend->padInput().setInMenus(g_runtime != nullptr &&
                                      rg::mousecamera::inGameMenu(g_runtime->memory().getRDRAM()));
     if (!backend->pumpEvents())

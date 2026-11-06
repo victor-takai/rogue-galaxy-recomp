@@ -393,9 +393,11 @@ std::vector<ControllerInfo> SdlPadInput::controllers() const {
 
 void SdlPadInput::handleEvent(const SDL_Event &event) {
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && m_config.keyboardEnabled) {
-        // In the game's menus Esc goes back, whatever it is bound to.
-        if (m_inMenus && event.key.scancode == SDL_SCANCODE_ESCAPE) {
-            m_escSuppressed = false;
+        const bool escape = event.key.scancode == SDL_SCANCODE_ESCAPE;
+        if (escape)
+            m_escSuppressed = false; // a fresh press
+        // In the game's menus Esc goes back, while it is the menu's key.
+        if (m_inMenus && escape && escOpensMenu()) {
             m_pressed |= Circle;
             m_keyboardMouseAt = SDL_GetTicks();
             return;
@@ -518,7 +520,16 @@ void SdlPadInput::handleEvent(const SDL_Event &event) {
 }
 
 PadSnapshot SdlPadInput::preview() const {
-    return sample(SDL_GetKeyboardState(nullptr), m_mouseButtons & SDL_GetMouseState(nullptr, nullptr));
+    // The bindings as Controls lists them, without the menus' own meanings.
+    return sample(SDL_GetKeyboardState(nullptr), m_mouseButtons & SDL_GetMouseState(nullptr, nullptr), false);
+}
+
+bool SdlPadInput::escOpensMenu() const {
+    const PadBinding escape = PadBinding::key(SDL_SCANCODE_ESCAPE);
+    for (const PadBinding &binding : m_config.keyboard[index(PadInput::Triangle)])
+        if (binding == escape)
+            return true;
+    return false;
 }
 
 void SdlPadInput::setInMenus(bool on) {
@@ -529,22 +540,26 @@ void SdlPadInput::setInMenus(bool on) {
     m_inMenus = on;
 }
 
-PadSnapshot SdlPadInput::sample(const bool *keys, SDL_MouseButtonFlags mouse) const {
+PadSnapshot SdlPadInput::sample(const bool *keys, SDL_MouseButtonFlags mouse, bool overrides) const {
     if (!m_config.keyboardEnabled)
         keys = nullptr;
     if (!keys)
         mouse = 0u;
+    const bool menus = overrides && m_inMenus;
+    const bool escHeldOver = overrides && m_escSuppressed;
     const int threshold = static_cast<int>(m_config.triggerThreshold * kAxisFull);
     uint32_t held = 0u;
-    // In the game's menus the right click and Esc are Circle, whatever they
-    // are bound to; Esc held since the menus came or went is neither.
-    if (m_inMenus && (mouse & SDL_BUTTON_RMASK) != 0u) {
+    // In the game's menus the right click is Circle, whatever it is bound
+    // to, and so is Esc while it is the menu's key (on Triangle; a player's
+    // other use of it stays). Esc held since the menus came or went is
+    // neither, until it is let go.
+    if (menus && (mouse & SDL_BUTTON_RMASK) != 0u) {
         held |= Circle;
         mouse &= ~SDL_BUTTON_RMASK;
     }
-    std::array<bool, SDL_SCANCODE_COUNT> keyCopy{};
-    if (keys && keys[SDL_SCANCODE_ESCAPE] && (m_inMenus || m_escSuppressed)) {
-        if (m_inMenus && !m_escSuppressed)
+    std::array<bool, SDL_SCANCODE_COUNT> keyCopy; // filled whole before use
+    if (keys && keys[SDL_SCANCODE_ESCAPE] && escOpensMenu() && (menus || escHeldOver)) {
+        if (menus && !escHeldOver)
             held |= Circle;
         std::copy(keys, keys + SDL_SCANCODE_COUNT, keyCopy.begin());
         keyCopy[SDL_SCANCODE_ESCAPE] = false;

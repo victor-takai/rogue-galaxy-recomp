@@ -422,8 +422,10 @@ void drawMouse(uint8_t (&at)[Height][Width], int x0, int y0, int width, int heig
 {
     const int cx = x0 + width / 2 - 1;
     const double cy = y0 + (height - 1) / 2.0;
+    // A pixel in from the box's top and bottom, its ends three pixels wide
+    // (no one-pixel nub), as the keycaps keep a pixel's margin.
     const double a = (height >= 22 ? 6.0 : 5.0) + 0.5;
-    const double b = (height - 2) / 2.0 + 0.5;
+    const double b = (height - 3) / 2.0 + 0.35;
     const auto inside = [&](int x, int y) {
         const double dx = (x - cx) / a, dy = (y - cy) / b;
         return dx * dx + dy * dy <= 1.0;
@@ -437,7 +439,16 @@ void drawMouse(uint8_t (&at)[Height][Width], int x0, int y0, int width, int heig
             {
                 continue;
             }
-            const bool edge = !inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y - 1) || !inside(x, y + 1);
+            // Outline where any of the eight around is out: closed at the
+            // ends, where four would leave a gap.
+            bool edge = false;
+            for (int dy = -1; dy <= 1 && !edge; ++dy)
+            {
+                for (int dx = -1; dx <= 1 && !edge; ++dx)
+                {
+                    edge = !inside(x + dx, y + dy);
+                }
+            }
             uint8_t colour = colours.body;
             if (edge || y == split || (y < split && x == cx))
             {
@@ -763,13 +774,11 @@ void drawLoadingCross(uint8_t *rdram, uint32_t archive)
     // Its 256 colours are all in use, the cross's blues by the cross alone:
     // emptied, one of them takes the letter's colour.
     put();
-    const bool key = glyph == Glyph::Key;
-    const uint8_t colour =
-        exact(pic, kLoadingWidth * kLoadingHeight, key ? art::kMousePressed : art::faceColour(glyph), fill);
-    if (key)
+    if (glyph == Glyph::Key)
     {
-        // The key on the screen's own background (its corners), the circle
-        // gone; the mouse's pressed button in the colour made free.
+        // The key on the screen's own background (the cell's corners) where
+        // the whole circle was, the screen's pixels around it kept; a mouse's
+        // pressed button in the colour the cross's blues leave free.
         KeyLabel label;
         {
             std::lock_guard lock(g_labelsMutex);
@@ -786,14 +795,21 @@ void drawLoadingCross(uint8_t *rdram, uint32_t archive)
                 background = candidate;
             }
         }
-        for (auto &row : cell)
+        for (int y = 0; y < kLoadingCross; ++y)
         {
-            std::fill(std::begin(row), std::end(row), background);
+            for (int x = 0; x < kLoadingCross; ++x)
+            {
+                if (distance(x, y) <= kLoadingCross / 2.0)
+                {
+                    cell[y][x] = background;
+                }
+            }
         }
         KeyColours colours = keyColours(pic, background);
-        colours.pressed = colour;
         if (mouseIcon(label.icon))
         {
+            put();
+            colours.pressed = exact(pic, kLoadingWidth * kLoadingHeight, art::kMousePressed, background);
             drawMouse(cell, 0, 0, kLoadingCross, kLoadingCross, label.icon, colours);
         }
         else
@@ -803,6 +819,7 @@ void drawLoadingCross(uint8_t *rdram, uint32_t archive)
     }
     else
     {
+        const uint8_t colour = exact(pic, kLoadingWidth * kLoadingHeight, art::faceColour(glyph), fill);
         const Bitmap letter = art::faceLetter(glyph);
         stamp(cell, letter, art::faceLetterX(letter) - 1, art::kFaceLetterY - 1, colour,
               nearest(pic, art::kLetterEdge));

@@ -138,10 +138,11 @@ public:
     uint64_t mouseMotionAt() const { return m_mouseMotionAt; }
     uint64_t controllerAt() const { return m_controllerAt; }
     // In the game's own menus (the host says when, before the events): the
-    // right click and Esc are Circle, back, and the wheel D-pad up and down,
-    // whatever they are bound to. Mouse buttons and Esc held when this
-    // changes count as released until they are let go, so a guard held, or
-    // the Esc that opened a menu, does not close it.
+    // right click is Circle, back, and the wheel D-pad up and down, whatever
+    // they are bound to; so is Esc while it is on Triangle (the menu's key).
+    // Mouse buttons and Esc held when this changes count as released until
+    // they are let go, so a guard held, or the Esc that opened a menu, does
+    // not close it.
     void setInMenus(bool on);
     // The pad as the bindings read the devices now, even while the menu
     // keeps it from the game; for a live preview of the bindings.
@@ -157,7 +158,12 @@ private:
         std::string serial;
         std::array<bool, SDL_GAMEPAD_AXIS_COUNT * 2> axisPressed{};
     };
-    PadSnapshot sample(const bool *keys, SDL_MouseButtonFlags mouse) const;
+    // `overrides`: with the game's menus' own meanings of the right click,
+    // the wheel and Esc (the live game), or as Controls lists the bindings.
+    PadSnapshot sample(const bool *keys, SDL_MouseButtonFlags mouse, bool overrides = true) const;
+    // Whether Esc is on Triangle (the menu's key), the only use of it that
+    // goes back in the game's menus.
+    bool escOpensMenu() const;
     void openGamepad(SDL_JoystickID id);
     void openAll();
     void clearState();

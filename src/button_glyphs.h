@@ -20,7 +20,8 @@ class PS2Runtime;
 // 8-bit indexed, stored as the GS keeps it, so the new pixels take the
 // nearest of its 256 colours. The loading screen's "Press X" is a picture
 // of its own, its cross redrawn the same way as it is registered (its
-// letter's colour in one of the cross's blues, which nothing else uses).
+// letter's colour, or a mouse's pressed button, in one of the cross's blues,
+// which nothing else uses; a keycap on the screen's own background).
 //
 // RG_GAIJI_DUMP=FILE writes the picture as loaded, and FILE.applied as drawn.
 namespace rg::buttons
@@ -37,8 +38,9 @@ enum class Glyph : uint8_t
     RB,
     LT,
     RT,
-    // A key or mouse button, as its KeyLabel says, white in the button's
-    // own circle or plate.
+    // A key or mouse button, as its KeyLabel says: a keycap with the key's
+    // name, or a mouse with its button pressed, on the picture's clear
+    // background in place of the button's circle or plate.
     Key,
 };
 

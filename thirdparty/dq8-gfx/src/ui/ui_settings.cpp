@@ -244,10 +244,10 @@ void parseSettings(const std::string &text, Settings &settings) {
             triangle = {tab, escape};
             std::fprintf(stderr, "[ui] keyboard: Esc moves from Circle to Triangle\n");
         }
-        settings.pad.keyboardLayout = gfx::PadConfig::kKeyboardLayout;
+        settings.pad.keyboardLayout = 3; // a later layout's step from 3 follows
     }
-    if (settings.pad.keyboardLayout < gfx::PadConfig::kKeyboardLayout) {
-        // Keys still all as the first defaults had them take the new ones;
+    if (settings.pad.keyboardLayout < 2) {
+        // Keys still all as the first defaults had them take today's;
         // anyone's own keys stay (Walk, which that layout lacked, keeps its
         // default either way).
         const auto first = gfx::PadConfig::firstKeyboardLayout();

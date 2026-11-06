@@ -153,7 +153,7 @@ char faceChar(Glyph glyph)
 
 int Bitmap::width() const
 {
-    return rows ? static_cast<int>(std::strlen(rows[0])) : 0;
+    return rows && count > 0 ? static_cast<int>(std::strlen(rows[0])) : 0;
 }
 
 Bitmap faceLetter(Glyph glyph)
