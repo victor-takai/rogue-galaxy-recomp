@@ -66,6 +66,11 @@ struct Target
     PixelFormat format = PixelFormat::Rgba8;
 };
 
+// Camera ids count up, and a producer keeps at most this many of the newest
+// in use (it forgets them all at that size and sends again): the renderer
+// may drop one older than twice that behind the newest it was sent.
+constexpr uint32_t kCameraWindow = 4096u;
+
 // Row vectors, as the game's VU1 data memory holds them.
 struct Camera
 {

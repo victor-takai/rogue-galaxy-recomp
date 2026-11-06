@@ -263,7 +263,14 @@ void Renderer::apply(SDL_GPUDevice *device, Record &record, std::string &error)
                     m_sceneTarget = r.id;
             }
             else if constexpr (std::is_same_v<T, Camera>)
+            {
                 m_cameras[r.id] = r;
+                // A moving camera is a new one every frame: keep the window
+                // the producer can still name, not the whole session.
+                m_newestCamera = std::max(m_newestCamera, r.id);
+                if (m_cameras.size() > 4u * kCameraWindow && m_newestCamera > 2u * kCameraWindow)
+                    std::erase_if(m_cameras, [&](const auto &c) { return c.first < m_newestCamera - 2u * kCameraWindow; });
+            }
             else if constexpr (std::is_same_v<T, MeshDraw>)
             {
                 count(r);

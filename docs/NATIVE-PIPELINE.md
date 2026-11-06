@@ -72,11 +72,26 @@ game built them. Every reference is an id (`native_records.h`):
   writes them, patch 0031). A mesh made a draw no longer goes to the GS.
 - **Present**: the flip pushes a `Present` of the scene target.
 
-Under the pipeline the screen shows the 3D meshes only. 2D (the HUD, the
-menus, text), the effects (glare, bloom, shadows, depth of field, CBlur,
-object layers), local copies and the game's colour and depth reads still go
-to the GS, which keeps running unseen. Those, the pipeline's own present,
-and a check that nothing reaches the GS any more, come next.
+Under the pipeline the screen shows the 3D meshes only, and untextured:
+the textures and palettes are made and uploaded, but nothing yet hands
+them to the meshes (`takeProduced`, `replaceUpload`, `hostUpload` and
+`noteLocalCopy` have their callers in the next step), so every textured
+mesh counts as a texture miss and draws white. A mesh whose material is
+not modelled is drawn as near as the renderer can (counted); one into a
+buffer the game never named has no target and stays on the GS. 2D (the
+HUD, the menus, text), the effects (glare, bloom, shadows, depth of
+field, CBlur, the per-object composites: the party in the field), local
+copies and the game's colour and depth reads still go to the GS, which
+keeps running unseen, so they are missing from the screen. Those, the
+pipeline's own present, and a check that nothing reaches the GS any more,
+come next.
+
+Memory: the renderer keeps the cameras the producer can still name (the
+newest `2 * kCameraWindow`); textures are evicted over a byte budget and
+sent again. Palettes are kept for the session: they are few and small
+(one per distinct palette seen, 1 KiB at most), and the producer cannot
+send one again once the game's copy is gone, so freeing them needs the
+producer to keep its colours first.
 
 ## Running it
 

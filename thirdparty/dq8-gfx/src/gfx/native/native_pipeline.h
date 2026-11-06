@@ -185,7 +185,8 @@ private:
 
     std::vector<Record> m_drained;
     std::unordered_map<Id, Target> m_targets;
-    std::unordered_map<Id, Camera> m_cameras;
+    std::unordered_map<Id, Camera> m_cameras; // the newest 2 * kCameraWindow ids at most
+    Id m_newestCamera = 0;
     std::unordered_map<Id, Image> m_images;   // textures
     std::unordered_map<Id, Image> m_palettes; // as 16x1 or 256x1 RGBA
     std::deque<Id> m_imageOrder;              // oldest first, for the budget

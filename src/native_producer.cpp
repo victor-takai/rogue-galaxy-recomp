@@ -1204,7 +1204,7 @@ native::Id cameraOf(State &s, const float view[16], const float projection[16], 
     const auto at = s.cameraIds.find(hash);
     if (at != s.cameraIds.end())
         return at->second;
-    if (s.cameraIds.size() >= 4096u)
+    if (s.cameraIds.size() >= native::kCameraWindow) // the renderer keeps no more (native_records.h)
         s.cameraIds.clear();
     native::Camera record;
     record.id = s.nextCamera++;
@@ -1387,8 +1387,10 @@ bool mesh(const GSNativeMesh &mesh, const GSDrawState *drawState, const uint8_t 
                           : 0u;
     if (draw.target == 0u)
     {
+        // A buffer the game never named: the renderer has nowhere to draw
+        // it, so the GS keeps it (review of #41).
         ++s.counts.targetMiss;
-        known = false;
+        return false;
     }
     if (draw.material.depthTest != native::Compare::Always || draw.material.depthWrite)
         draw.depthTarget = depthTarget(s, c.zbuf.zbp * 32u, frameBase, draw.target);
