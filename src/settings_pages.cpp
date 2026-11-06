@@ -163,7 +163,7 @@ constexpr Local kLocal[] = {
     {"field_of_view", {"Champ de vision", "Sichtfeld", "Campo de visi<'o>n", "Campo visivo"}},
     {"camera_distance", {"Distance cam<'e>ra", "Kameradistanz", "Distancia c<'a>mara", "Distanza visuale"}},
     {"draw_distance", {"Distance de vue", "Sichtweite", "Distancia visual", "Raggio visivo"}},
-    {"encounter_rate", {"Rencontres", "Begegnungen", "Encuentros", "Scontri casuali"}},
+    {"encounter_rate", {"Fr<'e>q. des combats", "Kampfh<:a>ufigkeit", "Frec. de combates", "Frequenza scontri"}},
     {"battle_experience", {"Exp<'e>rience", "Erfahrung", "Experiencia", "Esperienza"}},
     {"battle_money", {"Argent", "Geld", "Dinero", "Denaro"}},
     {"item_drops", {"Butin", "Beute", "Bot<'i>n", "Bottino"}},
