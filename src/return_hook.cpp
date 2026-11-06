@@ -154,6 +154,41 @@ void callThen(PS2Runtime::RecompiledFunction original, uint8_t *rdram, R5900Cont
     }
 }
 
+bool runToEnd(PS2Runtime::RecompiledFunction function, uint32_t entry, uint8_t *rdram, R5900Context &local,
+              PS2Runtime *runtime)
+{
+    // No code is there: where the function's return lands.
+    constexpr uint32_t kDone = 0x7FFFFFF0u;
+    const EeScheduler &scheduler = runtime->eeScheduler();
+    local.r[31] = _mm_set_epi64x(0, static_cast<int64_t>(kDone));
+    local.pc = entry;
+    PS2Runtime::RecompiledFunction next = function;
+    // Each pass gets past at least one safe point, so this ends; the bound
+    // only guards against a function that never returns.
+    for (int pass = 0; pass < 1000000; ++pass)
+    {
+        const uint32_t at = local.pc;
+        const uint32_t sp = getRegU32(&local, 29);
+        const uint32_t ra = getRegU32(&local, 31);
+        const uint64_t serial = scheduler.guestUnwindSerial();
+        next(rdram, &local, runtime);
+        if (local.pc == at && getRegU32(&local, 29) == sp && !scheduler.guestUnwoundSince(serial))
+        {
+            local.pc = ra;
+        }
+        if (local.pc == kDone)
+        {
+            return true;
+        }
+        if (local.pc == 0u || runtime->isStopRequested() || !runtime->hasFunction(local.pc))
+        {
+            return false;
+        }
+        next = runtime->lookupFunction(local.pc);
+    }
+    return false;
+}
+
 void describePending(std::FILE *out)
 {
     const size_t count = g_pending.size();

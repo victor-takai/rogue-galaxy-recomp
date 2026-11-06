@@ -779,9 +779,15 @@ void afterSubLayout(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t list)
 
 // These fix-ups run once the hooked original has returned to its caller
 // (rg::hooks::callThen): a scheduler checkpoint may stop it at any of its
-// calls, and the run loop then finishes it past the hook.
+// calls, and the run loop then finishes it past the hook. In English the
+// hooks only call the original.
 void mainSubSelectLayout(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
+    if (europeanColumn() < 0)
+    {
+        g_originalSubLayout(rdram, ctx, runtime);
+        return;
+    }
     rg::hooks::callThen(g_originalSubLayout, rdram, ctx, runtime, &afterSubLayout, getRegU32(ctx, 4));
 }
 
@@ -803,7 +809,7 @@ void writeHalf(uint8_t *rdram, uint32_t address, int16_t value)
 }
 
 // French 0 to Italian 3, or -1 in English (and while the language's files
-// are not known usable: without them the text stays English).
+// are not known usable, when the game reads the English ones).
 int europeanColumn()
 {
     const int language = g_language.load(std::memory_order_relaxed);
@@ -854,12 +860,13 @@ void patchItemCommands(uint8_t *rdram)
 // of others), the right edge's x W+17) and centres the
 // labels at W/2+11 (its UiLayoutStringGlyphs calls); MenuPartyCmdListHighlight
 // (0x29C440) sets the unselected rows and the highlight (widget 0x118's first
-// sprite) W+14 wide. The menus' UI is the one at 0x482360 (the highlight's
-// menu keeps a copy at +0x4C4). After each, the language's W where the US
-// one is.
+// sprite) W+14 wide. The open state's UI is the one at 0x482360, the
+// highlight's its menu's (a0) at +0x4C4, as each reads it. After each, the
+// language's W where the US one is.
 constexpr uint32_t kMenuUi = 0x00482360u;
 constexpr uint32_t kPartyCmdOpen = 0x002B99F0u;
 constexpr uint32_t kPartyCmdHighlight = 0x0029C440u;
+constexpr uint32_t kPartyCmdMenuUi = 0x4C4u;
 constexpr uint16_t kPartyCmdHighlightWidget = 0x118u;
 struct PartyList
 {
@@ -929,20 +936,26 @@ void afterPartyOpen(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t)
 
 void partyCmdOpen(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
+    if (europeanColumn() < 0)
+    {
+        g_originalPartyOpen(rdram, ctx, runtime);
+        return;
+    }
     rg::hooks::callThen(g_originalPartyOpen, rdram, ctx, runtime, &afterPartyOpen, 0u);
 }
 
-void afterPartyHighlight(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t widgetId)
+// `data`: the highlight's menu, with its low bit set for the four-row list
+// (the game's ids are 0x11A and 0x119, from its table at 0x4614C0).
+void afterPartyHighlight(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t data)
 {
     const int column = europeanColumn();
     if (column < 0)
     {
         return;
     }
-    // As the game picks: the four-row list by its id, the three-row one else.
-    const uint16_t id = static_cast<uint16_t>(widgetId);
-    const PartyList &list = id == kPartyLists[0].id ? kPartyLists[0] : kPartyLists[1];
-    const uint32_t ui = readWord(rdram, kMenuUi);
+    const PartyList &list = (data & 1u) ? kPartyLists[0] : kPartyLists[1];
+    const uint16_t id = list.id;
+    const uint32_t ui = readWord(rdram, (data & ~1u) + kPartyCmdMenuUi);
     const int16_t width = static_cast<int16_t>(list.widths[column] + 14);
     if (const uint32_t sprites = widgetSprites(rdram, ui, id))
     {
@@ -964,8 +977,16 @@ void afterPartyHighlight(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t 
 
 void partyCmdHighlight(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
+    const uint32_t menu = getRegU32(ctx, 4);
+    const uint16_t id = static_cast<uint16_t>(getRegU32(ctx, 5));
+    if (europeanColumn() < 0 || menu == 0u || (menu & 1u) != 0u ||
+        (id != kPartyLists[0].id && id != kPartyLists[1].id))
+    {
+        g_originalPartyHighlight(rdram, ctx, runtime);
+        return;
+    }
     rg::hooks::callThen(g_originalPartyHighlight, rdram, ctx, runtime, &afterPartyHighlight,
-                        getRegU32(ctx, 5) & 0xFFFFu);
+                        menu | (id == kPartyLists[0].id ? 1u : 0u));
 }
 
 // The save screens' Yes/No box (SaveMsgBoxShow, 0x376BF0, a1 the UI): the US
@@ -985,29 +1006,8 @@ constexpr int16_t kButtonMiddle = 0x1A;
 PS2Runtime::RecompiledFunction g_originalSaveMsgBox = nullptr;
 PS2Runtime::RecompiledFunction g_originalCentredX = nullptr;
 
-// Runs a guest function from host code to its end, on a copy of the
-// context. A scheduler checkpoint due inside it unwinds it as it does any
-// guest code, here into this loop instead of the run loop: it goes on at
-// the address it stopped at, through the table, until it returns (the
-// checkpoint stays pending for the game's own code). False if it could not.
-bool runToEnd(PS2Runtime::RecompiledFunction function, uint8_t *rdram, R5900Context &local, PS2Runtime *runtime)
-{
-    // No code is there: where the function's return lands.
-    constexpr uint32_t kDone = 0x7FFFFFF0u;
-    local.r[31] = _mm_set_epi64x(0, static_cast<int64_t>(kDone));
-    function(rdram, &local, runtime);
-    for (int guard = 0; local.pc != kDone; ++guard)
-    {
-        if (guard >= 100000 || local.pc == 0u || runtime->isStopRequested() || !runtime->hasFunction(local.pc))
-        {
-            return false;
-        }
-        runtime->lookupFunction(local.pc)(rdram, &local, runtime);
-    }
-    return true;
-}
-
-// UiSetTextCenteredX(ui, id, x, text), the game's own (past the hook).
+// UiSetTextCenteredX(ui, id, x, text), the game's own (past the hook), to
+// its end.
 void centreText(uint8_t *rdram, const R5900Context *ctx, PS2Runtime *runtime, uint32_t ui, uint32_t id, int32_t x,
                 uint32_t text)
 {
@@ -1020,9 +1020,9 @@ void centreText(uint8_t *rdram, const R5900Context *ctx, PS2Runtime *runtime, ui
     local.r[5] = _mm_set_epi64x(0, static_cast<int64_t>(id));
     local.r[6] = _mm_set_epi64x(0, static_cast<int64_t>(x));
     local.r[7] = _mm_set_epi64x(0, static_cast<int64_t>(text));
-    if (!runToEnd(g_originalCentredX, rdram, local, runtime))
+    if (!rg::hooks::runToEnd(g_originalCentredX, kUiSetTextCenteredX, rdram, local, runtime))
     {
-        std::fprintf(stderr, "[rg] a centred label stopped at 0x%08X; it keeps the US place\n", local.pc);
+        std::fprintf(stderr, "[rg] centring a label stopped at 0x%08X\n", local.pc);
     }
 }
 
@@ -1052,6 +1052,11 @@ void afterSaveMsgBox(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uin
 
 void saveMsgBoxShow(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
+    if (europeanColumn() < 0)
+    {
+        g_originalSaveMsgBox(rdram, ctx, runtime);
+        return;
+    }
     rg::hooks::callThen(g_originalSaveMsgBox, rdram, ctx, runtime, &afterSaveMsgBox, getRegU32(ctx, 5));
 }
 
@@ -1078,8 +1083,9 @@ void afterWarningCentre(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, 
 
 void uiSetTextCenteredX(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
-    if (getRegU32(ctx, 31) == kWarningCentreReturn && (getRegU32(ctx, 5) & 0xFFFFu) == kWarningWidget &&
-        getRegU32(ctx, 6) == kWarningMiddle && getRegU32(ctx, 7) == 1u)
+    if (europeanColumn() >= 0 && getRegU32(ctx, 31) == kWarningCentreReturn &&
+        (getRegU32(ctx, 5) & 0xFFFFu) == kWarningWidget && getRegU32(ctx, 6) == kWarningMiddle &&
+        getRegU32(ctx, 7) == 1u)
     {
         rg::hooks::callThen(g_originalCentredX, rdram, ctx, runtime, &afterWarningCentre, getRegU32(ctx, 4));
         return;
@@ -1288,6 +1294,11 @@ void install(PS2Runtime &runtime)
     if (!rg::timing::hookFunction(runtime, kUiSetTextCenteredX, &uiSetTextCenteredX, g_originalCentredX))
     {
         std::fprintf(stderr, "[rg] the battle's empty-gauge warning keeps its first line where English has it\n");
+        // The save screens' Yes/No centre with the game's own all the same.
+        if (runtime.hasFunction(kUiSetTextCenteredX))
+        {
+            g_originalCentredX = runtime.lookupFunction(kUiSetTextCenteredX);
+        }
     }
 }
 

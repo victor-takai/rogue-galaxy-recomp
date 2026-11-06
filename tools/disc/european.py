@@ -843,15 +843,16 @@ def wrap_text_file(data: bytes, limit: int, widths: dict[int, int]) -> tuple[byt
             # not stand alone on a line ("(para" / "PlayStation®2)" / "de la
             # ranura...").
             end = k + 1
-            while end < len(lines) and continues(lines[end].rstrip(b"\r\n")):
+            while body and end < len(lines) and continues(lines[end - 1].rstrip(b"\r\n"),
+                                                          lines[end].rstrip(b"\r\n")):
                 end += 1
             bodies = [x.rstrip(b"\r\n") for x in lines[k:end]]
             if (end - k > 1 and any(line_width(b, widths) > limit for b in bodies)
                     and not any(BREAK.search(b) for b in bodies)):
-                words = b" ".join(bodies).split(b" ")
-                laid = balanced_lines(words, limit, widths)
+                each = [[w for w in b.split(b" ") if w] for b in bodies]
+                laid = balanced_lines([w for line_words in each for w in line_words], limit, widths)
                 out += b"\n".join(laid) + lines[end - 1][len(bodies[-1]):]
-                breaks += len(laid) - (end - k)
+                breaks += len(line_ends([len(x.split(b" ")) for x in laid]) - line_ends([len(x) for x in each]))
                 k = end
                 continue
             wrapped, n = wrap_text(body, limit, b"\n", widths)
@@ -861,10 +862,32 @@ def wrap_text_file(data: bytes, limit: int, widths: dict[int, int]) -> tuple[byt
     return bytes(out), breaks
 
 
-def continues(line: bytes) -> bool:
-    """A message's line that goes on with the sentence before it: it starts with a
-    lower-case letter."""
-    return bool(line) and not line.startswith((b"//", b"@")) and 0x61 <= line[0] <= 0x7A
+# The accent tags of lower-case letters (<`a>, <'e>, <:u>, <~n>, <oe>, <ss>...) and of
+# capitals (<`A>, <,C>, <~N>, <OE>...).
+LOWER_ACCENTS = tuple(t.encode("latin-1") for t in ACCENT_TAGS if len(t) == 4 and t[2].islower())
+UPPER_ACCENTS = tuple(t.encode("latin-1") for t in ACCENT_TAGS if len(t) == 4 and t[2].isupper())
+# A line that ends a sentence: a stop, maybe in quotes or brackets.
+SENTENCE_END = re.compile(rb"[.!?:][\x22'\xbb)\]]*\s*$")
+
+
+def continues(previous: bytes, line: bytes) -> bool:
+    """A message's line that goes on with the sentence of the line before it: it starts
+    with a lower-case letter, accented ones included, or with a capital (a name, a
+    German noun) after a line that ends no sentence."""
+    if not line:
+        return False
+    if 0x61 <= line[0] <= 0x7A or line.startswith(LOWER_ACCENTS):
+        return True
+    return (0x41 <= line[0] <= 0x5A or line.startswith(UPPER_ACCENTS)) and not SENTENCE_END.search(previous)
+
+
+def line_ends(counts: list[int]) -> set[int]:
+    """Where lines of so many words each break, counted in words."""
+    ends, total = set(), 0
+    for count in counts[:-1]:
+        total += count
+        ends.add(total)
+    return ends
 
 
 def balanced_lines(words: list[bytes], limit: int, widths: dict[int, int]) -> list[bytes]:
@@ -872,9 +895,12 @@ def balanced_lines(words: list[bytes], limit: int, widths: dict[int, int]) -> li
     be (a word wider than `limit` alone on its line)."""
     sizes = [line_width(w, widths) for w in words]
     n = len(words)
+    before = [0]
+    for size in sizes:
+        before.append(before[-1] + size)
 
     def span(i: int, j: int) -> int:
-        return sum(sizes[i:j]) + SPACE_WIDTH * (j - i - 1)
+        return before[j] - before[i] + SPACE_WIDTH * (j - i - 1)
 
     count, start = 0, 0
     while start < n:  # the fewest lines, greedily
