@@ -96,13 +96,25 @@ game built them. Every reference is an id (`native_records.h`):
   GS draws nothing of a converted packet. A piece the producer refuses
   (counted by why in its stats line) goes to the GS as a native mesh.
   `RG_NATIVE_2D=0` turns the converter off.
+- **Uploads** (steps 3b and 6): an upload the producer already made a
+  record of is withheld from the GS (its transfer registers and its image
+  data, in the packet and in the continuations after it); the rest of the
+  packet goes on. The data withheld is checked against the record's hash
+  of the guest memory it was made from (uploads up to 16 KiB;
+  `RG_NATIVE_UPLOAD_CHECK=all` every one, `=0` none): the game writes a
+  few palettes and textures after the texture hook, and such a record is
+  made again from what was sent (`replaceUpload`). A host upload nobody
+  took is gathered on its way to the GS and kept by the producer as an
+  image per base and format (`hostUpload`), which pieces reading that
+  memory sample; a local copy (`TRXDIR 2`) is mirrored between what the
+  producer holds (`noteLocalCopy`).
 
 Under the pipeline the screen shows the 3D meshes, the effects and the 2D.
 Still on the GS, which keeps running unseen: the per-object composites
 (characters drawn through the object layers show boxes around them until
-they come: the layers' buffer holds what other draws left there), host
-uploads other than the named textures (a 2D piece reading one is refused:
-"source unknown"), local copies, and the game's colour and depth reads.
+they come: the layers' buffer holds what other draws left there) and the
+game's colour and depth reads, which read the GS's memory (wrong now that
+the GS draws little of the frame).
 Those, the pipeline's own present, and a check that nothing reaches the GS
 any more, come next.
 
