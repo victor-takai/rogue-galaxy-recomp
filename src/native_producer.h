@@ -75,6 +75,13 @@ bool mesh(const GSNativeMesh &mesh, const GSDrawState *state, const uint8_t *vu1
 // command; a sprite effect's ops by what they draw into and from).
 void noteEffect(const GSNativeEffect &effect);
 
+// Step 5b: a 2D piece (src/native_2d.h: primitives the converter made a
+// mesh in the GS's window coordinates) under its draw state, as the
+// renderer's window-space mesh draw. `texels`: its UVs are texels (FST),
+// not normalised. True when made; false leaves it to the GS (counted by
+// why).
+bool piece(const GSNativeMesh &mesh, const GSDrawState *state, bool texels);
+
 // Step 5b: an effect's sprites (src/native_effects.h) as the renderer's
 // window-space mesh draws, and step 5c's object layer commands. True when
 // made: the GS does not draw it then. False leaves it to the GS (counted by
