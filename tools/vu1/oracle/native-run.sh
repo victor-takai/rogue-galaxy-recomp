@@ -19,6 +19,8 @@ export RG_INPUT="909:CROSS:5,999:CROSS:5,1059:DOWN:5,1118:CROSS:5,1238:CROSS:5,1
 export RG_INPUT_CLOCK=pad RG_MUTE=1 DQ8_GFX_HIDDEN_WINDOW=1 RG_FPS=30 RG_GS_SCALE=1
 export RG_MC0_DIR=build/run/mc0-bench RG_SETTINGS_FILE=build/run/bench-settings.ini DQ8_GFX_STATS_EVERY=60
 export RG_GS_FRAMELOG="build/run/$NAME.txt@$FRAME" RG_VU1_NATIVE=$MODE DQ8_GFX_SCREENSHOT_DIR=build/run/shots/$NAME DQ8_GFX_SCREENSHOT_EVERY=600
+# The F1 menu's native renderer is off unless set: on for these runs (RG_VU1_NATIVE above still sets the VU1's mode).
+export RG_NATIVE_RENDERER=${RG_NATIVE_RENDERER:-1}
 mkdir -p build/run/shots/$NAME
 unset RG_VU1_REPLAY
 cat disc/*.DAT disc/*.HD6 > /dev/null 2>&1

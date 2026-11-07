@@ -19,14 +19,20 @@
 //
 // Done: every program the recordings hold (docs/VU1-NATIVE.md, "Status"):
 // the strip programs, composed from a piece per slot (A; B plain or skinned;
-// C vertex colors, one color, lit, lit vertex colors; D: none, guard band,
-// guard band and backfaces, each with or without the scaled depth and
-// bounds; F scroll or sphere map), and the programs whose pieces draw by
-// themselves (Kind): the outlines, the shadow volumes, the overlay sprites,
-// the object setup, the particles and the projected texture. Not done, so
-// left to the VU1 chunk by chunk: clipping (slot E), in every mode (the
-// GPU's clipping across the eye plane differed on one driver), the paths no
-// recording took, and the pieces no recording reached.
+// C vertex colors, one color, lit, lit vertex colors, those with four point
+// lights; D: none, guard band, guard band and backfaces, each with or
+// without the scaled depth and bounds, and the beam's; F scroll, sphere map,
+// wave, reflection map, ramp, the beam's), and the programs whose pieces
+// draw by themselves (Kind): the outlines, the shadow volumes, the overlay
+// sprites, the object setup, the particles and the projected texture. The
+// pieces no recording holds (the ramp and swell Fs, the point-light Cs, the
+// depth-only affine D, the float-skinning Bs, the untextured float-color D) are written from the code and checked against the interpreter
+// only (docs/VU1-NATIVE.md, "Pieces written from the code alone"); their
+// program names say "unverified". So are the triangle lists of the backface
+// D pieces and of the projected texture, and the shadow skinning's four
+// bones. Not done, so left to the VU1 chunk by chunk: clipping (slot E)
+// where the GPU does not clip, 87.y & 0x100 in the vertex-color Cs, lists
+// not of whole triangles, and the pieces nothing reached.
 //
 // The arithmetic per vertex is the runtime's (gsNativeMeshPoint in
 // runtime/gs/gs_types.h), whichever way a chunk goes out.
@@ -48,6 +54,8 @@ enum class Color : uint8_t
     Material,  // the material color alone
     Lit,       // four directional lights on the normal, and an ambient
     LitVertex, // that, times the vertex's int16 color / 32768 * 256
+    LitPointVertex, // LitPoint times the vertex's int16 color (e3bca52a; from the code only)
+    LitPoint,  // Lit, and four point lights from quads 44-51 (127ca0b4; from the code only)
 };
 
 // What the F piece does to the UVs.
@@ -55,6 +63,11 @@ enum class Uv : uint8_t
 {
     Plain,     // nothing, unless quad 88.xy scrolls them (declined)
     SphereMap, // replaced by the normal in view space, as (n.xy + 1) / 2
+    Reflect,   // replaced by the view vector reflected in the normal, as (r.x + 1) / 2 and (r.z + 1) / 2 (ad209cd3)
+    Swell,     // the positions pushed out along the normals, fading with depth (a04c11ce; from the code only)
+    Beam,      // the UVs a projection of the position through quads 72-75 (b1d29245)
+    Ramp,      // the UVs replaced by ((normal . quads 100-102.x) + 1) / 2, 0 (0594a063; from the code only)
+    Wave,      // the UVs stay; each position turned in x and y about (0, quad 84.x) by an angle growing with y (9df36d6a)
 };
 
 // What the program draws: the A piece decides (it calls the others).
@@ -91,13 +104,24 @@ struct Program
     uint8_t maxBones = 0;
     Kind kind = Kind::Strip;
     Uv uv = Uv::Plain;
+    // With depthBounds: the D piece keeps the bounds in quads 98 and 99 (false: only the depth).
+    bool bounds = true;
+    // The D piece leaves ST as the UV and writes Q = 1 (2feaa9a1); the GPU mesh cannot say so.
+    bool affine = false;
+    // The color is (128, 128, 128) with the vertex's alpha (the beam's D, 1bd1b5c0).
+    bool white = false;
+    // B only skins floats the EE uploaded (positions, normals and UVs are not int16); normals too when skinNormals.
+    bool rawFloats = false;
+    bool skinNormals = true;
+    // D reads the colors as floats from the colors section and writes no ST (312d076b).
+    bool rawColor = false;
 };
 
 // Whether buildMesh can make the program's chunks a GSNativeMesh; if not,
 // the GPU path sends buildChunk's packets.
 inline bool hasMesh(const Program &program)
 {
-    return program.kind == Kind::Strip;
+    return (program.kind == Kind::Strip && !program.affine && !program.rawColor) || program.kind == Kind::Projector;
 }
 
 // Whether the program draws in its MSCAL (the overlay sprites) rather than
@@ -115,8 +139,8 @@ const Program *identify(const uint8_t *code, uint32_t startPC);
 
 // Why the chunk an MSCNT runs (its header at `top`, in quadwords) is left to
 // the VU1, or null when it is done natively. `clips`: what draws it clips
-// triangles itself (the GPU), so slot E's chunks are done too; the VIF1
-// thread passes false in every mode, `gpu` too (src/vif1_thread.cpp).
+// triangles itself (the GPU), so slot E's chunks are done too, for the
+// programs with a mesh (hasMesh) only.
 const char *declineChunk(const Program &program, const uint8_t *data, uint32_t top, bool clips = false);
 
 // Which of the pieces this file knows the code at `startPC` has, slot by

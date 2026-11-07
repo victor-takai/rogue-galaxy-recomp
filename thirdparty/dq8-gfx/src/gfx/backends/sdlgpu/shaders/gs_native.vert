@@ -5,7 +5,9 @@
 // the GS window pixels, depth, Q, S/T, color and fog gs_draw.vert passes on,
 // so gs_draw.frag draws it as it draws the program's triangles. The position
 // goes out homogeneous, so the GPU clips the strip where the program would
-// have dropped a triangle at its guard band or clipped it in slot E.
+// have dropped a triangle at its guard band, and at slot E's near and far
+// planes where the program clips (gl_ClipDistance: behind the eye the
+// position alone leaves the cut to the driver, whose depth clamp is on).
 //
 // The vertex is a GsGpuVertex slot read another way: x, y and z the object-
 // space position, q and s the texture coordinates before the divide, t its
@@ -40,6 +42,10 @@ struct Mesh {
     vec4 misc;
     // The projected z: x scales it, y caps it.
     vec4 depth;
+    // A chunk the program clips (slot E): its near and far planes in object
+    // space, the strip kept where (x, y, z, 1) . plane >= 0; (0, 0, 0, 1)
+    // for the others.
+    vec4 clipPlanes[2];
 };
 
 layout(std430, set = 0, binding = 0) readonly buffer Meshes {
@@ -65,6 +71,9 @@ void main() {
     vec2 normalised = (pixel + params.adjust.xy) * params.targetSize.zw;
     vec2 ndc = normalised * 2.0 - 1.0;
     gl_Position = vec4(ndc.x, ndc.y * params.adjust.z, depth, 1.0) * clip.w;
+    vec4 object = vec4(inPositionXY, inPositionZU.x, 1.0);
+    gl_ClipDistance[0] = dot(object, mesh.clipPlanes[0]);
+    gl_ClipDistance[1] = dot(object, mesh.clipPlanes[1]);
 
     vTexCoord = vec2(inPositionZU.y, inVMesh.x) * q;
     vQ = q;

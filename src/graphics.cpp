@@ -787,7 +787,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          false, 0, 0, 0, "", 1, true, true, "language"},
         {"native_renderer", "Native renderer",
          "Experimental, for development: the models and the post effects drawn by the PC's renderer instead of "
-         "through the emulation of the PS2's graphics chip, as that work lands; for now it changes nothing. Off, "
+         "through the emulation of the PS2's graphics chip, as that work lands; for now the models. Off, "
          "everything goes through the emulation. Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"dev_tools", "Developer tools",

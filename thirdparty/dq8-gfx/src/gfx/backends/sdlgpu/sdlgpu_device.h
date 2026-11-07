@@ -84,9 +84,12 @@ struct GsNativeMeshRecord {
     float colorMax[4] = {};
     float misc[4] = {}; // XYOFFSET x and y in pixels, 1 / the depth maximum
     float depth[4] = {1.0f, 3.402823466e38f, 0.0f, 0.0f}; // the projected z's scale and cap
+    // Where the strip is clipped (GSNativeMesh::Header::clipPlanes): kept
+    // where (x, y, z, 1) . plane >= 0 for both; (0, 0, 0, 1) clips nothing.
+    float clipPlanes[2][4] = {{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f}};
 };
 
-static_assert(sizeof(GsNativeMeshRecord) == 128u, "record layout must match gs_native.vert");
+static_assert(sizeof(GsNativeMeshRecord) == 160u, "record layout must match gs_native.vert");
 
 struct GsFragmentUniforms {
     uint32_t control[4] = {0u, 0u, 0u, 0u};

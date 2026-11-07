@@ -22,6 +22,7 @@
 
 #include "ThreadNaming.h"
 #include "debug/vu1_replay.h"
+#include "native_renderer.h"
 #include "vu1_native.h"
 #include "ps2_runtime.h"
 #include "ps2_syscalls.h"
@@ -48,7 +49,13 @@ thread_local uint32_t t_vu1Camera = 0;
 // VU1, its packets are collected (check) or dropped (replace).
 thread_local std::vector<std::vector<uint8_t>> *t_vu1Packets = nullptr;
 thread_local bool t_dropVu1Packets = false;
-const rg::vu1native::Mode g_nativeMode = rg::vu1native::modeFromEnvironment();
+// Read when the thread starts, after the menu's native renderer setting
+// (static initializers run before the menu hands it over).
+rg::vu1native::Mode nativeMode()
+{
+    static const rg::vu1native::Mode mode = rg::vu1native::modeFromEnvironment();
+    return mode;
+}
 // RG_VU1_NATIVE_CHECK_EVERY=N: check mode compares one chunk in N (each costs
 // the VU1's run, the native build and two decodes, on this thread).
 const uint32_t g_checkEvery = [] {
@@ -56,6 +63,23 @@ const uint32_t g_checkEvery = [] {
     const unsigned long every = value ? std::strtoul(value, nullptr, 10) : 1ul;
     return static_cast<uint32_t>(every == 0ul ? 1ul : every);
 }();
+// Whether the GPU path takes the chunks slot E clips: only with the native
+// renderer and RG_VU1_CLIP_ON_GPU=1. Off by default: the field walk of
+// October 29 lost the near wall's texture and part of the ledge with them
+// on the GPU (the clipper's new vertices take a depth made of each corner's
+// capped, clamped one, which is not linear outside E's planes). Read at
+// first use, after the menu's setting.
+struct GpuClips
+{
+    operator bool() const
+    {
+        static const bool on = [] {
+            const char *gpu = std::getenv("RG_VU1_CLIP_ON_GPU");
+            return rg::nativerenderer::enabled() && gpu && *gpu && std::strcmp(gpu, "0") != 0;
+        }();
+        return on;
+    }
+} g_gpuClips;
 const bool g_tagPrograms = std::getenv("DQ8_GFX_PROFILE_CYCLE") != nullptr || std::getenv("RG_JITTER") != nullptr;
 // RG_VU1_CAPTURE=<file> records the VU1 data memory each program starts with
 // (16 KiB a start), for tools/vu1/capture_report.py; RG_VU1_CAPTURE_MAX caps
@@ -685,16 +709,31 @@ public:
         // (once per code image and entry), its MSCNTs run the chunks; or the
         // MSCAL is the chunk (drawsAtCall).
         const rg::vu1native::Program *native = nullptr;
-        if (g_nativeMode != rg::vu1native::Mode::Off)
+        if (nativeMode() != rg::vu1native::Mode::Off)
         {
             if (!resume)
             {
-                if (memory.getVU1CodeGeneration() != m_nativeGeneration || startPC != m_nativePC)
+                // identify hashes every candidate piece byte by byte (a
+                // quarter of this thread at the boss, 2026-11-01). The game
+                // composes its programs from pieces per object, so the code
+                // changes often but is one of a few images: each image is
+                // hashed once as it changes (a word at a time) and what each
+                // entry of it is stays known for the run.
+                if (memory.getVU1CodeGeneration() != m_nativeGeneration)
                 {
                     m_nativeGeneration = memory.getVU1CodeGeneration();
-                    m_nativePC = startPC;
-                    m_nativeProgram = rg::vu1native::identify(memory.getVU1Code(), startPC);
+                    m_codeHash = imageHash(memory.getVU1Code());
                 }
+                m_nativePC = startPC;
+                const uint64_t key = m_codeHash ^ (static_cast<uint64_t>(startPC) * 0x9E3779B97F4A7C15ull);
+                auto found = m_identified.find(key);
+                if (found == m_identified.end())
+                {
+                    if (m_identified.size() >= 4096u)
+                        m_identified.clear();
+                    found = m_identified.emplace(key, rg::vu1native::identify(memory.getVU1Code(), startPC)).first;
+                }
+                m_nativeProgram = found->second;
             }
             else if (memory.getVU1CodeGeneration() != m_nativeGeneration)
             {
@@ -704,16 +743,19 @@ public:
             }
             if (m_nativeProgram && resume != rg::vu1native::drawsAtCall(*m_nativeProgram))
             {
-                const bool gpu = g_nativeMode == rg::vu1native::Mode::Gpu;
-                // The chunks that clip go to the VU1 in every mode: the GPU's
-                // clipping of triangles across the eye plane does not match
-                // the VU1's on every driver.
-                const char *reason = rg::vu1native::declineChunk(*m_nativeProgram, memory.getVU1Data(), top, false);
+                const bool gpu = nativeMode() == rg::vu1native::Mode::Gpu;
+                // The chunks that clip (slot E) go to the GPU with the native
+                // renderer and RG_VU1_CLIP_ON_GPU=1: the mesh carries E's near
+                // and far planes and the shader clips there (gl_ClipDistance),
+                // so no driver is left to cut at the eye on its own.
+                // Otherwise, and in the packet modes, they go to the VU1.
+                const char *reason =
+                    rg::vu1native::declineChunk(*m_nativeProgram, memory.getVU1Data(), top, gpu && g_gpuClips);
                 if (reason)
                 {
                     m_nativeMonitor.declined(*m_nativeProgram, reason);
                 }
-                else if (g_nativeMode == rg::vu1native::Mode::Check && m_checkCount++ % g_checkEvery != 0u)
+                else if (nativeMode() == rg::vu1native::Mode::Check && m_checkCount++ % g_checkEvery != 0u)
                 {
                     // Not this one: the VU1 runs it, unchecked.
                 }
@@ -733,9 +775,9 @@ public:
             }
             m_nativeMonitor.tick();
         }
-        if (!native || (g_nativeMode != rg::vu1native::Mode::Skip && g_nativeMode != rg::vu1native::Mode::Gpu))
+        if (!native || (nativeMode() != rg::vu1native::Mode::Skip && nativeMode() != rg::vu1native::Mode::Gpu))
         {
-            if (native && g_nativeMode == rg::vu1native::Mode::Check)
+            if (native && nativeMode() == rg::vu1native::Mode::Check)
             {
                 m_vu1Packets.clear();
                 t_vu1Packets = &m_vu1Packets;
@@ -743,7 +785,7 @@ public:
                 m_checkData.assign(memory.getVU1Data(), memory.getVU1Data() + PS2_VU1_DATA_SIZE);
                 m_checkState = vu1.state();
             }
-            t_dropVu1Packets = native && g_nativeMode == rg::vu1native::Mode::Replace;
+            t_dropVu1Packets = native && nativeMode() == rg::vu1native::Mode::Replace;
             static const bool replay = rg::vu1replay::enabled();
             if (replay)
             {
@@ -769,7 +811,7 @@ public:
         }
         if (native)
         {
-            if (g_nativeMode == rg::vu1native::Mode::Check)
+            if (nativeMode() == rg::vu1native::Mode::Check)
             {
                 const char *kind = m_nativeMonitor.check(*native, m_vu1Packets, m_nativePackets);
                 if (!kind && !rg::vu1native::memoryEffectsMatch(*native, m_checkData.data(), top,
@@ -792,12 +834,12 @@ public:
                 {
                     deliverPacket(m_runtime.gs(), packet.data(), static_cast<uint32_t>(packet.size()));
                 }
-                if (g_nativeMode == rg::vu1native::Mode::Gpu && rg::vu1native::hasMesh(*native))
+                if (nativeMode() == rg::vu1native::Mode::Gpu && rg::vu1native::hasMesh(*native))
                 {
                     deliverMesh(m_runtime.gs(), m_nativeMesh);
                 }
                 // What the VU1 would have left in its memory, where it did not run.
-                if (g_nativeMode != rg::vu1native::Mode::Replace)
+                if (nativeMode() != rg::vu1native::Mode::Replace)
                 {
                     rg::vu1native::applyMemoryEffects(*native, memory.getVU1Data(), top);
                 }
@@ -961,8 +1003,25 @@ private:
     const rg::vu1native::Program *m_nativeProgram = nullptr;
     uint64_t m_nativeGeneration = ~0ull;
     uint32_t m_nativePC = 0u;
+    // The programs identified, by code image (its hash) and entry.
+    std::unordered_map<uint64_t, const rg::vu1native::Program *> m_identified;
+    uint64_t m_codeHash = 0u;
+
+    // The 16 KiB of micro memory, a word at a time.
+    static uint64_t imageHash(const uint8_t *code)
+    {
+        uint64_t hash = 0x84222325CBF29CE4ull;
+        for (uint32_t i = 0; i < PS2_VU1_CODE_SIZE; i += 8u)
+        {
+            uint64_t word;
+            std::memcpy(&word, code + i, sizeof(word));
+            hash = (hash ^ word) * 0x100000001B3ull;
+            hash ^= hash >> 29;
+        }
+        return hash;
+    }
     uint32_t m_checkCount = 0u;
-    rg::vu1native::Monitor m_nativeMonitor{g_nativeMode};
+    rg::vu1native::Monitor m_nativeMonitor{nativeMode()};
     std::vector<std::vector<uint8_t>> m_nativePackets;
     GSNativeMesh m_nativeMesh;
     std::vector<std::vector<uint8_t>> m_vu1Packets;
@@ -1294,9 +1353,12 @@ std::string busyReport()
         lastCompiled = compiled;
         if (newInterpreted != 0u)
         {
-            char more[96];
-            std::snprintf(more, sizeof(more), " | vu1 interpreted %llu pairs (%.0f%%)",
-                          static_cast<unsigned long long>(newInterpreted),
+            // Per second, and as a share of the pairs the VU1 ran at all: the
+            // chunks done natively never run it, so a high share of a small
+            // count is no load (2026-11-01: 44% was 14k pairs a second).
+            char more[128];
+            std::snprintf(more, sizeof(more), " | vu1 interpreted %.1fk pairs/s (%.0f%% of what the VU1 ran)",
+                          wall > 0.0 ? static_cast<double>(newInterpreted) / wall / 1000.0 : 0.0,
                           100.0 * static_cast<double>(newInterpreted) /
                               static_cast<double>(newInterpreted + newCompiled));
             return std::string(text) + more;
