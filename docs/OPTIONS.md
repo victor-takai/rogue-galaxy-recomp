@@ -32,7 +32,11 @@ Settings has seven pages, written here as F1 > Settings > Game and so on:
   from the `borders` folder), integer scaling, and **Sharper picture**,
   which drops the PS2's line blending (it only blurs on a monitor).
 - **Sound**: volume and muting.
-- **Controls**: controller and keyboard remapping, dead zones.
+- **Controls**: controller and keyboard remapping (a key, a mouse button
+  or the wheel), dead zones, and **Walk (hold)**, which makes the keys,
+  which always push the stick all the way, walk instead of run. In the
+  game's menus, talks and scenes the right click and Esc are Circle (back)
+  and the wheel the D-pad's up and down, whatever they are bound to.
 - **Game**: the game options below.
 - **Language**: the text's language and the undub, [below](#language).
 - **Textures**: a switch for each texture pack found
@@ -65,11 +69,11 @@ F1 > Settings > Game, in these sections:
 | Field of view | 40 to 90 degrees (the game's is 52). |
 | Camera distance | 0.7x to 1.6x the game's. |
 | Faster camera rotation | The camera turns twice as fast. |
-| Mouse camera | Off by default. The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right looks right and up looks up, whatever the game's camera options. The tilt stays where the mouse leaves it; locked on a target in battle, the camera only turns, as with the stick. While it is on, the mouse stays in the window with the cursor hidden; F1, the pause (F2) or Alt+Tab lets it go. |
+| Mouse camera | On by default. The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right looks right and up looks up, whatever the game's camera options. The tilt stays where the mouse leaves it; locked on a target in battle, the camera only turns, as with the stick. Once you press a key of the game's or click, the mouse stays in the window with the cursor hidden; F1, the pause (F2), Alt+Tab or five seconds on the controller alone let it go. Playing on a controller only, the cursor is never taken. |
 | Mouse sensitivity | 0.25x to 4.0x; at 1.0x an inch at 1,600 dpi turns about 100 degrees. |
 | Invert mouse vertical | Off by default. Moving the mouse up looks down. |
 | Draw distance | 1.0x to 4.0x the game's, from the next map loaded. |
-| Controller's buttons | The buttons in the game's text follow an Xbox controller: A, B, X, Y, LB, RB, LT and RT, as bound in Controls. On by default. |
+| Controller's buttons | The buttons in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, RB, LT and RT, or on the keyboard and mouse the keys (a letter or digit, TAB, ESC and the like, the space bar) and mouse buttons, as bound in Controls. On by default. |
 | Free camera (F6) | The party stands still and the controller moves the camera. Start or F6 to leave. |
 
 **Convenience**

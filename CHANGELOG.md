@@ -25,10 +25,20 @@
   are named in that language too. The voices stay as they are. Played in
   Spanish and tested in all four up to the first scenes; the rest of the
   story has not been seen in them yet.
-- Mouse camera (Game, off by default): the mouse turns and tilts the
+- Mouse camera (Game, on by default): the mouse turns and tilts the
   camera, exploring, in battle and in the first-person view, with its own
-  sensitivity and an option to invert the vertical. While it is on, the
-  mouse stays in the game's window; F1, the pause or Alt+Tab lets it go.
+  sensitivity and an option to invert the vertical. Once you press a key
+  of the game's or click, the mouse stays in the game's window; F1, the
+  pause, Alt+Tab or a few seconds on the controller alone let it go.
+- Keyboard and mouse: new default keys made for them (the sword on the
+  left click, the guard on E or the right click, jump on Space, the gun on
+  F, the menus on Tab or Esc; the table is in the README), mouse buttons and the
+  wheel in F1 > Settings > Controls, and Walk (hold), Left Ctrl, since
+  keys always push the stick all the way. In the game's menus the right
+  click and Esc go back and the wheel moves up and down. The game's text shows
+  the keys and mouse buttons instead of the PlayStation's while you play
+  with them. If you never changed a key, the new keys replace the old
+  ones; if you changed any, all of yours stay.
 
 ### Changed
 

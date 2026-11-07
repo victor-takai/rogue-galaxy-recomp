@@ -165,6 +165,115 @@ rg::buttons::Glyph glyphFor(const dq8::gfx::PadBinding &binding, SDL_GamepadType
     }
 }
 
+// What the game's text shows for a key or mouse button: a letter or digit,
+// a short name (TAB, ESC...), or a picture (the mouse's buttons, the space
+// bar, the arrows).
+rg::buttons::KeyLabel keyLabelFor(const dq8::gfx::PadBinding &binding)
+{
+    using dq8::gfx::PadBinding;
+    using rg::buttons::KeyIcon;
+    rg::buttons::KeyLabel label;
+    const auto text = [&](const char *value) { std::snprintf(label.text, sizeof(label.text), "%s", value); };
+    if (binding.kind == PadBinding::Kind::Mouse)
+    {
+        switch (binding.code)
+        {
+        case SDL_BUTTON_LEFT:
+            label.icon = KeyIcon::MouseLeft;
+            break;
+        case SDL_BUTTON_RIGHT:
+            label.icon = KeyIcon::MouseRight;
+            break;
+        case SDL_BUTTON_MIDDLE:
+            label.icon = KeyIcon::MouseMiddle;
+            break;
+        default:
+            text(binding.code == SDL_BUTTON_X1 ? "M4" : "M5");
+            break;
+        }
+        return label;
+    }
+    if (binding.kind == PadBinding::Kind::Wheel)
+    {
+        text("WHL");
+        return label;
+    }
+    if (binding.kind != PadBinding::Kind::Key)
+    {
+        text("?");
+        return label;
+    }
+    const auto scancode = static_cast<SDL_Scancode>(binding.code);
+    switch (scancode)
+    {
+    case SDL_SCANCODE_SPACE:
+        label.icon = KeyIcon::Space;
+        return label;
+    case SDL_SCANCODE_UP:
+        label.icon = KeyIcon::Up;
+        return label;
+    case SDL_SCANCODE_DOWN:
+        label.icon = KeyIcon::Down;
+        return label;
+    case SDL_SCANCODE_LEFT:
+        label.icon = KeyIcon::Left;
+        return label;
+    case SDL_SCANCODE_RIGHT:
+        label.icon = KeyIcon::Right;
+        return label;
+    case SDL_SCANCODE_TAB:
+        text("TAB");
+        return label;
+    case SDL_SCANCODE_ESCAPE:
+        text("ESC");
+        return label;
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER:
+        text("ENT");
+        return label;
+    case SDL_SCANCODE_BACKSPACE:
+        text("BSP");
+        return label;
+    case SDL_SCANCODE_LSHIFT:
+    case SDL_SCANCODE_RSHIFT:
+        text("SHF");
+        return label;
+    case SDL_SCANCODE_LCTRL:
+    case SDL_SCANCODE_RCTRL:
+        text("CTL");
+        return label;
+    case SDL_SCANCODE_LALT:
+    case SDL_SCANCODE_RALT:
+        text("ALT");
+        return label;
+    case SDL_SCANCODE_CAPSLOCK:
+        text("CAP");
+        return label;
+    default:
+        break;
+    }
+    // Otherwise the first letters and digits of what the player's keyboard
+    // prints on the key (an AZERTY's A where a QWERTY has Q), or of its US
+    // name when that has none (the AZERTY's &, whose key also says 1):
+    // "Keypad 7" is 7, F10 is F10, up to three.
+    const auto take = [&](std::string name) {
+        if (name.rfind("Keypad ", 0) == 0)
+            name = name.substr(7);
+        size_t length = 0;
+        for (const char c : name)
+        {
+            if (length < 3 && std::isalnum(static_cast<unsigned char>(c)))
+                label.text[length++] = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        label.text[length] = '\0';
+        return length > 0;
+    };
+    if (!take(SDL_GetKeyName(SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false))) &&
+        !take(SDL_GetScancodeName(scancode)))
+        text("?");
+    return label;
+}
+
 bool xboxLike(SDL_GamepadType type)
 {
     switch (type)
@@ -183,8 +292,10 @@ bool xboxLike(SDL_GamepadType type)
 }
 
 // Twice a second, the pictures for Cross, Circle, Square, Triangle, L1, R1,
-// L2 and R2: each one's first controller binding as the controller driving
-// the game names it, the PlayStation's with the keyboard alone.
+// L2 and R2: each one's first binding on what the player last pressed, the
+// keyboard and mouse or the controller driving the game, as that controller
+// names it (a PlayStation or Nintendo pad keeps the game's). Before any
+// press, the game's own: scripted runs with no controller keep their frames.
 void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
 {
     static auto last = std::chrono::steady_clock::time_point{};
@@ -193,8 +304,13 @@ void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
         return;
     last = now;
     rg::buttons::Glyphs glyphs{};
+    rg::buttons::KeyLabels labels{};
     if (g_controllerButtons.load(std::memory_order_relaxed))
     {
+        using dq8::gfx::PadInput;
+        constexpr PadInput kInputs[rg::buttons::kButtons] = {PadInput::Cross, PadInput::Circle, PadInput::Square,
+                                                             PadInput::Triangle, PadInput::L1, PadInput::R1,
+                                                             PadInput::L2, PadInput::R2};
         dq8::gfx::SdlPadInput &pad = backend.padInput();
         bool active = false;
         SDL_GamepadType type = SDL_GAMEPAD_TYPE_UNKNOWN;
@@ -207,12 +323,24 @@ void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
                 break;
             }
         }
-        if (active && xboxLike(type))
+        const bool keyboard = pad.config().keyboardEnabled && pad.keyboardMouseAt() > pad.controllerAt();
+        if (keyboard)
         {
-            using dq8::gfx::PadInput;
-            constexpr PadInput kInputs[rg::buttons::kButtons] = {PadInput::Cross, PadInput::Circle, PadInput::Square,
-                                                                 PadInput::Triangle, PadInput::L1, PadInput::R1,
-                                                                 PadInput::L2, PadInput::R2};
+            for (size_t i = 0; i < rg::buttons::kButtons; ++i)
+            {
+                for (const dq8::gfx::PadBinding &binding : pad.config().slots(kInputs[i], true))
+                {
+                    if (binding.bound())
+                    {
+                        glyphs[i] = rg::buttons::Glyph::Key;
+                        labels[i] = keyLabelFor(binding);
+                        break;
+                    }
+                }
+            }
+        }
+        else if (active && xboxLike(type))
+        {
             for (size_t i = 0; i < rg::buttons::kButtons; ++i)
             {
                 for (const dq8::gfx::PadBinding &binding : pad.config().slots(kInputs[i], false))
@@ -226,7 +354,7 @@ void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
             }
         }
     }
-    rg::buttons::setGlyphs(glyphs);
+    rg::buttons::setGlyphs(glyphs, labels);
 }
 
 // What the menu's game options switch, and the game's Settings screen's
@@ -364,6 +492,22 @@ bool SDLCALL countMarkKeys(void *, SDL_Event *event)
     return true;
 }
 
+// "Walk (hold)" (Controls): the left stick at 70% of its push each way, after
+// the squaring (src/stick_response.cpp). The game drops the first 50 of an
+// axis's 128 steps and runs from a length of 0.9, so a key's full push
+// walks, at 0.51 straight and 0.72 on a diagonal.
+uint32_t walkSticks(uint32_t sticks)
+{
+    constexpr float kWalkPush = 0.7f;
+    const auto scaled = [](uint32_t byte) {
+        const long value = std::lround(128.0f + (static_cast<float>(byte) - 128.0f) * kWalkPush);
+        return static_cast<uint32_t>(std::clamp(value, 0L, 255L));
+    };
+    const uint32_t lx = scaled((sticks >> 8u) & 0xFFu);
+    const uint32_t ly = scaled(sticks & 0xFFu);
+    return (sticks & 0xFFFF0000u) | (lx << 8u) | ly;
+}
+
 // Called once per frame by the runtime when the backend owns the window:
 // services SDL events (the menu takes its own first) and hands the host pad
 // to the runtime.
@@ -384,12 +528,21 @@ bool pump(void *userData)
         {
         }
     }
+    // In the game's menus the right click and Esc (on Triangle) go back and
+    // the wheel moves up and down; in play Esc opens the menu. Before the
+    // events are read.
+    backend->padInput().setInMenus(g_runtime != nullptr &&
+                                     rg::mousecamera::inGameMenu(g_runtime->memory().getRDRAM()));
     if (!backend->pumpEvents())
     {
         return false;
     }
-    rg::mousecamera::pump(backend->window(),
-                          (g_menu && g_menu->capturesInput()) || g_hostPaused.load(std::memory_order_relaxed));
+    {
+        const dq8::gfx::SdlPadInput &pad = backend->padInput();
+        rg::mousecamera::pump(backend->window(),
+                              (g_menu && g_menu->capturesInput()) || g_hostPaused.load(std::memory_order_relaxed),
+                              {pad.keyboardMouseAt(), pad.mouseMotionAt(), pad.controllerAt()});
+    }
     updateButtonGlyphs(*backend);
     // The shape the picture takes with Widescreen on, for the game's camera:
     // under Auto the window's.
@@ -495,7 +648,12 @@ bool pump(void *userData)
     }
     uint32_t held = 0u, pressed = 0u, sticks = 0u;
     backend->hostPadState(held, pressed, sticks);
-    ps2PadPublishHostState(held, pressed, rg::pad::shapeSticks(sticks));
+    sticks = rg::pad::shapeSticks(sticks);
+    if (backend->padInput().walking())
+    {
+        sticks = walkSticks(sticks);
+    }
+    ps2PadPublishHostState(held, pressed, sticks);
     return true;
 }
 
@@ -672,9 +830,9 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         {"mouse_camera", "Mouse camera",
          "The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right "
          "looks right and up looks up, whatever the game's camera options. Locked on a target in battle it only "
-         "turns, as with the stick. While it is on, the mouse stays in the window with the cursor hidden; F1, the "
-         "pause (F2) or Alt+Tab lets it go.",
-         false},
+         "turns, as with the stick. Once you press a key or click, the mouse stays in the window with the cursor "
+         "hidden; F1, the pause (F2), Alt+Tab or a few seconds on the controller alone let it go.",
+         true},
         {"mouse_sensitivity", "Mouse sensitivity", "How far the mouse turns the camera, against 1.0x.", false, 25,
          400, 100, kTimes, 25},
         {"mouse_invert_vertical", "Invert mouse vertical",
@@ -690,9 +848,9 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "start.",
          false, 0, 0, 0, "", 1, false},
         {"controller_buttons", "Controller's buttons",
-         "The buttons shown in the game's text follow the controller in use: an Xbox controller's A, B, X, Y, LB, "
-         "RB, LT and RT, as each button is bound in Controls. Off, or with a PlayStation or Nintendo controller "
-         "or the keyboard, the game's PlayStation buttons.",
+         "The buttons shown in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, "
+         "RB, LT and RT, or the keys and mouse buttons, as each button is bound in Controls. Off, or with a "
+         "PlayStation or Nintendo controller, the game's PlayStation buttons.",
          true},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},

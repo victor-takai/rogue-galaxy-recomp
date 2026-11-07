@@ -130,6 +130,8 @@ void apply(Settings &s, const std::string &section, const std::string &key, cons
         else if (key == "invert_camera_x") parseBool(value, s.pad.invertCameraX);
         else if (key == "invert_camera_y") parseBool(value, s.pad.invertCameraY);
         else if (key == "back_start_menu") parseBool(value, s.backStartOpensMenu);
+    } else if (section == "keyboard" && key == "layout") {
+        parseNumber(value, s.pad.keyboardLayout, 1, 1000);
     } else if (section == "controller" || section == "keyboard") {
         parseBinding(s.pad, section == "keyboard", key, value);
     } else if (section == "interface") {
@@ -187,6 +189,8 @@ std::string serializeSettings(const Settings &s) {
         << "\nback_start_menu = " << flag(s.backStartOpensMenu) << "\n";
     for (const bool keyboard : {false, true}) {
         out << "\n[" << (keyboard ? "keyboard" : "controller") << "]\n";
+        if (keyboard)
+            out << "layout = " << s.pad.keyboardLayout << '\n';
         for (size_t input = 0; input < gfx::kPadInputCount; ++input) {
             const auto &slots = s.pad.slots(static_cast<PadInput>(input), keyboard);
             for (size_t slot = 0; slot < slots.size(); ++slot)
@@ -209,6 +213,9 @@ std::string serializeSettings(const Settings &s) {
 }
 
 void parseSettings(const std::string &text, Settings &settings) {
+    // A file says which keyboard defaults it was written with; one that does
+    // not was written with the first.
+    settings.pad.keyboardLayout = 1;
     std::istringstream in(text);
     std::string section;
     // No inline comments: key names such as ";" are valid binding values.
@@ -223,6 +230,45 @@ void parseSettings(const std::string &text, Settings &settings) {
         const auto equals = line.find('=');
         if (equals != std::string::npos)
             apply(settings, section, trim(line.substr(0, equals)), trim(line.substr(equals + 1u)));
+    }
+    if (settings.pad.keyboardLayout == 2) {
+        // Layout 2 had Esc with Space on Circle, where it jumped; 3 has it
+        // with Tab on Triangle. Moved where those two are as 2 had them.
+        auto &circle = settings.pad.keyboard[static_cast<size_t>(PadInput::Circle)];
+        auto &triangle = settings.pad.keyboard[static_cast<size_t>(PadInput::Triangle)];
+        const gfx::PadBinding space = gfx::PadBinding::key(SDL_SCANCODE_SPACE);
+        const gfx::PadBinding escape = gfx::PadBinding::key(SDL_SCANCODE_ESCAPE);
+        const gfx::PadBinding tab = gfx::PadBinding::key(SDL_SCANCODE_TAB);
+        if (circle == gfx::PadBindingSlots{space, escape} && triangle == gfx::PadBindingSlots{tab, {}}) {
+            circle = {space, {}};
+            triangle = {tab, escape};
+            std::fprintf(stderr, "[ui] keyboard: Esc moves from Circle to Triangle\n");
+        }
+        settings.pad.keyboardLayout = 3; // a later layout's step from 3 follows
+    }
+    if (settings.pad.keyboardLayout < 2) {
+        // Keys still all as the first defaults had them take today's;
+        // anyone's own keys stay (Walk, which that layout lacked, keeps its
+        // default either way).
+        const auto first = gfx::PadConfig::firstKeyboardLayout();
+        bool untouched = true;
+        for (size_t input = 0; input < gfx::kPadInputCount; ++input)
+            if (static_cast<PadInput>(input) != PadInput::Walk && settings.pad.keyboard[input] != first[input])
+                untouched = false;
+        if (untouched) {
+            settings.pad.keyboard = gfx::PadConfig::defaults().keyboard;
+            std::fprintf(stderr, "[ui] keyboard: the first default keys, untouched, give way to the new ones\n");
+        } else {
+            // Their own keys: Walk keeps its default only on a key they left
+            // free.
+            auto &walk = settings.pad.keyboard[static_cast<size_t>(PadInput::Walk)];
+            for (size_t input = 0; input < gfx::kPadInputCount; ++input)
+                for (const gfx::PadBinding &binding : settings.pad.keyboard[input])
+                    for (gfx::PadBinding &own : walk)
+                        if (static_cast<PadInput>(input) != PadInput::Walk && own.bound() && own == binding)
+                            own = {};
+        }
+        settings.pad.keyboardLayout = gfx::PadConfig::kKeyboardLayout;
     }
 }
 

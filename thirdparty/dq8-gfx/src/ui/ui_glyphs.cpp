@@ -298,6 +298,20 @@ std::string keyText(SDL_Scancode scancode) {
     return name.empty() ? std::string("?") : name;
 }
 
+// A mouse button or wheel turn, short as the keys' chips are, or in full.
+std::string mouseText(const PadBinding &binding, bool full) {
+    if (binding.kind == PadBinding::Kind::Wheel)
+        return binding.direction < 0 ? "Wheel down" : "Wheel up";
+    switch (binding.code) {
+    case SDL_BUTTON_LEFT: return full ? "Left click" : "L Click";
+    case SDL_BUTTON_RIGHT: return full ? "Right click" : "R Click";
+    case SDL_BUTTON_MIDDLE: return full ? "Middle click" : "M Click";
+    case SDL_BUTTON_X1: return "Mouse 4";
+    case SDL_BUTTON_X2: return "Mouse 5";
+    default: return "Mouse";
+    }
+}
+
 int arrowKey(SDL_Scancode scancode) {
     switch (scancode) {
     case SDL_SCANCODE_UP: return kUp;
@@ -387,6 +401,11 @@ Chip describe(const PadBinding &binding, SDL_GamepadType type) {
         chip.text = keyText(scancode);
         break;
     }
+    case PadBinding::Kind::Mouse:
+    case PadBinding::Kind::Wheel:
+        chip.kind = ChipKind::Key;
+        chip.text = mouseText(binding, false);
+        break;
     case PadBinding::Kind::Button: {
         const auto button = static_cast<SDL_GamepadButton>(binding.code);
         if (isFace(button)) {
@@ -632,6 +651,13 @@ void drawPadGlyph(ImDrawList *list, PadInput input, ImVec2 c, float size) {
     case PadInput::RightStickDown: stick(list, c, size, 'R', kDown, palette::kText); break;
     case PadInput::RightStickLeft: stick(list, c, size, 'R', kLeft, palette::kText); break;
     case PadInput::RightStickRight: stick(list, c, size, 'R', kRight, palette::kText); break;
+    case PadInput::Walk: {
+        // Not the pad's: the left stick, pushed a little, muted.
+        const float r = size * 0.36f;
+        list->AddCircle(c, r, palette::kTextMuted, 0, stroke(size) * 0.8f);
+        list->AddCircleFilled(ImVec2(c.x, c.y - r * 0.45f), r * 0.3f, palette::kTextMuted);
+        break;
+    }
     case PadInput::Count:
         break;
     }
@@ -716,6 +742,9 @@ std::string bindingLabel(const PadBinding &binding, SDL_GamepadType type) {
         const char *name = SDL_GetScancodeName(static_cast<SDL_Scancode>(binding.code));
         return name && *name ? name : "Unknown key";
     }
+    case PadBinding::Kind::Mouse:
+    case PadBinding::Kind::Wheel:
+        return mouseText(binding, true);
     case PadBinding::Kind::Button: {
         const auto button = static_cast<SDL_GamepadButton>(binding.code);
         if (isFace(button)) {
