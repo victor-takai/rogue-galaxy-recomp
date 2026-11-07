@@ -7,8 +7,7 @@ class PS2Runtime;
 
 // Three more pages in the game's own System > Settings, turned with L1 and
 // R1: the F1 menu's switches (On / Off), its numbers (- takes a step off,
-// + adds one; Display > Borders among them, going through Black, Blurred
-// and Image) and its quick scenes (On / Off), each change kept in
+// + adds one) and its quick scenes (On / Off), each change kept in
 // settings.ini as the F1 menu's own are.
 //
 // The screen is the main menu's (its widgets in a list from the pointer at

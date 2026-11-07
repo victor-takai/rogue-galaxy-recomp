@@ -97,15 +97,12 @@ struct Row
     const char *key;
     const char *label;
     Kind kind;
-    // A number that names a choice: its value's name in the label.
-    const char *const *names = nullptr;
 };
 
-// The F1 menu's Display > Borders, in its order.
-constexpr const char *kSidesNames[] = {"Black", "Blurred", "Image"};
-
+// Widescreen and Display > Borders are in the F1 menu alone: there each says
+// when it does nothing (at 4:3, with no bars), and this screen has no room
+// for that line.
 constexpr Row kSwitches[] = {
-    {"widescreen", "Widescreen", Kind::Switch},
     {"skip_opening", "Skip the Opening", Kind::Switch},
     {"instant_loading_recap", "Quick Loading Recap", Kind::Switch},
     {"instant_text", "Instant Text", Kind::Switch},
@@ -133,7 +130,6 @@ constexpr Row kScenes[] = {
     {"full_bag_to_storage", "Full Bag to Storage", Kind::Switch},
     {"stack_limit_99", "Item Limit 99", Kind::Switch},
     {"bigger_bag", "Bag Page 7 (Next Start)", Kind::Switch},
-    {"sides", "Borders", Kind::Number, kSidesNames},
     {"minimap_size", "Minimap Size", Kind::Number},
     {"compass_size", "Compass Size", Kind::Number},
 };
@@ -151,7 +147,6 @@ struct Local
     const char *text[4];
 };
 constexpr Local kLocal[] = {
-    {"widescreen", {"<'E>cran large", "Breitbild", "Pantalla panor<'a>mica", "Schermo panoramico"}},
     {"skip_opening", {"Passer l'introduction", "Intro <:u>berspringen", "Saltar introducci<'o>n", "Salta l'introduzione"}},
     {"instant_loading_recap", {"R<'e>sum<'e> imm<'e>diat", "Handlung sofort", "Resumen inmediato", "Riassunto immediato"}},
     {"instant_text", {"Texte instantan<'e>", "Sofortiger Text", "Texto instant<'a>neo", "Testo istantaneo"}},
@@ -174,15 +169,8 @@ constexpr Local kLocal[] = {
     {"full_bag_to_storage", {"Surplus en r<'e>serve", "<:U>berschuss ins Lager", "Exceso al inventario", "Eccesso in Inventario"}},
     {"stack_limit_99", {"Limite d'objets 99", "Gegenstandslimit 99", "L<'i>mite de objetos 99", "Limite oggetti 99"}},
     {"bigger_bag", {"Sac page 7 (red<'e>m.)", "Taschenseite 7 (Neust.)", "Mochila p<'a>g. 7 (reinicio)", "Sacca pag. 7 (riavvio)"}},
-    {"sides", {"Bordures", "R<:a>nder", "Bordes", "Bordi"}},
     {"minimap_size", {"Taille mini-carte", "Minikartengr<:o><ss>e", "Tama<~n>o minimapa", "Dim. minimappa"}},
     {"compass_size", {"Taille boussole", "Kompassgr<:o><ss>e", "Tama<~n>o br<'u>jula", "Dim. bussola"}},
-};
-constexpr const char *kSidesLocal[4][std::size(kSidesNames)] = {
-    {"Noir", "Flou", "Image"},
-    {"Schwarz", "Unscharf", "Bild"},
-    {"Negro", "Difuminado", "Imagen"},
-    {"Nero", "Sfocato", "Immagine"},
 };
 
 // The European language the text is in, 1 to 4, or 0.
@@ -203,14 +191,6 @@ const char *label(const Row &row)
         }
     }
     return row.label;
-}
-
-const char *choiceName(const Row &row, int value)
-{
-    const int count = static_cast<int>(std::size(kSidesNames));
-    value = std::clamp(value, 0, count - 1);
-    const int language = textLanguage();
-    return row.names == kSidesNames && language != 0 ? kSidesLocal[language - 1][value] : row.names[value];
 }
 
 struct Page
@@ -449,11 +429,7 @@ void writeLabel(uint8_t *rdram, const Screen &screen, int index, const Row &row)
     char text[kTextBytes];
     // French puts a space before the colon, as its game texts do ("Magasin :").
     const char *colon = textLanguage() == 1 ? " :" : ":";
-    if (row.names)
-    {
-        std::snprintf(text, sizeof(text), "%s%s %s", label(row), colon, choiceName(row, value(row)));
-    }
-    else if (row.kind == Kind::Number)
+    if (row.kind == Kind::Number)
     {
         // As the F1 menu writes it (its multiplier: 1.0x).
         NumberText number = nullptr;

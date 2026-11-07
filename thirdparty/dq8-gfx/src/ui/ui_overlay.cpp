@@ -180,15 +180,6 @@ void Overlay::setGameNumberValue(const std::string &key, int value) {
     }
 }
 
-void Overlay::setSides(gfx::SdlGpuSides sides) {
-    if (m_settings.display.sides == sides)
-        return;
-    m_settings.display.sides = sides;
-    m_backend.setDisplayOptions(m_settings.display);
-    markDirty();
-    saveIfDirty(true);
-}
-
 int Overlay::gameNumber(const GameOption &option) const {
     const auto found = m_settings.gameNumbers.find(option.key);
     const int value = found != m_settings.gameNumbers.end() ? found->second : option.defaultNumber;
@@ -693,9 +684,11 @@ std::string Overlay::padButtonName(SDL_GamepadButton button) const {
     return bindingLabel(gfx::PadBinding::button(button), displayedControllerType());
 }
 
-void Overlay::render(SDL_GPUCommandBuffer *commands, SDL_GPUTexture *target, uint32_t, uint32_t) {
+void Overlay::render(SDL_GPUCommandBuffer *commands, SDL_GPUTexture *target, uint32_t width, uint32_t height) {
     if (!m_rendererReady)
         return;
+    m_targetWidth = width;
+    m_targetHeight = height;
     ImGui::SetCurrentContext(m_context);
     ++m_presents;
     runScript();
@@ -1090,18 +1083,14 @@ void Overlay::sampleFrameRate() {
     m_rateRenders = renders;
 }
 
-// The game picture in points, below the menu bar; the whole window until a
-// frame has been shown.
-void Overlay::pictureBounds(ImVec2 &min, ImVec2 &max) const {
+// The window in points, below the menu bar. The frame-rate counter and the
+// speed badge sit in its corners, as the notifications do, rather than in
+// the picture's: with bars at the sides (4:3 in a wide window) they moved
+// in with the picture (Rogue Galaxy: changed).
+void Overlay::windowBounds(ImVec2 &min, ImVec2 &max) const {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
-    const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
     min = viewport->WorkPos;
     max = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x, viewport->WorkPos.y + viewport->WorkSize.y);
-    const gfx::SdlGpuRect rect = m_backend.displayRect();
-    if (rect.width != 0u && scale.x > 0.0f && scale.y > 0.0f) {
-        min = ImVec2(std::max(min.x, rect.x / scale.x), std::max(min.y, rect.y / scale.y));
-        max = ImVec2(std::min(max.x, (rect.x + rect.width) / scale.x), std::min(max.y, (rect.y + rect.height) / scale.y));
-    }
 }
 
 void Overlay::drawFps() {
@@ -1109,9 +1098,8 @@ void Overlay::drawFps() {
     m_fpsLeftBottom = 0.0f;
     if (!m_settings.showFps)
         return;
-    // Inside the picture rather than over the bars around it.
     ImVec2 min, max;
-    pictureBounds(min, max);
+    windowBounds(min, max);
     const float margin = em(0.6f);
     const bool right = m_settings.fpsCorner == Corner::TopRight || m_settings.fpsCorner == Corner::BottomRight;
     const bool bottom = m_settings.fpsCorner == Corner::BottomLeft || m_settings.fpsCorner == Corner::BottomRight;
@@ -1160,7 +1148,7 @@ void Overlay::drawSpeedBadge() {
     if (!m_fastForward)
         return;
     ImVec2 min, max;
-    pictureBounds(min, max);
+    windowBounds(min, max);
     const float margin = em(0.6f);
     ImGui::SetNextWindowPos(ImVec2(min.x + margin, std::max(min.y, m_fpsLeftBottom) + margin), ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(0.7f), em(0.35f)));

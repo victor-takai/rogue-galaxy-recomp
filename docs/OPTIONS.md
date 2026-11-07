@@ -44,6 +44,12 @@ Settings has seven pages, written here as F1 > Settings > Game and so on:
 - **Interface**: the menu's size, notifications, pause and fast-forward,
   the frame-rate counter.
 
+An option that does nothing as things stand stays on its page, greyed
+out, with a line under it saying what would make it work: Mouse
+sensitivity until Mouse camera is on, the undub until `Install-Undub.bat`
+has read your Japanese disc, Borders while the picture fills the window,
+a language of Text whose files are missing.
+
 | Key | |
 |---|---|
 | F2 | Pause |
@@ -63,7 +69,7 @@ F1 > Settings > Game, in these sections:
 | Option | |
 |---|---|
 | 60 frames per second | On by default; off, the game's own 30. From the next start. |
-| Widescreen | Off by default. A wider view, from 4:3 to 32:9; with Display > Aspect ratio on Auto (the default) it fills the window. |
+| Widescreen | Off by default. A wider view, from 4:3 to 32:9; with Display > Aspect ratio on Auto (the default) it fills the window. With the picture shown at 4:3 (Aspect ratio on 4:3 or Native, or a window no wider than 4:3) it does nothing, and the menu greys it out. |
 | Minimap size | 0.5x to 1.0x the game's, toward its corner. |
 | Compass size | 0.5x to 1.0x the game's, toward its corner. |
 | Field of view | 40 to 90 degrees (the game's is 52). |
@@ -135,13 +141,14 @@ F1 > Settings > Language.
 
 ## In the game's own menu
 
-Most of the same options, and Display > Borders, are on the game's Settings
-screen (System > Settings in the main menu): L1 and R1 turn the page, and
-a number's - and + buttons lower and raise it. With the text in French,
-German, Spanish or Italian, the options are named in that language there too.
+Most of the same options are on the game's Settings screen (System >
+Settings in the main menu): L1 and R1 turn the page, and a number's - and
++ buttons lower and raise it. With the text in French, German, Spanish or
+Italian, the options are named in that language there too. Widescreen,
 Controller's buttons, the mouse camera's three options, Check for new
 versions, the three Director's Cut options, Native renderer, the text's
-language, the undub and the texture packs are in F1 alone.
+language, the undub, the texture packs and Display > Borders are in F1
+alone.
 
 <p align="center">
   <img src="images/settings-switches.jpg" width="49%" alt="The game's Settings screen: the switches">
