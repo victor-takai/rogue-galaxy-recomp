@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "return_hook.h"
 #include "scene_timing.h"
 
 namespace rg::textlanguage
@@ -300,6 +301,10 @@ std::string englishName(const std::string &name, std::vector<size_t> &at)
     return english;
 }
 
+// Below: the European lists' widths.
+void patchItemCommands(uint8_t *rdram);
+void centrePartyLabel(R5900Context *ctx);
+
 void dirTableFindFile(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     const uint32_t entryAddress = getRegU32(ctx, 5);
@@ -316,6 +321,9 @@ void dirTableFindFile(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
             std::fprintf(stderr, "[rg] lookup: %s\n", name.c_str());
         }
         Index &text = textIndex(rdram, ctx);
+        // The game's first file is found long before any menu opens; by
+        // then the text's own files are known usable or not.
+        patchItemCommands(rdram);
         const auto found = text.ok ? text.files.find(name) : text.files.end();
         if (found != text.files.end())
         {
@@ -468,6 +476,7 @@ std::atomic<uint32_t> g_layoutNext{0};
 
 void uiLayoutStringGlyphs(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
+    centrePartyLabel(ctx);
     const uint32_t textAddress = getRegU32(ctx, 5);
     if (g_active && textAddress != 0)
     {
@@ -690,6 +699,423 @@ void pauseReasonDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     g_originalPauseDraw(rdram, ctx, runtime);
 }
 
+// The main menu's System submenu (Settings and Help, Opciones and Ayuda): its
+// highlight (widget 0x1AE) and frame (0x1AF's sprites 2 to 10) come from the
+// layout, wider in a European text (european.py keeps the PAL groups' room:
+// 78 for Spanish against 70), but MenuMainSubSelectLayoutCb (0x294550, the
+// list's callback, after which nothing else sizes them) sets the unselected
+// row's background (0x1AF's sprite 0 or 1) 70 wide, the US figure, which left
+// a strip of the backdrop at its right. The PAL executable sets it to the
+// highlight's width, as this does after the callback (the same 70 in
+// English). The UI's widgets are a list from 0x4DB1B0; a widget's sprites
+// (+0x20) are 0x20 bytes each, the width an s16 at +4; the callback's a0 has
+// the selected row, an s16 at +0x12.
+constexpr uint32_t kMainSubSelectLayout = 0x00294550u;
+constexpr uint32_t kMainMenuUi = 0x004DB1B0u;
+constexpr uint16_t kSubHighlight = 0x1AEu;
+constexpr uint16_t kSubRows = 0x1AFu;
+constexpr uint32_t kSelectedRow = 0x12u;
+constexpr uint32_t kWidgetSprites = 0x20u;
+constexpr uint32_t kSpriteBytes = 0x20u;
+constexpr uint32_t kSpriteWidth = 0x4u;
+PS2Runtime::RecompiledFunction g_originalSubLayout = nullptr;
+
+// The widget `id` of the UI at `ui`, or 0.
+uint32_t findWidget(const uint8_t *rdram, uint32_t ui, uint16_t id)
+{
+    uint32_t node = readWord(rdram, ui);
+    for (int guard = 0; node != 0u && guard < 4096; ++guard)
+    {
+        const uint32_t widget = readWord(rdram, node);
+        if (widget == 0u)
+        {
+            return 0u;
+        }
+        uint16_t widgetId = 0u;
+        std::memcpy(&widgetId, rdram + (widget & 0x1FFFFFFFu), sizeof(widgetId));
+        if (widgetId == id)
+        {
+            return widget;
+        }
+        node = readWord(rdram, node + 8u);
+    }
+    return 0u;
+}
+
+int europeanColumn();
+
+void afterSubLayout(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t list)
+{
+    if (europeanColumn() < 0)
+    {
+        return;
+    }
+    const uint32_t highlight = findWidget(rdram, kMainMenuUi, kSubHighlight);
+    const uint32_t rows = findWidget(rdram, kMainMenuUi, kSubRows);
+    const uint32_t highlightSprites = highlight ? readWord(rdram, highlight + kWidgetSprites) : 0u;
+    const uint32_t rowSprites = rows ? readWord(rdram, rows + kWidgetSprites) : 0u;
+    if (list == 0u || highlightSprites == 0u || rowSprites == 0u)
+    {
+        return;
+    }
+    int16_t width = 0, selected = 0;
+    std::memcpy(&width, rdram + ((highlightSprites + kSpriteWidth) & 0x1FFFFFFFu), sizeof(width));
+    std::memcpy(&selected, rdram + ((list + kSelectedRow) & 0x1FFFFFFFu), sizeof(selected));
+    if (width <= 0)
+    {
+        return;
+    }
+    for (int16_t row = 0; row < 2; ++row)
+    {
+        const uint32_t at = (rowSprites + static_cast<uint32_t>(row) * kSpriteBytes + kSpriteWidth) & 0x1FFFFFFFu;
+        int16_t rowWidth = 0;
+        std::memcpy(&rowWidth, rdram + at, sizeof(rowWidth));
+        if (row != selected && rowWidth != 0)
+        {
+            std::memcpy(rdram + at, &width, sizeof(width));
+        }
+    }
+}
+
+// These fix-ups run once the hooked original has returned to its caller
+// (rg::hooks::callThen): a scheduler checkpoint may stop it at any of its
+// calls, and the run loop then finishes it past the hook. In English the
+// hooks only call the original.
+void mainSubSelectLayout(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (europeanColumn() < 0)
+    {
+        g_originalSubLayout(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalSubLayout, rdram, ctx, runtime, &afterSubLayout, getRegU32(ctx, 4));
+}
+
+// Lists the US code sizes once, for English, and the PAL executable per
+// language from tables of its own (read from SCES-54552; its columns are
+// English, Spanish, French, Italian, German). In a European text they take
+// the PAL widths, as that executable sets them; in English they stay.
+// Indexed by our languages' order (French, German, Spanish, Italian).
+int16_t readHalf(const uint8_t *rdram, uint32_t address)
+{
+    int16_t value = 0;
+    std::memcpy(&value, rdram + (address & 0x1FFFFFFFu), sizeof(value));
+    return value;
+}
+
+void writeHalf(uint8_t *rdram, uint32_t address, int16_t value)
+{
+    std::memcpy(rdram + (address & 0x1FFFFFFFu), &value, sizeof(value));
+}
+
+// French 0 to Italian 3, or -1 in English (and while the language's files
+// are not known usable, when the game reads the English ones).
+int europeanColumn()
+{
+    const int language = g_language.load(std::memory_order_relaxed);
+    return g_active && g_text.loaded && g_text.ok && language >= 1 && language <= 4 ? language - 1 : -1;
+}
+
+// The item commands' lists (Use, Equip, Discard...), six of them: their
+// frame (MenuItemCmdFrameResize, 0x2A5750), rows and highlight
+// (MenuItemCmdSetRowHighlight, 0x2A1800), labels (0x2A6060, 0x2A5BD0), the
+// count panel under them (0x2A53F0) and their place (0x2A4620) all read a
+// list's width from {s16 rows, s16 width} x6 at 0x450DD0, nothing else
+// does, and the table is never loaded again; the PAL one (0x46E9D0) has a
+// width per language. Written once, before any menu opens.
+constexpr uint32_t kItemCmdTable = 0x00450DD0u;
+constexpr int16_t kItemCmdUs[6] = {80, 74, 64, 78, 94, 86};
+constexpr int16_t kItemCmdWidths[6][4] = {
+    {82, 84, 82, 78}, {72, 88, 78, 82}, {58, 74, 78, 68}, {74, 72, 78, 70}, {100, 98, 98, 82}, {82, 90, 94, 76},
+};
+bool g_itemCommandsPatched = false;
+
+void patchItemCommands(uint8_t *rdram)
+{
+    const int column = europeanColumn();
+    if (g_itemCommandsPatched || column < 0)
+    {
+        return;
+    }
+    g_itemCommandsPatched = true;
+    for (uint32_t list = 0; list < 6u; ++list)
+    {
+        if (readHalf(rdram, kItemCmdTable + 4u * list + 2u) != kItemCmdUs[list])
+        {
+            std::fprintf(stderr, "[rg] the item commands keep the US widths (not the table expected)\n");
+            return;
+        }
+    }
+    for (uint32_t list = 0; list < 6u; ++list)
+    {
+        writeHalf(rdram, kItemCmdTable + 4u * list + 2u, kItemCmdWidths[list][column]);
+    }
+}
+
+// A party member's commands: a list of four rows (widget 0x11A) or of three
+// (0x119), 124 and 84 wide in the US code, PAL's 0x48D530 and 0x48D540 per
+// language. MenuPartyMemberCmdOpenState (0x2B99F0) writes the list's frame
+// into its sprites (offsets from the first: the rows' width W+14, the
+// middle's width W, W+12 for the right-hand pieces (the x of some, the width
+// of others), the right edge's x W+17) and centres the
+// labels at W/2+11 (its UiLayoutStringGlyphs calls); MenuPartyCmdListHighlight
+// (0x29C440) sets the unselected rows and the highlight (widget 0x118's first
+// sprite) W+14 wide. The open state's UI is the one at 0x482360, the
+// highlight's its menu's (a0) at +0x4C4, as each reads it. After each, the
+// language's W where the US one is.
+constexpr uint32_t kMenuUi = 0x00482360u;
+constexpr uint32_t kPartyCmdOpen = 0x002B99F0u;
+constexpr uint32_t kPartyCmdHighlight = 0x0029C440u;
+constexpr uint32_t kPartyCmdMenuUi = 0x4C4u;
+constexpr uint16_t kPartyCmdHighlightWidget = 0x118u;
+struct PartyList
+{
+    uint16_t id;
+    int16_t us;
+    int16_t widths[4];
+    uint32_t rows[4];
+    uint32_t middles[2];
+    uint32_t corners[5];
+    uint32_t edge;
+};
+constexpr PartyList kPartyLists[] = {
+    {0x11Au, 124, {102, 140, 88, 100}, {0x4u, 0x24u, 0x44u, 0x64u}, {0xA4u, 0x144u},
+     {0xC0u, 0x160u, 0x184u, 0x1A4u, 0x1C4u}, 0x100u},
+    {0x119u, 84, {104, 140, 88, 94}, {0x4u, 0x24u, 0x44u, 0u}, {0x84u, 0x124u}, {0xA0u, 0x140u, 0x164u, 0x184u, 0u},
+     0xE0u},
+};
+// The open state's label calls (UiLayoutStringGlyphs), by where they return.
+constexpr uint32_t kPartyLabelReturns[] = {0x002B9C88u, 0x002B9CC4u, 0x002B9D00u, 0x002B9D3Cu};
+PS2Runtime::RecompiledFunction g_originalPartyOpen = nullptr;
+PS2Runtime::RecompiledFunction g_originalPartyHighlight = nullptr;
+
+uint32_t widgetSprites(const uint8_t *rdram, uint32_t ui, uint16_t id)
+{
+    const uint32_t widget = ui ? findWidget(rdram, ui, id) : 0u;
+    return widget ? readWord(rdram, widget + kWidgetSprites) : 0u;
+}
+
+void afterPartyOpen(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t)
+{
+    const int column = europeanColumn();
+    if (column < 0)
+    {
+        return;
+    }
+    const uint32_t ui = readWord(rdram, kMenuUi);
+    for (const PartyList &list : kPartyLists)
+    {
+        const uint32_t sprites = widgetSprites(rdram, ui, list.id);
+        // The frame as the US code has just written it.
+        if (sprites == 0u || readHalf(rdram, sprites + list.edge) != list.us + 17)
+        {
+            continue;
+        }
+        const int16_t width = list.widths[column];
+        for (const uint32_t row : list.rows)
+        {
+            if (row != 0u && readHalf(rdram, sprites + row) == list.us + 14)
+            {
+                writeHalf(rdram, sprites + row, static_cast<int16_t>(width + 14));
+            }
+        }
+        for (const uint32_t middle : list.middles)
+        {
+            writeHalf(rdram, sprites + middle, width);
+        }
+        for (const uint32_t corner : list.corners)
+        {
+            if (corner != 0u)
+            {
+                writeHalf(rdram, sprites + corner, static_cast<int16_t>(width + 12));
+            }
+        }
+        writeHalf(rdram, sprites + list.edge, static_cast<int16_t>(width + 17));
+    }
+}
+
+void partyCmdOpen(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (europeanColumn() < 0)
+    {
+        g_originalPartyOpen(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalPartyOpen, rdram, ctx, runtime, &afterPartyOpen, 0u);
+}
+
+// `data`: the highlight's menu, with its low bit set for the four-row list
+// (the game's ids are 0x11A and 0x119, from its table at 0x4614C0).
+void afterPartyHighlight(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t data)
+{
+    const int column = europeanColumn();
+    if (column < 0)
+    {
+        return;
+    }
+    const PartyList &list = (data & 1u) ? kPartyLists[0] : kPartyLists[1];
+    const uint16_t id = list.id;
+    const uint32_t ui = readWord(rdram, (data & ~1u) + kPartyCmdMenuUi);
+    const int16_t width = static_cast<int16_t>(list.widths[column] + 14);
+    if (const uint32_t sprites = widgetSprites(rdram, ui, id))
+    {
+        for (uint32_t row = 0; row < 4u; ++row)
+        {
+            const uint32_t at = sprites + row * kSpriteBytes + kSpriteWidth;
+            if (readHalf(rdram, at) == list.us + 14)
+            {
+                writeHalf(rdram, at, width);
+            }
+        }
+    }
+    if (const uint32_t sprites = widgetSprites(rdram, ui, kPartyCmdHighlightWidget);
+        sprites != 0u && readHalf(rdram, sprites + kSpriteWidth) == list.us + 14)
+    {
+        writeHalf(rdram, sprites + kSpriteWidth, width);
+    }
+}
+
+void partyCmdHighlight(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t menu = getRegU32(ctx, 4);
+    const uint16_t id = static_cast<uint16_t>(getRegU32(ctx, 5));
+    if (europeanColumn() < 0 || menu == 0u || (menu & 1u) != 0u ||
+        (id != kPartyLists[0].id && id != kPartyLists[1].id))
+    {
+        g_originalPartyHighlight(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalPartyHighlight, rdram, ctx, runtime, &afterPartyHighlight,
+                        menu | (id == kPartyLists[0].id ? 1u : 0u));
+}
+
+// The save screens' Yes/No box (SaveMsgBoxShow, 0x376BF0, a1 the UI): the US
+// code puts its two labels at fixed places in their buttons (the box's
+// sprites 9 and 10, its widget id at 0x47FB04), 12 and 18 in, where "Yes"
+// and "No" sit in the middle; the PAL code centres them on the buttons
+// (UiSetTextCenteredX, 0x28F300, at a button's x + 26), so "Sí" or "Oui" do
+// not sit to one side. As it, after the original, in a European text.
+constexpr uint32_t kSaveMsgBoxShow = 0x00376BF0u;
+constexpr uint32_t kUiSetTextCenteredX = 0x0028F300u;
+constexpr uint32_t kSaveMsgBoxId = 0x0047FB04u;
+constexpr uint32_t kButtonsFirst = 9u;
+// A widget's texts (+0x28), 0x10 bytes each, x an s16 at +0.
+constexpr uint32_t kWidgetTexts = 0x28u;
+constexpr uint32_t kTextStride = 0x10u;
+constexpr int16_t kButtonMiddle = 0x1A;
+PS2Runtime::RecompiledFunction g_originalSaveMsgBox = nullptr;
+PS2Runtime::RecompiledFunction g_originalCentredX = nullptr;
+
+// UiSetTextCenteredX(ui, id, x, text), the game's own (past the hook), to
+// its end.
+void centreText(uint8_t *rdram, const R5900Context *ctx, PS2Runtime *runtime, uint32_t ui, uint32_t id, int32_t x,
+                uint32_t text)
+{
+    if (!g_originalCentredX)
+    {
+        return;
+    }
+    R5900Context local = *ctx;
+    local.r[4] = _mm_set_epi64x(0, static_cast<int64_t>(ui));
+    local.r[5] = _mm_set_epi64x(0, static_cast<int64_t>(id));
+    local.r[6] = _mm_set_epi64x(0, static_cast<int64_t>(x));
+    local.r[7] = _mm_set_epi64x(0, static_cast<int64_t>(text));
+    if (!rg::hooks::runToEnd(g_originalCentredX, kUiSetTextCenteredX, rdram, local, runtime))
+    {
+        std::fprintf(stderr, "[rg] centring a label stopped at 0x%08X\n", local.pc);
+    }
+}
+
+void afterSaveMsgBox(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t ui)
+{
+    if (europeanColumn() < 0 || ui == 0u)
+    {
+        return;
+    }
+    const uint16_t id = static_cast<uint16_t>(readHalf(rdram, kSaveMsgBoxId));
+    const uint32_t widget = findWidget(rdram, ui, id);
+    const uint32_t sprites = widget ? readWord(rdram, widget + kWidgetSprites) : 0u;
+    const uint32_t texts = widget ? readWord(rdram, widget + kWidgetTexts) : 0u;
+    // A question: the US code has just put "Yes" 12 into its button (the
+    // buttons are sized later, so their width says nothing yet).
+    if (sprites == 0u || texts == 0u ||
+        readHalf(rdram, texts + kTextStride) != readHalf(rdram, sprites + kButtonsFirst * kSpriteBytes) + 12)
+    {
+        return;
+    }
+    for (uint32_t label = 1u; label <= 2u; ++label)
+    {
+        const int16_t x = readHalf(rdram, sprites + (kButtonsFirst + label - 1u) * kSpriteBytes);
+        centreText(rdram, ctx, runtime, ui, id, x + kButtonMiddle, label);
+    }
+}
+
+void saveMsgBoxShow(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (europeanColumn() < 0)
+    {
+        g_originalSaveMsgBox(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalSaveMsgBox, rdram, ctx, runtime, &afterSaveMsgBox, getRegU32(ctx, 5));
+}
+
+// The battle's warning with the gauge empty (widget 0x83 of the normal
+// overlay's FieldHudWidget83Open, 0x4F95B0: "You can't fight until [atg]
+// recharges!" over "Guard against attacks with [r1] to recharge it!"): the US
+// code centres the second line (UiSetTextCenteredX at 0xEC) and leaves the
+// first where the layout puts it, made for the English line, so a longer
+// European one ran out of the window's right side. After that call, the
+// first line is centred at the same place. Told by where the call returns
+// (0x4F962C, the overlay's) and its arguments, as other overlays use those
+// addresses.
+constexpr uint32_t kWarningCentreReturn = 0x004F962Cu;
+constexpr uint32_t kWarningWidget = 0x83u;
+constexpr uint32_t kWarningMiddle = 0xECu;
+
+void afterWarningCentre(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t ui)
+{
+    if (europeanColumn() >= 0)
+    {
+        centreText(rdram, ctx, runtime, ui, kWarningWidget, static_cast<int32_t>(kWarningMiddle), 0u);
+    }
+}
+
+void uiSetTextCenteredX(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (europeanColumn() >= 0 && getRegU32(ctx, 31) == kWarningCentreReturn &&
+        (getRegU32(ctx, 5) & 0xFFFFu) == kWarningWidget && getRegU32(ctx, 6) == kWarningMiddle &&
+        getRegU32(ctx, 7) == 1u)
+    {
+        rg::hooks::callThen(g_originalCentredX, rdram, ctx, runtime, &afterWarningCentre, getRegU32(ctx, 4));
+        return;
+    }
+    g_originalCentredX(rdram, ctx, runtime);
+}
+
+// The open state's labels, centred on the language's list (in the label
+// call's a3: the US W/2+11, 73 or 53).
+void centrePartyLabel(R5900Context *ctx)
+{
+    const int column = europeanColumn();
+    const uint32_t from = getRegU32(ctx, 31);
+    if (column < 0 || std::find(std::begin(kPartyLabelReturns), std::end(kPartyLabelReturns), from) ==
+                          std::end(kPartyLabelReturns))
+    {
+        return;
+    }
+    const int32_t x = static_cast<int16_t>(getRegU32(ctx, 7));
+    for (const PartyList &list : kPartyLists)
+    {
+        if (x == list.us / 2 + 11)
+        {
+            ctx->r[7] = _mm_set_epi64x(_mm_extract_epi64(ctx->r[7], 1),
+                                       static_cast<int64_t>(list.widths[column] / 2 + 11));
+            return;
+        }
+    }
+}
+
 void returnSize(R5900Context *ctx, uint32_t size, const char *what)
 {
     std::fprintf(stderr, "[rg] %s: 0x%X blocks (the PAL size)\n", what, size);
@@ -851,6 +1277,28 @@ void install(PS2Runtime &runtime)
     if (!rg::timing::hookFunction(runtime, kPauseReasonDraw, &pauseReasonDraw, g_originalPauseDraw))
     {
         std::fprintf(stderr, "[rg] the pause screen keeps the US pieces\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kMainSubSelectLayout, &mainSubSelectLayout, g_originalSubLayout))
+    {
+        std::fprintf(stderr, "[rg] the main menu's System list keeps the US rows' width\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kPartyCmdOpen, &partyCmdOpen, g_originalPartyOpen) ||
+        !rg::timing::hookFunction(runtime, kPartyCmdHighlight, &partyCmdHighlight, g_originalPartyHighlight))
+    {
+        std::fprintf(stderr, "[rg] a party member's commands keep the US widths\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kSaveMsgBoxShow, &saveMsgBoxShow, g_originalSaveMsgBox))
+    {
+        std::fprintf(stderr, "[rg] the save screens' Yes and No keep the US places\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kUiSetTextCenteredX, &uiSetTextCenteredX, g_originalCentredX))
+    {
+        std::fprintf(stderr, "[rg] the battle's empty-gauge warning keeps its first line where English has it\n");
+        // The save screens' Yes/No centre with the game's own all the same.
+        if (runtime.hasFunction(kUiSetTextCenteredX))
+        {
+            g_originalCentredX = runtime.lookupFunction(kUiSetTextCenteredX);
+        }
     }
 }
 

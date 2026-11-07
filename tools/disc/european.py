@@ -609,7 +609,8 @@ def roomier(pal: list[CfgEntry], us: list[CfgEntry]) -> bool:
 
 
 def merge_layout_sprites(us: list[CfgEntry], pal_lang: list[CfgEntry], pal_en: list[CfgEntry] | None,
-                         every: bool, words: set[bytes] = frozenset()) -> tuple[list[CfgEntry], int]:
+                         every: bool, words: set[bytes] = frozenset(),
+                         keep: frozenset[int] = frozenset()) -> tuple[list[CfgEntry], int]:
     """The US layout with sprite groups of the PAL layout (same widget id, nth
     occurrence): the rectangles of the PAL pictures, the US ids. Taken: those drawn
     with a texture of `words` (the pictures the PAL language has otherwise, taken from
@@ -640,7 +641,7 @@ def merge_layout_sprites(us: list[CfgEntry], pal_lang: list[CfgEntry], pal_en: l
         n = seen.get(wid, 0)
         seen[wid] = n + 1
         options = pal_groups.get(wid, [])
-        if n >= len(options):
+        if n >= len(options) or wid in keep:
             continue
         pa, pb = options[n]
         group = pal_lang[pa:pb]
@@ -657,6 +658,44 @@ def merge_layout_sprites(us: list[CfgEntry], pal_lang: list[CfgEntry], pal_en: l
         replaced += 1
     out += us[at:]
     return out, replaced
+
+
+# The transporter's save screen: its Slot buttons' highlight (group 30911),
+# drawn with btl_st01, a picture the PAL language has otherwise, is 44 wide in
+# the PAL layout, but the US code (SavePortSelectDraw, 0x37B6E0) keeps the
+# US buttons 64 wide and never sizes the highlight, which the PAL code
+# fits to them: the PAL one left a strip of the button bare. It stays US,
+# as the title's Load screen's own has.
+TRANSPORT_LAYOUT = re.compile(r"transport_menu_def_", re.IGNORECASE)
+TRANSPORT_KEEP = frozenset({30911})
+
+TITLE_LAYOUT = re.compile(r"title_menu_def2_", re.IGNORECASE)
+TITLE_LEGAL = 30070                               # the legal text under the menu
+TITLE_MENU = (30050, 30020, 30030, 30045, 30040)  # the highlight, NEW GAME, CONTINUE, the extra row, OPTIONS
+TITLE_LIFT = 24
+
+
+def lift_title_menu(entries: list[CfgEntry]) -> tuple[list[CfgEntry], int]:
+    """The title screen's menu 24 higher where the layout has the PAL legal text.
+
+    The PAL legal text is three lines, its picture's top 22 above the US two
+    lines' (its sprite's y below 0), and the PAL title overlay places the menu's
+    widgets 24 higher than the US one, which the US executable keeps: its
+    OPTIONS ran into the text. A widget is drawn at its place plus its
+    sprites', and nothing reads these sprites' y, so the menu's go up here."""
+    groups = layout_groups(entries)
+    legal = next((a for wid, a, _ in groups if wid == TITLE_LEGAL), None)
+    if (legal is None or legal + 1 >= len(entries) or entries[legal + 1].ident != LAYOUT_SPRITE
+            or signed(entries[legal + 1].params[1]) >= 0):
+        return entries, 0
+    moved = 0
+    for wid, a, b in groups:
+        if wid in TITLE_MENU:
+            for e in entries[a + 1:b]:
+                if e.ident == LAYOUT_SPRITE:
+                    e.params[1] = (signed(e.params[1]) - TITLE_LIFT) & 0xFFFFFFFF
+                    moved += 1
+    return entries, moved
 
 
 # ---------------------------------------------------------------- the menus' glyph list
@@ -790,15 +829,104 @@ def wrap_text_file(data: bytes, limit: int, widths: dict[int, int]) -> tuple[byt
             continue
         first, sep, rest = block.partition(b"\n")
         out += first + sep
-        for line in rest.splitlines(keepends=True):
+        lines = rest.splitlines(keepends=True)
+        k = 0
+        while k < len(lines):
+            line = lines[k]
             body = line.rstrip(b"\r\n")
             if body.startswith(b"//") or body.startswith(b"@"):
                 out += line
+                k += 1
+                continue
+            # A paragraph: this line and those after it that go on with its
+            # sentence. One too long is laid out again whole, so its rest does
+            # not stand alone on a line ("(para" / "PlayStation®2)" / "de la
+            # ranura...").
+            end = k + 1
+            while body and end < len(lines) and continues(lines[end - 1].rstrip(b"\r\n"),
+                                                          lines[end].rstrip(b"\r\n")):
+                end += 1
+            bodies = [x.rstrip(b"\r\n") for x in lines[k:end]]
+            if (end - k > 1 and any(line_width(b, widths) > limit for b in bodies)
+                    and not any(BREAK.search(b) for b in bodies)):
+                each = [[w for w in b.split(b" ") if w] for b in bodies]
+                laid = balanced_lines([w for line_words in each for w in line_words], limit, widths)
+                out += b"\n".join(laid) + lines[end - 1][len(bodies[-1]):]
+                breaks += len(line_ends([len(x.split(b" ")) for x in laid]) - line_ends([len(x) for x in each]))
+                k = end
                 continue
             wrapped, n = wrap_text(body, limit, b"\n", widths)
             out += wrapped + line[len(body):]
             breaks += n
+            k += 1
     return bytes(out), breaks
+
+
+# The accent tags of lower-case letters (<`a>, <'e>, <:u>, <~n>, <oe>, <ss>...) and of
+# capitals (<`A>, <,C>, <~N>, <OE>...).
+LOWER_ACCENTS = tuple(t.encode("latin-1") for t in ACCENT_TAGS if len(t) == 4 and t[2].islower())
+UPPER_ACCENTS = tuple(t.encode("latin-1") for t in ACCENT_TAGS if len(t) == 4 and t[2].isupper())
+# A line that ends a sentence: a stop, maybe in quotes or brackets.
+SENTENCE_END = re.compile(rb"[.!?:][\x22'\xbb)\]]*\s*$")
+
+
+def continues(previous: bytes, line: bytes) -> bool:
+    """A message's line that goes on with the sentence of the line before it: it starts
+    with a lower-case letter, accented ones included, or with a capital (a name, a
+    German noun) after a line that ends no sentence."""
+    if not line:
+        return False
+    if 0x61 <= line[0] <= 0x7A or line.startswith(LOWER_ACCENTS):
+        return True
+    return (0x41 <= line[0] <= 0x5A or line.startswith(UPPER_ACCENTS)) and not SENTENCE_END.search(previous)
+
+
+def line_ends(counts: list[int]) -> set[int]:
+    """Where lines of so many words each break, counted in words."""
+    ends, total = set(), 0
+    for count in counts[:-1]:
+        total += count
+        ends.add(total)
+    return ends
+
+
+def balanced_lines(words: list[bytes], limit: int, widths: dict[int, int]) -> list[bytes]:
+    """The words in as few lines as fit `limit`, the longest line as short as it can
+    be (a word wider than `limit` alone on its line)."""
+    sizes = [line_width(w, widths) for w in words]
+    n = len(words)
+    before = [0]
+    for size in sizes:
+        before.append(before[-1] + size)
+
+    def span(i: int, j: int) -> int:
+        return before[j] - before[i] + SPACE_WIDTH * (j - i - 1)
+
+    count, start = 0, 0
+    while start < n:  # the fewest lines, greedily
+        end = start + 1
+        while end < n and span(start, end + 1) <= limit:
+            end += 1
+        count, start = count + 1, end
+    worst = float("inf")
+    best = [[worst] * (n + 1) for _ in range(count + 1)]
+    cut = [[0] * (n + 1) for _ in range(count + 1)]
+    best[0][0] = 0
+    for k in range(1, count + 1):
+        for j in range(1, n + 1):
+            for i in range(k - 1, j):
+                width = span(i, j)
+                if best[k - 1][i] == worst or (width > limit and j - i > 1):
+                    continue
+                longest = max(best[k - 1][i], width)
+                if longest < best[k][j]:
+                    best[k][j], cut[k][j] = longest, i
+    out, j = [], n
+    for k in range(count, 0, -1):
+        i = cut[k][j]
+        out.append(b" ".join(words[i:j]))
+        j = i
+    return out[::-1]
 
 
 def split_pages(text: bytes, lines: int) -> bytes:
@@ -958,10 +1086,14 @@ def build_pack(us_pack: bytes, pal_pack: bytes, pal_en_pack: bytes | None, code:
                     layout, pal_layout = cfg_read(data), cfg_read(p.data)
                     english = cfg_read(bridge.data) if bridge else None
                     if layout is not None and pal_layout is not None:
-                        layout, groups = merge_layout_sprites(layout, pal_layout, english, atlas_moved, words)
+                        keep = TRANSPORT_KEEP if TRANSPORT_LAYOUT.search(lower) else frozenset()
+                        layout, groups = merge_layout_sprites(layout, pal_layout, english, atlas_moved, words, keep)
                         layout, texts = merge_layout_text(layout, pal_layout)
                         layout, cells = widen_text_cells(layout, pal_layout)
                         texts += cells
+                        if TITLE_LAYOUT.search(lower):
+                            layout, lifted = lift_title_menu(layout)
+                            groups += 1 if lifted else 0
                         if groups or texts:
                             data = cfg_write(layout)
                             report.sprite_groups += groups
