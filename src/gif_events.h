@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,54 @@ struct GifState
 // Appends the events of one packet: a chain of GIF tags up to EOP or the end
 // of the bytes. IMAGE data is counted, not decoded.
 GifDecodeStats decodeGifPacket(const uint8_t *data, uint32_t size, GifState &state, std::vector<GifEvent> &out);
+
+// The GIF packets in a DIRECT's bytes, each up to its EOP: `visit` gets
+// the offset and size of each. The GS reads on past an EOP, and a tag whose
+// data runs past the DIRECT's end is cut there (GS::processGIFPacket drops
+// the rest; the next DIRECT starts at a tag): the last piece is visited as
+// it is, and false says one was cut.
+template <typename Visit> bool eachPacket(const uint8_t *data, uint32_t size, Visit visit)
+{
+    uint32_t start = 0u;
+    uint32_t at = 0u;
+    while (at + 16u <= size)
+    {
+        uint64_t tag;
+        std::memcpy(&tag, data + at, sizeof(tag));
+        at += 16u;
+        const uint32_t nloop = static_cast<uint32_t>(tag & 0x7FFFu);
+        const uint32_t flg = static_cast<uint32_t>((tag >> 58) & 3u);
+        uint32_t nreg = static_cast<uint32_t>(tag >> 60);
+        nreg = nreg == 0u ? 16u : nreg;
+        if (flg == 0u)
+        {
+            at += nloop * nreg * 16u;
+        }
+        else if (flg == 1u)
+        {
+            at += ((nloop * nreg * 8u) + 15u) & ~15u;
+        }
+        else
+        {
+            at += nloop * 16u;
+        }
+        if (at > size)
+        {
+            visit(start, size - start);
+            return false;
+        }
+        if ((tag >> 15) & 1u)
+        {
+            visit(start, at - start);
+            start = at;
+        }
+    }
+    if (start < size && at >= size)
+    {
+        visit(start, size - start);
+    }
+    return true;
+}
 
 // Field tolerances for compare(): differences up to these count as equal.
 struct Tolerance

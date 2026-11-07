@@ -24,6 +24,8 @@
 #include "debug/vu1_replay.h"
 #include "native_renderer.h"
 #include "vu1_native.h"
+#include "draw_state_mirror.h"
+#include "native_producer.h"
 #include "ps2_runtime.h"
 #include "ps2_syscalls.h"
 #include "runtime/ee_scheduler.h"
@@ -64,18 +66,26 @@ const uint32_t g_checkEvery = [] {
     return static_cast<uint32_t>(every == 0ul ? 1ul : every);
 }();
 // Whether the GPU path takes the chunks slot E clips: only with the native
-// renderer and RG_VU1_CLIP_ON_GPU=1. Off by default: the field walk of
-// October 29 lost the near wall's texture and part of the ledge with them
-// on the GPU (the clipper's new vertices take a depth made of each corner's
-// capped, clamped one, which is not linear outside E's planes). Read at
-// first use, after the menu's setting.
+// renderer, and there under the native pipeline or with
+// RG_VU1_CLIP_ON_GPU=1 (=0 keeps them on the VU1 even under the pipeline).
+// Otherwise off: the field walk of October 29 lost the near wall's texture
+// and part of the ledge with them on the GPU (the clipper's new vertices
+// take a depth made of each corner's capped, clamped one, which is not
+// linear outside E's planes). The pipeline has no GS to draw the VU1's
+// packets: they would reach it as 2D pieces, their texture interpolated
+// across the screen without perspective (textures twist in front of the
+// camera). Read at first use, after the menu's setting.
 struct GpuClips
 {
     operator bool() const
     {
         static const bool on = [] {
+            if (!rg::nativerenderer::enabled())
+                return false;
             const char *gpu = std::getenv("RG_VU1_CLIP_ON_GPU");
-            return rg::nativerenderer::enabled() && gpu && *gpu && std::strcmp(gpu, "0") != 0;
+            if (gpu && *gpu)
+                return std::strcmp(gpu, "0") != 0;
+            return rg::nativeproducer::pipelineOn();
         }();
         return on;
     }
@@ -524,8 +534,10 @@ private:
 GifStage *g_stage = nullptr;
 // A GS packet on its way, as the memory's GIF callback sends it (below).
 void deliverPacket(GS &gs, const uint8_t *data, uint32_t size);
-// A native strip likewise, in order with the packets.
-void deliverMesh(GS &gs, const GSNativeMesh &mesh);
+// A native strip likewise, in order with the packets. `vu1Data`: the VU1
+// data memory a program's mesh was built from, for the native pipeline's
+// mesh draw (rg::nativeproducer::mesh); null for others.
+void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data = nullptr);
 // For busyReport's VU1 pair counts.
 PS2Runtime *g_runtime = nullptr;
 
@@ -745,7 +757,7 @@ public:
             {
                 const bool gpu = nativeMode() == rg::vu1native::Mode::Gpu;
                 // The chunks that clip (slot E) go to the GPU with the native
-                // renderer and RG_VU1_CLIP_ON_GPU=1: the mesh carries E's near
+                // renderer, under the pipeline or with RG_VU1_CLIP_ON_GPU=1: the mesh carries E's near
                 // and far planes and the shader clips there (gl_ClipDistance),
                 // so no driver is left to cut at the eye on its own.
                 // Otherwise, and in the packet modes, they go to the VU1.
@@ -836,7 +848,7 @@ public:
                 }
                 if (nativeMode() == rg::vu1native::Mode::Gpu && rg::vu1native::hasMesh(*native))
                 {
-                    deliverMesh(m_runtime.gs(), m_nativeMesh);
+                    deliverMesh(m_runtime.gs(), m_nativeMesh, memory.getVU1Data());
                 }
                 // What the VU1 would have left in its memory, where it did not run.
                 if (nativeMode() != rg::vu1native::Mode::Replace)
@@ -1039,8 +1051,11 @@ Vif1Thread *g_thread = nullptr;
 
 void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
 {
+    // The native pipeline's draw-state mirror follows every packet, in the
+    // order the GS gets them.
     if (g_stage && t_onVif1Thread)
     {
+        rg::drawstate::observe(data, size);
         g_stage->packet(data, size);
         return;
     }
@@ -1050,13 +1065,25 @@ void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
         // every DMA start drains them already, this keeps it so.
         g_thread->drain();
     }
+    rg::drawstate::observe(data, size);
     ps2_gs_detail::t_sourceTag = t_onVif1Thread ? t_vu1Tag : 0u;
     ps2_gs_detail::t_sourceCamera = t_onVif1Thread ? t_vu1Camera : 0u;
     gs.processGIFPacket(data, size);
 }
 
-void deliverMesh(GS &gs, const GSNativeMesh &mesh)
+void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data)
 {
+    // Steps 4a and 4c of docs/NATIVE-PIPELINE.md: a VU1 program's mesh as a
+    // native mesh draw, under the draw state the GS would draw it with; made
+    // one, it does not go to the GS at all.
+    if (vu1Data && rg::drawstate::enabled())
+    {
+        if (g_stage && !t_onVif1Thread)
+            g_thread->drain();
+        const GSDrawState state = rg::drawstate::current();
+        if (rg::nativeproducer::mesh(mesh, &state, vu1Data, 0u))
+            return;
+    }
     if (g_stage && t_onVif1Thread)
     {
         g_stage->mesh(mesh);
@@ -1189,6 +1216,10 @@ void gsWaiter(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     g_thread->drain();
     g_gsWaiters[Index].second(rdram, ctx, runtime);
+    // The stubs write the front end's registers themselves (sceGsPutDrawEnv,
+    // sceGsSwapDBuff's environments and clear): the native pipeline's
+    // draw-state mirror reads them back.
+    rg::drawstate::readBack(runtime->gs());
 }
 
 template <size_t... I>

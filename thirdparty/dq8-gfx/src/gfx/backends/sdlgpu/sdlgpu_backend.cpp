@@ -1,5 +1,7 @@
 #include "gfx/backends/sdlgpu/sdlgpu_backend.h"
 
+#include "gfx/native/native_pipeline.h"
+
 #include "gfx/backends/sdlgpu/sdlgpu_device.h"
 #include "gfx/backends/sdlgpu/sdlgpu_input.h"
 #include "gfx/backends/sdlgpu/sdlgpu_targets.h"
@@ -643,6 +645,10 @@ void setPresentObserver(std::function<void(double)> observer) {
 struct SdlGpuBackend::Impl {
     mutable std::mutex mutex;
     SdlGpuDevice device;
+    // The native pipeline's renderer (docs/NATIVE-PIPELINE.md, Rogue Galaxy:
+    // added), when native::enabled(): it shares this backend's device and
+    // presenter.
+    native::Renderer nativeRenderer;
     GsVram vram;
     std::unique_ptr<GsTransferEngine> transfer;
     GSTransferCommand transferCommand{};
@@ -3851,6 +3857,8 @@ struct SdlGpuBackend::Impl {
             longestPresentGap = 0.0;
             line += buf;
             std::fprintf(stderr, "%s\n", line.c_str());
+            if (native::enabled())
+                std::fputs(nativeRenderer.statsLine().c_str(), stderr);
         }
 
         previous = stats;
@@ -4618,6 +4626,37 @@ struct SdlGpuBackend::Impl {
         }
     }
 
+    // The native renderer's scene into the present source, recorded before
+    // the copy (copyToPresentSource submits what is pending first).
+    bool presentNative(PresentStage &stage) {
+        std::string error;
+        SDL_GPUCommandBuffer *commands = device.pendingCommands(error, "native pipeline");
+        if (!commands)
+            return setError(std::move(error));
+        native::Renderer::Frame out;
+        if (!nativeRenderer.render(device.handle(), commands, std::max<uint32_t>(scale, 1u), out, error))
+            return setError(std::move(error));
+        if (!copyToPresentSource(out.texture, out.width, out.height))
+            return false;
+        PresentationFrame &frame = stage.frame;
+        frame.width = out.width;
+        frame.height = out.height;
+        frame.rowPitchBytes = 0u;
+        frame.displayFbp = 0u;
+        frame.sourceFbp = 0u;
+        frame.mode = GSPresentationMode::BackendNative;
+        // Screenshots latch host pixels: the slot is read back for them, as
+        // the GPU composition's is.
+        if (gsScreenshotEnabled()) {
+            stage.download = true;
+            frame.mode = GSPresentationMode::HostPixels;
+            frame.rowPitchBytes = out.width * 4u;
+        }
+        stage.native = true;
+        stage.haveFrame = true;
+        return true;
+    }
+
     void acquirePresentation(const GSPresentationRequest &request, PresentStage &stage) {
         PresentationFrame &frame = stage.frame;
         ++stats.presents;
@@ -4633,6 +4672,13 @@ struct SdlGpuBackend::Impl {
                          stats.transferBytes != previousPresentTransfers;
         previousPresentDraws = stats.drawCalls;
         previousPresentTransfers = stats.transferBytes;
+
+        // The native pipeline shows its own scene, not what the GS's display
+        // registers name (Rogue Galaxy: added; RG_NATIVE_PIPELINE).
+        if (window != nullptr && native::enabled()) {
+            presentNative(stage);
+            return;
+        }
 
         const GsPmodeState pmode = gsDecodePmode(request.pmode);
         const GsSmode2State smode2 = gsDecodeSmode2(request.smode2);
@@ -4975,6 +5021,7 @@ SdlGpuBackend::~SdlGpuBackend() {
         for (auto &level : m_impl->blurLevels)
             m_impl->releaseScratch(level);
         m_impl->releaseSideImage();
+        m_impl->nativeRenderer.release(m_impl->device.handle());
         if (m_impl->window) {
             SDL_ReleaseWindowFromGPUDevice(m_impl->device.handle(), m_impl->window);
             SDL_DestroyWindow(m_impl->window);

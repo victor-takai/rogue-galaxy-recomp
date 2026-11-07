@@ -44,6 +44,29 @@ add_library(dq8_gfx_gs STATIC
 target_include_directories(dq8_gfx_gs PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(dq8_gfx_gs PUBLIC dq8_host_simd ps2_runtime)
 
+# The native pipeline (Rogue Galaxy: added; the game's docs/NATIVE-PIPELINE.md):
+# records and the renderer that takes them. It links SDL3 alone, not the
+# runtime, so nothing of the GS compiles here: the runtime's GS headers are
+# not on its include path. Keep it that way; that is the guarantee.
+add_library(dq8_gfx_native STATIC
+    src/gfx/native/native_pipeline.cpp
+    src/gfx/native/native_meshes.cpp
+)
+target_include_directories(dq8_gfx_native PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(dq8_gfx_native PUBLIC SDL3::SDL3-static)
+foreach(shader IN ITEMS
+        "native_view.vert;vert;kNativeViewVertSpirv"
+        "native_view.frag;frag;kNativeViewFragSpirv"
+        "native_mesh.vert;vert;kNativeMeshVertSpirv"
+        "native_mesh.frag;frag;kNativeMeshFragSpirv")
+    list(GET shader 0 file)
+    list(GET shader 1 stage)
+    list(GET shader 2 symbol)
+    dq8_add_shader(dq8_gfx_native
+        SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/native/shaders/${file}"
+        STAGE ${stage} SYMBOL ${symbol})
+endforeach()
+
 add_library(dq8_gfx_sdlgpu STATIC
     src/gfx/backends/sdlgpu/sdlgpu_backend.cpp
     src/gfx/backends/sdlgpu/sdlgpu_device.cpp
@@ -53,7 +76,7 @@ add_library(dq8_gfx_sdlgpu STATIC
     src/gfx/backends/sdlgpu/sdlgpu_textures.cpp
     window_icon.cpp
 )
-target_link_libraries(dq8_gfx_sdlgpu PUBLIC dq8_gfx_gs SDL3::SDL3-static)
+target_link_libraries(dq8_gfx_sdlgpu PUBLIC dq8_gfx_gs dq8_gfx_native SDL3::SDL3-static)
 
 foreach(shader IN ITEMS
         "gs_draw.vert;vert;kGsDrawVertSpirv"

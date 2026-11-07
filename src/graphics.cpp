@@ -51,6 +51,7 @@
 #include <SDL3/SDL.h>
 
 #include "gfx/backends/sdlgpu/sdlgpu_backend.h"
+#include "gfx/native/native_pipeline.h"
 #include "runtime/ee_scheduler.h"
 #include "runtime/ps2_native_iop.h"
 #include "runtime/ps2_pad_host.h"
@@ -994,6 +995,11 @@ Setup::~Setup()
 
 void Setup::install(PS2Runtime &runtime)
 {
+#if defined(RG_HAS_SDLGPU)
+    // RG_NATIVE_PIPELINE counts only under the native renderer flag; decided
+    // at its first use, after the menu's settings (docs/NATIVE-PIPELINE.md).
+    dq8::gfx::native::setOuterSwitch(&rg::nativerenderer::enabled);
+#endif
     std::unique_ptr<GSRasterBackend> backend = std::move(m_backend);
     if (!backend)
     {
