@@ -4,8 +4,10 @@ Header: u32 op count, u32 string pool offset, u32 pool size, u32 string count.
 The ops follow from 0x10: u16 id, u8 argument count, the arguments' types two
 bits each (0 a string, its offset in the pool; 1 an int; 2 a float; 3 none)
 packed four to a byte, then the arguments, 4 bytes each, from the next 4-byte
-boundary. The pool starts at the next 16-byte boundary after the ops, and the
-file ends at the one after the pool; the gaps are 0xFF.
+boundary. In the game's own files the pool starts at the next 16-byte boundary
+after the ops; in the European texts' (tools/disc/european.py, cfg_write) right
+after them. The file ends at the 16-byte boundary after the pool; the gaps are
+0xFF. The header's pool offset says where it is, whichever the layout.
 """
 
 from __future__ import annotations
@@ -77,14 +79,15 @@ def values(data: bytes, op: Op) -> list:
     return out
 
 
-def merge_numbers(base: bytes, numbers: bytes) -> tuple[bytes, int, int]:
+def merge_numbers(base: bytes, numbers: bytes, packed: bool = False) -> tuple[bytes, int, int]:
     """`base` with the numbers of `numbers`: (file, ops changed, ops kept as base).
 
     Both must hold the same ops in the same order (the same table of two
     releases). Each op takes `numbers`' arguments, ints and floats, and keeps
     `base`'s strings, so names and texts stay `base`'s. An op whose strings sit
     in other places in the two stays `base`'s. The first two ops (the build's
-    date and time) stay `base`'s.
+    date and time) stay `base`'s. `packed`: the strings right after the ops,
+    for a European text's table, rather than on the 16-byte boundary.
     """
     base_header, base_ops = parse(base)
     _, num_ops = parse(numbers)
@@ -110,7 +113,10 @@ def merge_numbers(base: bytes, numbers: bytes) -> tuple[bytes, int, int]:
         out += merged
     count, pool_off, pool_size, strings = base_header
     pool = base[pool_off:pool_off + pool_size]
-    new_pool_off = _align(0x10 + len(out), 16)
+    # The strings on the next 16-byte boundary after the ops, as the game's own tables
+    # have them, or `packed`, right after them, as the European texts' (european.py,
+    # cfg_write): aligning those could make the file larger than the one it replaces.
+    new_pool_off = 0x10 + len(out) if packed else _align(0x10 + len(out), 16)
     head = struct.pack("<4I", count, new_pool_off, pool_size, strings)
     body = head + bytes(out)
     body += b"\xff" * (new_pool_off - len(body))

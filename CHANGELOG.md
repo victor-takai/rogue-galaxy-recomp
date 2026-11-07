@@ -16,6 +16,8 @@
   `Install-Undub.bat` reads it. With the undub already installed, the
   update reads it from the image it came from, if that is still where it
   was; otherwise run `Install-Undub.bat` again (the voices it copied stay).
+  The balance works with the European texts too, with their names: the
+  install that comes second makes that text's tables.
 - European texts (experimental): the menus, scenes and battles in French,
   German, Spanish or Italian, from your own European disc (F1 > Settings >
   Language > Text, from the next start). Run `Install-European.bat` first
