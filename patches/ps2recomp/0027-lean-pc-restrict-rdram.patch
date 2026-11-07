@@ -1,0 +1,159 @@
+diff --git a/ps2xRecomp/include/ps2recomp/types.h b/ps2xRecomp/include/ps2recomp/types.h
+--- a/ps2xRecomp/include/ps2recomp/types.h
++++ b/ps2xRecomp/include/ps2recomp/types.h
+@@ -188,6 +188,14 @@
+         // the image's function entries (Rogue Galaxy: added). Only for the
+         // image whose register_functions.cpp keeps the unrenamed globals.
+         bool directCallTable = false;
++        // No PC store before an instruction nothing can observe it from
++        // (integer, FPU and MMI arithmetic), and no delay-slot bookkeeping
++        // around such a slot (Rogue Galaxy: added).
++        bool leanPc = false;
++        // Generated functions take rdram as __restrict, so stores to guest
++        // memory do not make the compiler reload the context (Rogue Galaxy:
++        // added; experimental: a polling loop's load could be hoisted).
++        bool restrictRdram = false;
+         std::vector<std::string> skipFunctions;
+         std::unordered_map<uint32_t, std::string> patches;
+         std::vector<std::string> stubImplementations;
+diff --git a/ps2xRecomp/include/ps2recomp/code_generator.h b/ps2xRecomp/include/ps2recomp/code_generator.h
+--- a/ps2xRecomp/include/ps2recomp/code_generator.h
++++ b/ps2xRecomp/include/ps2recomp/code_generator.h
+@@ -75,6 +75,12 @@
+         std::vector<uint32_t> m_directCallTargets;
+         std::unordered_map<uint32_t, uint32_t> m_directCallIndex;
+         bool m_emitInstructionComments = true;
++        // RecompilerConfig::leanPc and restrictRdram (Rogue Galaxy: added).
++        bool m_leanPc = false;
++        bool m_restrictRdram = false;
++        // An instruction whose generated code neither reads ctx->pc nor can
++        // stop, fault or call out: integer, FPU and MMI arithmetic.
++        static bool pcUnobserved(const Instruction &inst);
+         RecompilerReporter *m_reporter = nullptr;
+         std::string m_currentFunctionName;
+         // The function being generated reads VU0's status or MAC flags
+diff --git a/ps2xRecomp/src/lib/code_generator.cpp b/ps2xRecomp/src/lib/code_generator.cpp
+--- a/ps2xRecomp/src/lib/code_generator.cpp
++++ b/ps2xRecomp/src/lib/code_generator.cpp
+@@ -234,6 +234,32 @@
+         return emitter.emit();
+     }
+ 
++    bool CodeGenerator::pcUnobserved(const Instruction &inst)
++    {
++        // Rogue Galaxy: added (lean_pc). Anything that touches memory, the
++        // VU, COP0, or control flow keeps its PC store.
++        if (inst.isLoad || inst.isStore || inst.isBranch || inst.isJump || inst.isCall || inst.isReturn ||
++            inst.isVU || inst.isMmio || inst.hasDelaySlot)
++            return false;
++        switch (inst.opcode)
++        {
++        case 0x00: // SPECIAL: not SYSCALL, BREAK, SYNC, the traps, JR, JALR, nor the
++                   // overflow-trapping ADD, SUB, DADD, DSUB
++        {
++            const uint32_t f = inst.function;
++            return !(f == 0x08u || f == 0x09u || f == 0x0Cu || f == 0x0Du || f == 0x0Fu || (f >= 0x30u && f <= 0x36u) ||
++                     f == 0x20u || f == 0x22u || f == 0x2Cu || f == 0x2Eu);
++        }
++        case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: case 0x0E: case 0x0F: // ADDIU..LUI (not ADDI)
++        case 0x19:                                                                   // DADDIU (not DADDI)
++        case 0x11:                                                                              // COP1 (FPU)
++        case 0x1C:                                                                              // MMI
++            return true;
++        default:
++            return false;
++        }
++    }
++
+     CodeGenerator::~CodeGenerator() = default;
+ 
+     std::string CodeGenerator::translateInstruction(const Instruction &inst)
+diff --git a/ps2xRecomp/src/lib/config_manager.cpp b/ps2xRecomp/src/lib/config_manager.cpp
+--- a/ps2xRecomp/src/lib/config_manager.cpp
++++ b/ps2xRecomp/src/lib/config_manager.cpp
+@@ -65,6 +65,8 @@
+             config.patchCop0 = toml::find_or<bool>(general, "patch_cop0", config.patchCop0);
+             config.patchCache = toml::find_or<bool>(general, "patch_cache", config.patchCache);
+             config.directCallTable = toml::find_or<bool>(general, "direct_call_table", config.directCallTable);
++            config.leanPc = toml::find_or<bool>(general, "lean_pc", config.leanPc);
++            config.restrictRdram = toml::find_or<bool>(general, "restrict_rdram", config.restrictRdram);
+ 
+             if (general.contains("stubs") && general.at("stubs").is_array())
+             {
+@@ -276,6 +278,8 @@
+         general["patch_cop0"] = config.patchCop0;
+         general["patch_cache"] = config.patchCache;
+         general["direct_call_table"] = config.directCallTable;
++        general["lean_pc"] = config.leanPc;
++        general["restrict_rdram"] = config.restrictRdram;
+         general["skip"] = config.skipFunctions;
+         general["stubs"] = config.stubImplementations;
+         data["general"] = general;
+diff --git a/ps2xRecomp/src/lib/control_flow_emitter.cpp b/ps2xRecomp/src/lib/control_flow_emitter.cpp
+--- a/ps2xRecomp/src/lib/control_flow_emitter.cpp
++++ b/ps2xRecomp/src/lib/control_flow_emitter.cpp
+@@ -131,9 +131,15 @@
+             return;
+         }
+ 
+-        m_ss << fmt::format("{}ctx->pc = 0x{:X}u;\n", indent, delayPc());
+-        m_ss << fmt::format("{}ctx->in_delay_slot = true;\n", indent);
+-        m_ss << fmt::format("{}ctx->branch_pc = 0x{:X}u;\n", indent, branchPc());
++        // A slot nothing observes needs no bookkeeping (lean_pc; Rogue
++        // Galaxy: added).
++        const bool lean = m_gen.m_leanPc && m_delaySlotOverride.empty() && CodeGenerator::pcUnobserved(m_delaySlot);
++        if (!lean)
++        {
++            m_ss << fmt::format("{}ctx->pc = 0x{:X}u;\n", indent, delayPc());
++            m_ss << fmt::format("{}ctx->in_delay_slot = true;\n", indent);
++            m_ss << fmt::format("{}ctx->branch_pc = 0x{:X}u;\n", indent, branchPc());
++        }
+ 
+         const std::string code = delaySlotCode();
+         std::istringstream lines(code);
+@@ -146,7 +152,8 @@
+             }
+         }
+ 
+-        m_ss << fmt::format("{}ctx->in_delay_slot = false;\n", indent);
++        if (!lean)
++            m_ss << fmt::format("{}ctx->in_delay_slot = false;\n", indent);
+     }
+ 
+     void ControlFlowEmitter::emitResumeFromDelaySlotEntry()
+diff --git a/ps2xRecomp/src/lib/function_emitter.cpp b/ps2xRecomp/src/lib/function_emitter.cpp
+--- a/ps2xRecomp/src/lib/function_emitter.cpp
++++ b/ps2xRecomp/src/lib/function_emitter.cpp
+@@ -83,7 +83,8 @@
+             sanitizedName = nameBuilder.str();
+         }
+ 
+-        ss << "void " << sanitizedName << "(uint8_t* rdram, R5900Context* ctx, PS2Runtime *runtime) {\n";
++        ss << "void " << sanitizedName << (cg.m_restrictRdram ? "(uint8_t* __restrict rdram" : "(uint8_t* rdram")
++           << ", R5900Context* ctx, PS2Runtime *runtime) {\n";
+         ss << "#ifdef PS2_FUNCTION_LOG_TRACKER\n";
+         ss << "    PS_LOG_ENTRY(\"" << sanitizedName << "\");\n";
+         ss << "#endif\n";
+@@ -200,8 +201,8 @@
+                         continue;
+                     }
+ 
+-                    ss << "    ctx->pc = 0x" << std::hex << inst.address << "u;\n"
+-                       << std::dec;
++                    if (!(cg.m_leanPc && CodeGenerator::pcUnobserved(inst)))
++                        ss << "    ctx->pc = 0x" << std::hex << inst.address << "u;\n" << std::dec;
+                     const MemoryAccessHint memoryHint = resolveMemoryAccessHint(inst, constantRegisters);
+                     ss << "    " << cg.translateInstruction(inst, memoryHint);
+                     if (inst.isMmio)
+diff --git a/ps2xRecomp/src/lib/ps2_recompiler.cpp b/ps2xRecomp/src/lib/ps2_recompiler.cpp
+--- a/ps2xRecomp/src/lib/ps2_recompiler.cpp
++++ b/ps2xRecomp/src/lib/ps2_recompiler.cpp
+@@ -1118,6 +1118,8 @@
+             if (m_codeGenerator)
+             {
+                 m_codeGenerator->setRenamedFunctions(m_functionRenames);
++                m_codeGenerator->m_leanPc = m_config.leanPc;
++                m_codeGenerator->m_restrictRdram = m_config.restrictRdram;
+ 
+                 std::vector<uint32_t> directCallTargets;
+                 if (m_config.directCallTable)

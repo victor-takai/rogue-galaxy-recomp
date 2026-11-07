@@ -52,7 +52,12 @@ process can be dumped with `tools\hang\dumpmem.ps1` (its guest RAM and
 thread contexts) and a thread's call chain read from the dump with
 `python tools/hang/stackwalk.py DUMPDIR SP RA --exe build/game/src/roguegalaxy.exe`
 (the build that froze; the script runs `llvm-nm`, from the toolchain's
-`bin`, so that folder must be on PATH).
+`bin`, so that folder must be on PATH). The pc these give is the last one
+the generated code stored: with `lean_pc` on (`config/SCUS_974.90/recomp/main.toml`,
+the default) arithmetic stores none, so a thread spinning in a loop of it
+shows the loop's last load, store, branch or call, not the exact
+instruction. To hunt a hang to its instruction, set `lean_pc = false` and
+rebuild (`Update.bat`; it recompiles all game code).
 
 `debug\RogueGalaxy-hitches.bat` is the profile launcher with a stats line every 10 frames, for short hitches: each line also gives the longest frame of its interval (the longest gap between two presents), the longest the main thread was held up ("main stall"), the GPU pipelines created in it and what creating them cost (a first-time state compiles one), and the VU1 pairs that ran on the interpreter (a program the build lacks; the session records it into `build/vu1-profile`, see VU1 programs in [BUILDING.md](BUILDING.md)). Its profiler samples all the time (`RG_PROFILE_BEFORE=10`; about 9% of the VIF1 thread's time at the boss gate, so it is for hunting hitches, not for playing): it writes a profile by itself at a hitch nobody marked (`RG_PROFILE_AUTO_MS=50`: a frame of 50 ms or more and three times the usual, or the frame rate halved for a few frames), of the hitch and half a second either side, up to 30 a session, and the log says so in a `[profile] window N: a hitch` line; an F9 window holds the 10 seconds before the press and the 5 after. Press F9 at each hitch felt, then read the lines around the `[mark]` (`python tools/bench/hitches.py build/last-run.log`, one row per interval); a profile window still open when the game is closed is cut short and written.
 
@@ -176,6 +181,7 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `RG_VU1_REPLAY_AFTER=1` | With `RG_VU1_REPLAY`: also the data memory each run ends with, the state a following run reads (`RG_VU1_REPLAY_FROM` is 1 and `RG_VU1_REPLAY_LISTS` 30 unless set) |
 | `RG_VU1_HARVEST=DIR` | A few samples of every VU1 program DIR has no file for yet, a file each in `RG_VU1_REPLAY`'s format, to leave on while playing (`tools/vu1/oracle/harvest-play.sh`); `RG_VU1_HARVEST_SAMPLES` (4), `RG_VU1_HARVEST_CHUNKS` (64 MSCNTs a sample), `RG_VU1_HARVEST_SPACING` (300 lists between samples); see [VU1-NATIVE.md](VU1-NATIVE.md) |
 | `RG_VU1_NATIVE=MODE` | The VU1 programs done natively (`src/vu1_native.h`): `check` compares them with the VU1 as the game runs, `1` sends their packets in place of the VU1's, `skip` does so without running the VU1, `gpu` sends the chunks as meshes the GPU transforms (`gs_native.vert`); a `[vu1native]` line every 2 s. `RG_VU1_NATIVE_CHECK_EVERY=N` checks one chunk in N (every check costs the VU1's run, the native build and two decodes on the VIF1 thread; checking all halved a boss fight's frame rate). `DQ8_GFX_NATIVE_CPU=1` expands the meshes on the CPU instead, `DQ8_GFX_NATIVE_CULL_FLIP=1` culls the other face |
+| `RG_VU0_NATIVE=0` | The game's one VU0 micro program (the matrix from scale, rotation and translation behind `MatFromSRTVu0` and `MatRotateVu0`) on the VU0 rather than natively (`src/vu0_native.cpp`; on with the native renderer, `1` on without it). Recognised by the hash of its code at entry 0, else the VU0 runs it. `cmake --build build/game --target rg_vu0_check` then `build/game/src/rg_vu0_check disc/SCUS_974.90` compares it with the VU0 on synthetic inputs, every register bit for bit |
 | `DQ8_GFX_NATIVE_NO_CULL=1` | With `RG_VU1_NATIVE=gpu`: draw the meshes wholly off screen too |
 | `RG_VU1_CAPTURE=FILE` | The VU1 data memory each program starts with (16 KiB a start), for `tools/vu1/capture_report.py`: `RG_VU1_CAPTURE_MAX` starts (4000), then only the matrices for `RG_VU1_CAPTURE_LISTS` more DMA lists (1500) |
 | `PS2X_VU_FMAC_FLAGS=1` | Compiled VU1 programs queue the flags of every FMAC result, not only the ones a flag reader can still see (patch 0006); for comparisons |

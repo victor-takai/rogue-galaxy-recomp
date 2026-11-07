@@ -105,6 +105,7 @@ add_executable(roguegalaxy
     vu1_native.cpp
     gif_events.cpp
     vu0_flags.cpp
+    vu0_native.cpp
     overlay/overlay_manager.cpp
     debug/call_trace.cpp
     debug/crash_report.cpp
@@ -140,7 +141,8 @@ target_compile_definitions(roguegalaxy PRIVATE RG_APP_VERSION="${PROJECT_VERSION
 # The native VU1 programs match the VU1 to the bit, which needs the products
 # and sums rounded apart; an -march with FMA would fuse them.
 if(NOT MSVC)
-    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/vu1_native.cpp" PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/vu1_native.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/vu0_native.cpp"
+                                PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
 
 # tools/vu1/oracle: replays an RG_VU1_REPLAY recording through VU1 without the
@@ -153,6 +155,14 @@ add_executable(rg_vu1_oracle EXCLUDE_FROM_ALL
     "${CMAKE_CURRENT_SOURCE_DIR}/vu1_native.cpp")
 target_include_directories(rg_vu1_oracle PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/debug" "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(rg_vu1_oracle PRIVATE ps2_runtime)
+# tools/vu1/oracle/vu0_check.cpp: the native VU0 program against the VU0 on
+# synthetic inputs. cmake --build build/game --target rg_vu0_check
+add_executable(rg_vu0_check EXCLUDE_FROM_ALL
+    "${CMAKE_SOURCE_DIR}/tools/vu1/oracle/vu0_check.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/vu0_native.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/native_renderer.cpp")
+target_include_directories(rg_vu0_check PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(rg_vu0_check PRIVATE ps2_runtime)
 # The commit this build is from, for the menu's About window (as of the last
 # configure): the REVISION file of a release's source archive, which is no
 # git checkout (tools/release/source_zip.py), or else git. Changed files make
