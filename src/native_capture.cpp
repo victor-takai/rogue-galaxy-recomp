@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 #if defined(RG_HAS_SDLGPU)
@@ -204,14 +205,15 @@ void texBuildUpload(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 // renderer instead: a depth read (the lens flare's 8x8 block of Z at the
 // sun) from its depth a frame or two late, a colour read (the fades' and
 // the menus' frame captures) from its targets as the last frame drawn left
-// them. Straight into buf, with no GS transfer and no path sync. A read
-// the renderer does not answer goes to the GS as before.
+// them. Straight into buf, with no GS transfer. The sceGsSyncPath after it
+// is left alone: the game drains VIF1 before these reads, so it has nothing
+// to wait for. A colour read the renderer does not answer in time gets the
+// last answer of its size, or black (under the pipeline the GS has nothing
+// to give); a depth read it cannot place goes to the GS as before.
 constexpr uint32_t kSceGsSetDefStoreImage = 0x00109348u;
 constexpr uint32_t kSceGsExecStoreImage = 0x00109488u;
-constexpr uint32_t kSceGsSyncPath = 0x00109030u;
 PS2Runtime::RecompiledFunction g_setDefStoreImageOriginal = nullptr;
 PS2Runtime::RecompiledFunction g_execStoreImageOriginal = nullptr;
-PS2Runtime::RecompiledFunction g_syncPathOriginal = nullptr;
 
 struct StoreImageCall
 {
@@ -219,7 +221,6 @@ struct StoreImageCall
     uint32_t base = 0u, psm = 0u, x = 0u, y = 0u, width = 0u, height = 0u;
 };
 thread_local StoreImageCall t_storeImage;
-thread_local bool t_skipSync = false;
 
 void setDefStoreImage(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
@@ -279,14 +280,43 @@ bool answer(const StoreImageCall &q, std::vector<uint8_t> &bytes)
     // The presenting thread answers it (step 7d), nothing on the GS queue.
     const uint32_t id = native::beginColorRead(read);
     thread_local std::vector<uint8_t> rgba;
+    // The last answer, by the read's size and format, for a read not served.
+    static std::mutex lastMutex;
+    static std::vector<uint8_t> last;
+    static uint32_t lastWidth = 0u, lastHeight = 0u, lastPsm = ~0u;
     if (native::waitColorRead(id, rgba, 2000u))
     {
         toFormat(rgba, psm, static_cast<size_t>(q.width) * q.height, bytes);
-        return !bytes.empty();
+        if (!bytes.empty())
+        {
+            std::lock_guard lock(lastMutex);
+            last = bytes;
+            lastWidth = q.width;
+            lastHeight = q.height;
+            lastPsm = psm;
+            return true;
+        }
     }
-    std::fprintf(stderr, "[native-capture] a colour read was not served; it goes to the GS\n");
-#endif
+    {
+        std::lock_guard lock(lastMutex);
+        const bool same = !last.empty() && lastWidth == q.width && lastHeight == q.height && lastPsm == psm;
+        static int told = 0;
+        if (told < 8)
+        {
+            ++told;
+            std::fprintf(stderr, "[native-capture] a colour read (%ux%u) was not served; %s\n", q.width, q.height,
+                         same ? "the last one of its size is given" : "black is given");
+        }
+        if (same)
+            bytes = last;
+        else
+            bytes.assign(static_cast<size_t>(q.width) * q.height * (psm == 0x00u ? 4u : psm == 0x01u ? 3u : 2u),
+                         0u);
+    }
+    return !bytes.empty();
+#else
     return false;
+#endif
 }
 
 void execStoreImage(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -298,7 +328,6 @@ void execStoreImage(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         std::memcpy(g_rdram + physical(buffer), bytes.data(), std::min<size_t>(bytes.size(), PS2_RAM_SIZE - physical(buffer)));
         t_storeImage.si = 0u;
-        t_skipSync = true;
         setReturnS32(ctx, 0);
         ctx->pc = getRegU32(ctx, 31);
         return;
@@ -307,18 +336,6 @@ void execStoreImage(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     g_execStoreImageOriginal(rdram, ctx, runtime);
 }
 
-void syncPath(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-{
-    if (t_skipSync)
-    {
-        // The read it waits for never went to the GS.
-        t_skipSync = false;
-        setReturnS32(ctx, 0);
-        ctx->pc = getRegU32(ctx, 31);
-        return;
-    }
-    g_syncPathOriginal(rdram, ctx, runtime);
-}
 } // namespace
 
 void install(PS2Runtime &runtime)
@@ -333,8 +350,7 @@ void install(PS2Runtime &runtime)
     if (!rg::timing::hookFunction(runtime, kTexBuildUploadPkt, &texBuildUpload, g_texBuildUploadOriginal))
         std::fprintf(stderr, "[native-capture] TexBuildUploadPkt could not be hooked\n");
     if (!rg::timing::hookFunction(runtime, kSceGsSetDefStoreImage, &setDefStoreImage, g_setDefStoreImageOriginal) ||
-        !rg::timing::hookFunction(runtime, kSceGsExecStoreImage, &execStoreImage, g_execStoreImageOriginal) ||
-        !rg::timing::hookFunction(runtime, kSceGsSyncPath, &syncPath, g_syncPathOriginal))
+        !rg::timing::hookFunction(runtime, kSceGsExecStoreImage, &execStoreImage, g_execStoreImageOriginal))
         std::fprintf(stderr, "[native-capture] the GS memory reads could not be hooked: they stay GS transfers\n");
 }
 

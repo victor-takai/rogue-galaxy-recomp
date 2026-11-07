@@ -1590,11 +1590,13 @@ bool native2D()
     static const bool on = rg::native2d::enabled();
     return on;
 }
-std::atomic<uint64_t> g_packetsConverted{0u}, g_packetsRefused{0u}, g_piecesMade{0u}, g_piecesToGs{0u};
+std::atomic<uint64_t> g_packetsConverted{0u}, g_packetsRefused{0u}, g_piecesMade{0u}, g_piecesToGs{0u},
+    g_piecesDropped{0u};
 
 // Step 5b: a converter mesh as the producer's window-space draw, under the
 // draw state the packets before it left (the PRIM write just before it
-// among them); one it refuses goes to the GS.
+// among them); one it refuses goes to the GS, or, with no GS behind the
+// pipeline, where the absorbed packets go (the producer's line says why).
 void deliverPiece(GS &gs, const rg::native2d::Piece &piece)
 {
     if (!t_onVif1Thread)
@@ -1605,6 +1607,11 @@ void deliverPiece(GS &gs, const rg::native2d::Piece &piece)
     if (rg::nativeproducer::piece(piece.mesh, &state, piece.texelUvs))
     {
         ++g_piecesMade;
+        return;
+    }
+    if (absorbing())
+    {
+        ++g_piecesDropped;
         return;
     }
     ++g_piecesToGs;
@@ -1638,10 +1645,11 @@ void sendPacket(GS &gs, const uint8_t *data, uint32_t size)
             }
             const uint64_t count = ++g_packetsConverted;
             if (count == 1u || count % 100000u == 0u)
-                std::fprintf(stderr, "[native2d] packets converted: %llu (pieces made %llu, to the GS %llu), %llu refused\n",
+                std::fprintf(stderr, "[native2d] packets converted: %llu (pieces made %llu, to the GS %llu, dropped %llu), %llu refused\n",
                              static_cast<unsigned long long>(count),
                              static_cast<unsigned long long>(g_piecesMade.load()),
                              static_cast<unsigned long long>(g_piecesToGs.load()),
+                             static_cast<unsigned long long>(g_piecesDropped.load()),
                              static_cast<unsigned long long>(g_packetsRefused.load()));
             return;
         }

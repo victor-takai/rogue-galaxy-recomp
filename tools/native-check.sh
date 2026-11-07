@@ -17,7 +17,9 @@ verdict "5: no effect left as packets" "$(grep -ac '^\[nativefx\] an effect stay
 verdict "5b: no packet left unconverted" "$(grep -ac '^\[native2d\] a packet stays a packet' "$LOG")"
 verdict "5c: no composite tail left as packets" "$(grep -ac '^\[composite\] a tail stays packets' "$LOG")"
 verdict "7c: every colour read served" "$(grep -ac 'a colour read was not served' "$LOG")"
-grep -a 'source is unknown\|a local copy:' "$LOG" | sort | uniq -c | sed 's/^/INFO  6: /'
+grep -a 'source is unknown' "$LOG" | sort | uniq -c | sed 's/^/INFO  6: /'
+echo "INFO  6: local copies mirrored: $(count 'local copies mirrored'), other format: $(count 'other format'), no source: $(count 'no source'), no destination: $(count 'no destination')"
+grep -ao "pieces made [0-9]*, to the GS [0-9]*, dropped [0-9]*" "$LOG" | tail -1 | sed 's/^/INFO  5b refused pieces (dropped, not the tripwire): /'
 echo "INFO  5b: green-to-alpha ops made: $(count 'made green to alpha')"
 echo "INFO  5c: objects routed: $(count 'object layers: routed'), tails made: $(count 'tails made'), put back: $(count 'put back for packets')"
 grep -ao "depth reads: asked.*" "$LOG" | tail -1 | sed 's/^/INFO  7b renderer: /'
