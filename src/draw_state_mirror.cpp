@@ -173,7 +173,12 @@ void observe(const uint8_t *data, uint32_t size)
     thread_local rg::gif::GifState carried;
     thread_local std::vector<rg::gif::GifEvent> events;
     events.clear();
-    rg::gif::decodeGifPacket(data, size, carried, events);
+    // Every GIF packet in the bytes, not only the first: the GS reads on
+    // past an EOP (a GsPkt block's draw environment follows its primitives'
+    // EOP), as the converter does.
+    rg::gif::eachPacket(data, size, [&](uint32_t at, uint32_t piece) {
+        rg::gif::decodeGifPacket(data + at, piece, carried, events);
+    });
     std::lock_guard lock(g_mirror.mutex);
     for (const rg::gif::GifEvent &e : events)
         if (e.kind == rg::gif::GifEvent::Kind::Register)

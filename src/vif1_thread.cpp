@@ -66,18 +66,26 @@ const uint32_t g_checkEvery = [] {
     return static_cast<uint32_t>(every == 0ul ? 1ul : every);
 }();
 // Whether the GPU path takes the chunks slot E clips: only with the native
-// renderer and RG_VU1_CLIP_ON_GPU=1. Off by default: the field walk of
-// October 29 lost the near wall's texture and part of the ledge with them
-// on the GPU (the clipper's new vertices take a depth made of each corner's
-// capped, clamped one, which is not linear outside E's planes). Read at
-// first use, after the menu's setting.
+// renderer, and there under the native pipeline or with
+// RG_VU1_CLIP_ON_GPU=1 (=0 keeps them on the VU1 even under the pipeline).
+// Otherwise off: the field walk of October 29 lost the near wall's texture
+// and part of the ledge with them on the GPU (the clipper's new vertices
+// take a depth made of each corner's capped, clamped one, which is not
+// linear outside E's planes). The pipeline has no GS to draw the VU1's
+// packets: they would reach it as 2D pieces, their texture interpolated
+// across the screen without perspective (textures twist in front of the
+// camera). Read at first use, after the menu's setting.
 struct GpuClips
 {
     operator bool() const
     {
         static const bool on = [] {
+            if (!rg::nativerenderer::enabled())
+                return false;
             const char *gpu = std::getenv("RG_VU1_CLIP_ON_GPU");
-            return rg::nativerenderer::enabled() && gpu && *gpu && std::strcmp(gpu, "0") != 0;
+            if (gpu && *gpu)
+                return std::strcmp(gpu, "0") != 0;
+            return rg::nativeproducer::pipelineOn();
         }();
         return on;
     }
@@ -749,7 +757,7 @@ public:
             {
                 const bool gpu = nativeMode() == rg::vu1native::Mode::Gpu;
                 // The chunks that clip (slot E) go to the GPU with the native
-                // renderer and RG_VU1_CLIP_ON_GPU=1: the mesh carries E's near
+                // renderer, under the pipeline or with RG_VU1_CLIP_ON_GPU=1: the mesh carries E's near
                 // and far planes and the shader clips there (gl_ClipDistance),
                 // so no driver is left to cut at the eye on its own.
                 // Otherwise, and in the packet modes, they go to the VU1.
