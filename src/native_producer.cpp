@@ -18,6 +18,8 @@
 #include "runtime/gs/ps2_gs_psmct32.h"
 #include "runtime/gs/ps2_gs_psmt8.h"
 #include "runtime/gs/gs_types.h"
+#include "native_effect.h"
+#include "draw_state_mirror.h"
 #include "flip_pacing.h"
 
 #include <cmath>
@@ -47,12 +49,17 @@ struct Counts
     uint64_t materialKnown = 0, textureMiss = 0, textureMissPsm = 0, textureMissTarget = 0, paletteMiss = 0, targetMiss = 0;
     uint64_t unknownBlend = 0, unknownClamp = 0, unknownWriteMask = 0, unknownOther = 0;
     uint64_t triangles = 0, trianglesSkipped = 0;
-    // Step 5b: 2D pieces made window-space mesh draws, and why not.
+    // Step 5a's survey.
+    uint64_t effects[8] = {}; // by command (kSprites ... kComposite, the rest last)
+    uint64_t effectOps = 0, opsIntoScene = 0, opsIntoDeclared = 0, opsIntoUndeclared = 0;
+    uint64_t opsFromNothing = 0, opsFromTarget = 0, opsFromTexture = 0, opsFromUnknown = 0, opsFromLayer = 0;
+    // Step 5b: 2D pieces and effects made window-space mesh draws, and why not.
     uint64_t pieces = 0, piecesMade = 0, piecesNoState = 0, piecesNoTarget = 0, piecesNoSource = 0;
     uint64_t piecesFogged = 0, piecesFromTarget = 0, piecesSubTarget = 0, piecesCt24 = 0;
-    uint64_t opsGreenToAlpha = 0;
-    // Step 5c: draws into an object's own layer.
-    uint64_t drawsRouted = 0;
+    uint64_t effectsMade = 0, effectsRefused = 0, opsMade = 0, opsNoTarget = 0, opsNoSource = 0, opsLayer = 0;
+    uint64_t opsGreenToAlpha = 0, opsFeedback = 0, opsDepth = 0;
+    // Step 5c: object layers.
+    uint64_t layersRouted = 0, drawsRouted = 0, tailsMade = 0, tailsBack = 0, tailsEmpty = 0;
     // Step 6: host uploads nobody took, kept as images (hostUpload).
     uint64_t hostUploads = 0, hostRefused = 0, hostBytes = 0, hostTexturesNew = 0, hostTexturesKnown = 0;
     uint64_t hostPalettes = 0, hostReadsRefused = 0;
@@ -279,6 +286,16 @@ std::string statsLine()
                        d(n.unknownClamp, r.unknownClamp) + ", write mask " + d(n.unknownWriteMask, r.unknownWriteMask) +
                        ", other " + d(n.unknownOther, r.unknownOther) + "), triangles " +
                        d(n.triangles, r.triangles) + " (skipped " + d(n.trianglesSkipped, r.trianglesSkipped) + ")" +
+                       " | to the GS: effects " + d(n.effects[0], r.effects[0]) + " sprites, " +
+                       d(n.effects[1], r.effects[1]) + " route, " + d(n.effects[2], r.effects[2]) + " route end, " +
+                       d(n.effects[3], r.effects[3]) + " object tail, " + d(n.effects[4], r.effects[4]) +
+                       " composite, " + d(n.effects[7], r.effects[7]) + " other; ops " + d(n.effectOps, r.effectOps) +
+                       " into scene " + d(n.opsIntoScene, r.opsIntoScene) + " / declared " +
+                       d(n.opsIntoDeclared, r.opsIntoDeclared) + " / undeclared " +
+                       d(n.opsIntoUndeclared, r.opsIntoUndeclared) + ", from nothing " +
+                       d(n.opsFromNothing, r.opsFromNothing) + " / a target " + d(n.opsFromTarget, r.opsFromTarget) +
+                       " / a texture " + d(n.opsFromTexture, r.opsFromTexture) + " / a layer " +
+                       d(n.opsFromLayer, r.opsFromLayer) + " / unknown " + d(n.opsFromUnknown, r.opsFromUnknown) +
                        " | sampled a texture uploaded over a target " +
                        d(n.texturesOverTargets, r.texturesOverTargets) + " | 2D pieces " + d(n.pieces, r.pieces) + ": made " + d(n.piecesMade, r.piecesMade) +
                        " (from a target " + d(n.piecesFromTarget, r.piecesFromTarget) + ", as CT24 " +
@@ -287,14 +304,23 @@ std::string statsLine()
                        d(n.piecesNoState, r.piecesNoState) + ", target not declared " +
                        d(n.piecesNoTarget, r.piecesNoTarget) + ", source unknown " +
                        d(n.piecesNoSource, r.piecesNoSource) + " (inside a target " +
-                       d(n.piecesSubTarget, r.piecesSubTarget) + ") | made green to alpha " +
-                       d(n.opsGreenToAlpha, r.opsGreenToAlpha) +
+                       d(n.piecesSubTarget, r.piecesSubTarget) + ") | effects made " +
+                       d(n.effectsMade, r.effectsMade) + " (" + d(n.opsMade, r.opsMade) + " ops, " +
+                       d(n.opsDepth, r.opsDepth) + " depth tested), to the GS " +
+                       d(n.effectsRefused, r.effectsRefused) + ": an op into an undeclared buffer " +
+                       d(n.opsNoTarget, r.opsNoTarget) + ", from an unknown one " + d(n.opsNoSource, r.opsNoSource) +
+                       ", from an object layer " + d(n.opsLayer, r.opsLayer) + "; made green to alpha " +
+                       d(n.opsGreenToAlpha, r.opsGreenToAlpha) + ", made reading their own target " +
+                       d(n.opsFeedback, r.opsFeedback) +
                        " | withheld from the GS: textures " + d(n.withheldTextures, r.withheldTextures) +
                        ", palettes " + d(n.withheldPalettes, r.withheldPalettes) + " (" +
                        std::to_string((n.withheldBytes - r.withheldBytes) >> 10) + " KiB); uploads sent on (no record) " +
                        d(n.passedNotProduced, r.passedNotProduced) + "; A+D blocks split (other registers kept) " +
                        d(n.split, r.split) + "; image continued in a packet " +
-                       d(n.continuedInPacket, r.continuedInPacket) +
+                       d(n.continuedInPacket, r.continuedInPacket) + " | object layers: routed " +
+                       d(n.layersRouted, r.layersRouted) + " (" + d(n.drawsRouted, r.drawsRouted) +
+                       " draws), tails made " + d(n.tailsMade, r.tailsMade) + ", put back for packets " +
+                       d(n.tailsBack, r.tailsBack) + ", empty " + d(n.tailsEmpty, r.tailsEmpty) +
                        " | host uploads nobody took " + d(n.hostUploads, r.hostUploads) + " (" +
                        std::to_string((n.hostBytes - r.hostBytes) >> 10) + " KiB, refused " +
                        d(n.hostRefused, r.hostRefused) + "): textures made " +
@@ -1975,6 +2001,543 @@ void hostUpload(uint32_t dbp, uint32_t dbw, uint32_t dpsm, uint32_t x, uint32_t 
     image.seq = s.uploadedSeq[dbp] = ++s.sequence;
 }
 
+bool piece(const GSNativeMesh &mesh, const GSDrawState *drawState, bool texels)
+{
+    if (!native::enabled())
+        return false;
+    State &s = state();
+    std::lock_guard lock(s.mutex);
+    forgetEvicted(s);
+    ++s.counts.pieces;
+    if (!drawState)
+    {
+        ++s.counts.piecesNoState;
+        return false;
+    }
+    const GSContext &c = drawState->context;
+    const GSNativeMesh::Header &h = mesh.header;
+    native::MeshDraw draw;
+    const uint32_t frameBase = c.frame.fbp * 32u;
+    uint32_t seqKey = frameBase; // the buffer's, or its narrow view's
+    const bool view = narrow(s, frameBase, c.frame.fbw);
+    if (view)
+    {
+        seqKey = viewKey(frameBase, c.frame.fbw);
+        draw.target = viewTarget(s, frameBase, c.frame.fbw, c.scissor.x1 + 1u, c.scissor.y1 + 1u);
+        ++s.counts.viewWrites;
+    }
+    else
+        draw.target = s.targetAt.count(frameBase)
+                          ? targetFor(s, frameBase, c.scissor.x1 + 1u, c.scissor.y1 + 1u, c.frame.psm)
+                          : targetFor(s, frameBase, std::max(c.frame.fbw, 1u) * 64u, c.scissor.y1 + 1u, c.frame.psm);
+    if (draw.target == 0u)
+    {
+        ++s.counts.piecesNoTarget;
+        return false;
+    }
+    // A CT16 copy of a 32-bit buffer onto itself (shifted 8 pixels: on the
+    // GS's memory a pixel's RG half lands on its BA half): green into alpha,
+    // as the colour filter's kGreenToAlpha op. The shadow map's blur ends so
+    // (2a00 at FBW 1): the decal that projects it reads that alpha.
+    if (drawState->prim.tme && (c.tex0.psm & 0x3Fu) == kCT16 && (c.frame.psm & 0x3Fu) == kCT16 &&
+        c.tex0.tbp0 == frameBase && c.tex0.tbw == c.frame.fbw)
+    {
+        native::Material &g = draw.material;
+        g.sourceTarget = draw.target;
+        g.textureWidth = g.textureHeight = 1u;
+        g.function = native::TextureFunction::Decal;
+        g.textureAlpha = true;
+        g.shuffle = native::ChannelShuffle::GreenToAlpha;
+        g.colorWrite = 0x8u;
+        g.known = true;
+        const float x1 = float(std::min<uint32_t>(std::max(c.frame.fbw, 1u) * 64u, c.scissor.x1 + 1u));
+        const float y1 = float((c.scissor.y1 + 1u) / 2u); // the CT16 view is twice the 32-bit rows
+        const float corners[4][2] = {{0.0f, 0.0f}, {x1, 0.0f}, {0.0f, y1}, {x1, y1}};
+        draw.vertices.resize(4);
+        for (int v = 0; v < 4; ++v)
+        {
+            native::Vertex &out = draw.vertices[v];
+            out.position[0] = out.uv[0] = corners[v][0];
+            out.position[1] = out.uv[1] = corners[v][1];
+            for (int ch = 0; ch < 4; ++ch)
+                out.color[ch] = 128.0f;
+        }
+        draw.indices = {0u, 1u, 2u, 1u, 3u, 2u};
+        draw.scissor = {0, 0, int32_t(x1), int32_t(y1)};
+        draw.fog[0] = draw.fog[1] = 255.0f;
+        ++s.counts.piecesMade;
+        ++s.counts.opsGreenToAlpha;
+        s.drawnSeq[seqKey] = ++s.sequence;
+        native::push(native::MeshDraw(std::move(draw)));
+        return true;
+    }
+    native::Material &m = draw.material;
+    bool known = true;
+    uint32_t why = 0u; // RG_NATIVE_UNKNOWN_LOG: 1 source psm, 2 clamp, 4 blend, 8 FBA, 16 write mask, 32 fog
+    if (drawState->prim.tme)
+    {
+        if (!sourceOf(s, c.tex0, m))
+        {
+            ++s.counts.piecesNoSource;
+            if (s.targetAt.count(c.tex0.tbp0 & ~31u))
+                ++s.counts.piecesSubTarget;
+            // The first few, by what they read (docs/NATIVE-PIPELINE.md step 6).
+            static std::vector<uint64_t> told;
+            const uint64_t what = (uint64_t(c.tex0.tbp0) << 32) | (uint64_t(c.tex0.psm & 0x3Fu) << 24) | c.tex0.cbp;
+            if (told.size() < 12u && std::find(told.begin(), told.end(), what) == told.end())
+            {
+                told.push_back(what);
+                const bool texture = s.residentTexture.count(c.tex0.tbp0) != 0u;
+                std::fprintf(stderr,
+                             "[native-producer] a 2D piece's source is unknown: TBP0 %05x PSM %02x CBP %05x CSA %u "
+                             "%ux%u, %s, %zu vertices\n",
+                             c.tex0.tbp0, c.tex0.psm & 0x3Fu, c.tex0.cbp, c.tex0.csa, 1u << c.tex0.tw,
+                             1u << c.tex0.th,
+                             texture ? "a texture of another format or no palette there" : "nothing uploaded there",
+                             mesh.vertices.size());
+            }
+            return false;
+        }
+        if (m.sourceTarget)
+            ++s.counts.piecesFromTarget;
+        // A buffer read as CT24 (the character layers are, by the scene):
+        // the GS takes its alpha from TEXA, not the buffer, 0 for black
+        // texels with AEM. A 16-bit view of a 32-bit buffer has no meaning
+        // here yet.
+        if ((m.sourceTarget || m.texture) && (c.tex0.psm & 0x3Fu) == 0x01u)
+        {
+            m.fixedTextureAlpha = drawState->texa.ta0;
+            m.alphaZeroOnBlack = drawState->texa.aem;
+            ++s.counts.piecesCt24;
+        }
+        else if (m.sourceTarget && (c.tex0.psm & 0x3Fu) != 0x00u)
+        {
+            known = false;
+            why |= 1u;
+        }
+        m.textureWidth = texels ? 1u : static_cast<uint16_t>(1u << std::min<uint32_t>(c.tex0.tw, 10u));
+        m.textureHeight = texels ? 1u : static_cast<uint16_t>(1u << std::min<uint32_t>(c.tex0.th, 10u));
+        m.linear = drawState->linearFilter;
+        const uint32_t wms = static_cast<uint32_t>(c.clamp & 3u), wmt = static_cast<uint32_t>((c.clamp >> 2) & 3u);
+        m.clampU = wms != 0u;
+        m.clampV = wmt != 0u;
+        // Region clamp and repeat (a tile of a sheet): the renderer's.
+        m.wrapU = static_cast<uint8_t>(wms);
+        m.wrapV = static_cast<uint8_t>(wmt);
+        m.regionU[0] = static_cast<uint16_t>((c.clamp >> 4) & 0x3FFu);
+        m.regionU[1] = static_cast<uint16_t>((c.clamp >> 14) & 0x3FFu);
+        m.regionV[0] = static_cast<uint16_t>((c.clamp >> 24) & 0x3FFu);
+        m.regionV[1] = static_cast<uint16_t>((c.clamp >> 34) & 0x3FFu);
+        if ((wms > 1u || wmt > 1u) && m.sourceTarget)
+        {
+            known = false; // a target's region: not fetched so
+            why |= 2u;
+        }
+        static constexpr native::TextureFunction functions[4] = {
+            native::TextureFunction::Modulate, native::TextureFunction::Decal, native::TextureFunction::Highlight,
+            native::TextureFunction::Highlight2};
+        m.function = functions[c.tex0.tfx & 3u];
+        m.textureAlpha = c.tex0.tcc != 0u;
+    }
+    if (drawState->prim.abe)
+        if (!blendOf(c.alpha, m))
+        {
+            known = false;
+            why |= 4u;
+        }
+    testOf(c.test, c.zbuf.zmask, m);
+    if (c.fba & 1u)
+    {
+        known = false;
+        why |= 8u;
+    }
+    const uint32_t mask = c.frame.fbmsk;
+    m.colorWrite = 0u;
+    for (uint32_t ch = 0; ch < 4u; ++ch)
+    {
+        const uint32_t bits = (mask >> (ch * 8u)) & 0xFFu;
+        if (bits == 0u)
+            m.colorWrite |= static_cast<uint8_t>(1u << ch);
+        else if (bits != 0xFFu)
+        {
+            known = false;
+            why |= 16u;
+        }
+    }
+    if (view)
+    {
+        m.depthTest = native::Compare::Always; // a view has no depth of its own
+        m.depthWrite = false;
+    }
+    if (m.depthTest != native::Compare::Always || m.depthWrite)
+    {
+        draw.depthTarget = depthTarget(s, c.zbuf.zbp * 32u, frameBase, draw.target);
+        draw.camera = s.lastCamera;
+    }
+
+    // build2D's encoding: a fogged piece has w = 1 + F / 255 with x, y (and
+    // texel UVs) multiplied by it; positions keep XYOFFSET; the Z is `depth`.
+    const bool fogged = h.matrix[2][3] == 1.0f && h.matrix[3][3] == 0.0f;
+    if (fogged)
+    {
+        ++s.counts.piecesFogged; // its F per vertex (Vertex::fog)
+    }
+    const float ofx = static_cast<float>(c.xyoffset.ofx) / 16.0f;
+    const float ofy = static_cast<float>(c.xyoffset.ofy) / 16.0f;
+    draw.vertices.resize(mesh.vertices.size());
+    for (size_t k = 0; k < mesh.vertices.size(); ++k)
+    {
+        const GSNativeMesh::Vertex &in = mesh.vertices[k];
+        native::Vertex &out = draw.vertices[k];
+        const float w = fogged && in.z != 0.0f ? in.z : 1.0f;
+        out.position[0] = in.x / w - ofx;
+        out.position[1] = in.y / w - ofy;
+        out.position[2] = in.depth >= 0.0f ? in.depth : 0.0f;
+        out.uv[0] = fogged && texels ? in.u / w : in.u;
+        out.uv[1] = fogged && texels ? in.v / w : in.v;
+        out.color[0] = in.r;
+        out.color[1] = in.g;
+        out.color[2] = in.b;
+        out.color[3] = in.a;
+        // build2D's fogged form: w = 1 + (F + 0.25) / 255.
+        if (fogged)
+            out.fog = std::clamp((w - 1.0f) * 255.0f - 0.25f, 0.0f, 255.0f);
+    }
+    const uint32_t count = static_cast<uint32_t>(draw.vertices.size()) / 3u * 3u;
+    draw.indices.resize(count);
+    for (uint32_t k = 0; k < count; ++k)
+        draw.indices[k] = k;
+    draw.scissor = {c.scissor.x0, c.scissor.y0, c.scissor.x1 + 1, c.scissor.y1 + 1};
+    draw.fog[0] = draw.fog[1] = 255.0f; // a model's F: none (the vertices carry theirs)
+    m.fog = fogged;
+    draw.fogColor[0] = drawState->fogR;
+    draw.fogColor[1] = drawState->fogG;
+    draw.fogColor[2] = drawState->fogB;
+    m.known = known;
+    if (why && std::getenv("RG_NATIVE_UNKNOWN_LOG"))
+    {
+        static uint64_t seen = 0u;
+        if (!(seen & (1ull << why)))
+        {
+            seen |= 1ull << why;
+            std::fprintf(stderr,
+                         "[unknown] why %x: frame fbp %x psm %x fbmsk %08x fba %llx tex0 tbp %x psm %x tfx %u tcc %u "
+                         "clamp %llx alpha %llx test %llx texa %u/%d\n",
+                         why, c.frame.fbp, c.frame.psm, c.frame.fbmsk, (unsigned long long)c.fba, c.tex0.tbp0,
+                         c.tex0.psm, c.tex0.tfx, c.tex0.tcc, (unsigned long long)c.clamp,
+                         (unsigned long long)c.alpha, (unsigned long long)c.test, drawState->texa.ta0,
+                         int(drawState->texa.aem));
+        }
+    }
+    ++s.counts.piecesMade;
+    if (draw.target != s.layer || s.layer == 0u) // a routed draw leaves the buffer as it was
+        s.drawnSeq[seqKey] = ++s.sequence;
+    native::push(native::MeshDraw(std::move(draw)));
+    return true;
+}
+
+void noteEffect(const GSNativeEffect &e)
+{
+    if (!native::enabled())
+        return;
+    State &s = state();
+    std::lock_guard lock(s.mutex);
+    ++s.counts.effects[e.command < 5u ? e.command : 7u];
+    if (e.command != GSNativeEffect::kSprites && e.command != GSNativeEffect::kObjectTail)
+        return;
+    const auto bufferIs = [&](uint32_t index, bool &scene, bool &declared) {
+        scene = declared = false;
+        if (index >= e.bufferCount)
+            return;
+        const auto at = s.targetAt.find(e.buffers[index].base);
+        declared = at != s.targetAt.end();
+        scene = declared && at->second == kSceneTarget;
+    };
+    for (uint32_t k = 0; k < e.opCount && k < GSNativeEffect::kMaxOps; ++k)
+    {
+        const GSNativeEffect::Op &op = e.ops[k];
+        ++s.counts.effectOps;
+        bool scene, declared;
+        bufferIs(op.target, scene, declared);
+        ++(scene ? s.counts.opsIntoScene : declared ? s.counts.opsIntoDeclared : s.counts.opsIntoUndeclared);
+        if (op.source < 0)
+        {
+            ++s.counts.opsFromNothing;
+            continue;
+        }
+        const uint32_t source = static_cast<uint32_t>(op.source);
+        if (source < e.bufferCount && e.buffers[source].layer)
+        {
+            ++s.counts.opsFromLayer;
+            continue;
+        }
+        bufferIs(source, scene, declared);
+        if (declared)
+            ++s.counts.opsFromTarget;
+        else if (source < e.bufferCount && s.residentTexture.count(e.buffers[source].base))
+            ++s.counts.opsFromTexture;
+        else
+            ++s.counts.opsFromUnknown;
+    }
+}
+
+namespace
+{
+// Locked. A window-space rectangle into `target` (x1, y1 exclusive): a clear
+// to transparent black, or, with `source`, that target's same pixels copied.
+native::MeshDraw rectDraw(native::Id target, const int32_t box[4], native::Id source)
+{
+    native::MeshDraw draw;
+    draw.target = target;
+    native::Material &m = draw.material;
+    if (source != 0u)
+    {
+        m.sourceTarget = source;
+        m.textureWidth = m.textureHeight = 1u; // texel UVs
+        m.function = native::TextureFunction::Decal;
+        m.textureAlpha = true;
+    }
+    m.colorWrite = 0xFu;
+    m.known = true;
+    const float x0 = float(box[0]), y0 = float(box[1]), x1 = float(box[2]), y1 = float(box[3]);
+    const float corners[4][2] = {{x0, y0}, {x1, y0}, {x0, y1}, {x1, y1}};
+    draw.vertices.resize(4);
+    for (int v = 0; v < 4; ++v)
+    {
+        native::Vertex &out = draw.vertices[v];
+        out.position[0] = out.uv[0] = corners[v][0];
+        out.position[1] = out.uv[1] = corners[v][1];
+        for (float &c : out.color)
+            c = source != 0u ? 128.0f : 0.0f;
+    }
+    draw.indices = {0u, 1u, 2u, 1u, 3u, 2u};
+    draw.scissor = {box[0], box[1], box[2], box[3]};
+    draw.fog[0] = draw.fog[1] = 255.0f;
+    return draw;
+}
+
+// Locked. Step 5c: the object layer commands (gs_types.h's kRouteLayer ...):
+// an object's draws into the buffer go to the layer, cleared over its box
+// when it is routed; its tail's sprites read the layer (effect() below).
+// Tails are drawn in order, so kComposite has nothing left to do.
+bool layerCommand(State &s, const GSNativeEffect &e)
+{
+    switch (e.command)
+    {
+    case GSNativeEffect::kRouteLayer:
+    {
+        if (e.bufferCount == 0u)
+            return true;
+        const uint32_t base = e.buffers[0].base;
+        const uint32_t width = std::max(e.buffers[0].fbw, 1u) * 64u;
+        const auto declared = s.targets.find(base);
+        const uint32_t height = declared != s.targets.end() ? declared->second.height : 448u;
+        s.routing = false; // the buffer itself, for its size
+        targetForUnrouted(s, base, width, height, 0u);
+        const native::Id layer = layerTarget(s, declared != s.targets.end() ? declared->second.width : width, height);
+        s.layerBox[0] = std::max<int32_t>(e.box[0], 0);
+        s.layerBox[1] = std::max<int32_t>(e.box[1], 0);
+        s.layerBox[2] = std::min<int32_t>(e.box[2], s.layerWidth);
+        s.layerBox[3] = std::min<int32_t>(e.box[3], s.layerHeight);
+        if (s.layerBox[2] > s.layerBox[0] && s.layerBox[3] > s.layerBox[1])
+            native::push(native::MeshDraw(rectDraw(layer, s.layerBox, 0u)));
+        s.routing = true;
+        s.routeBase = base;
+        ++s.counts.layersRouted;
+        return true;
+    }
+    case GSNativeEffect::kRouteEnd:
+        s.routing = false;
+        return true;
+    case GSNativeEffect::kComposite:
+        return true;
+    case GSNativeEffect::kObjectTail:
+        // Without sprites: an object with nothing to lay over, or one whose
+        // tail stays packets, which read the buffer: the layer goes back
+        // into it first.
+        if (e.bufferCount != 0u && s.layer != 0u && s.layerBox[2] > s.layerBox[0] && s.layerBox[3] > s.layerBox[1])
+        {
+            const uint32_t base = e.buffers[0].base;
+            const native::Id into = targetForUnrouted(s, base, s.layerWidth, s.layerHeight, 0u);
+            if (into == 0u)
+                return false;
+            native::push(native::MeshDraw(rectDraw(into, s.layerBox, s.layer)));
+            s.drawnSeq[base] = ++s.sequence;
+            ++s.counts.tailsBack;
+        }
+        else
+            ++s.counts.tailsEmpty;
+        return true;
+    default:
+        return false;
+    }
+}
+} // namespace
+
+bool effect(const GSNativeEffect &e)
+{
+    if (!native::enabled())
+        return false;
+    const bool tail = e.command == GSNativeEffect::kObjectTail && e.opCount != 0u;
+    if (e.command != GSNativeEffect::kSprites && !tail)
+    {
+        if (e.command < GSNativeEffect::kRouteLayer || e.command > GSNativeEffect::kComposite)
+            return false;
+        State &s = state();
+        std::lock_guard lock(s.mutex);
+        return layerCommand(s, e);
+    }
+    // A CT24 read whose TEXA the effect's packets did not set (kTexaFromGs)
+    // takes the draw-state mirror's, the GS's at this point; read before
+    // this file's lock.
+    uint32_t gsTexa = 0u;
+    for (uint32_t k = 0; k < std::min<uint32_t>(e.opCount, GSNativeEffect::kMaxOps); ++k)
+        if (e.ops[k].flags & GSNativeEffect::kTexaFromGs)
+        {
+            const GSDrawState mirror = rg::drawstate::current();
+            gsTexa = mirror.texa.ta0 | (mirror.texa.aem ? 0x8000u : 0u);
+            break;
+        }
+    State &s = state();
+    std::lock_guard lock(s.mutex);
+    forgetEvicted(s);
+    const auto refuse = [&](uint64_t &why) {
+        ++why;
+        ++s.counts.effectsRefused;
+        return false;
+    };
+    // Everything is resolved before anything is sent: an effect is the
+    // renderer's or the GS's, never split between them.
+    const uint32_t ops = std::min<uint32_t>(e.opCount, GSNativeEffect::kMaxOps);
+    thread_local std::vector<native::MeshDraw> made;
+    thread_local std::vector<uint32_t> bases;
+    made.clear();
+    bases.clear();
+    for (uint32_t k = 0; k < ops; ++k)
+    {
+        const GSNativeEffect::Op &op = e.ops[k];
+        if (op.target >= e.bufferCount)
+            return refuse(s.counts.opsNoTarget);
+        const GSNativeEffect::Buffer &into = e.buffers[op.target];
+        const native::Id target = targetFor(s, into.base, into.width ? into.width : std::max(into.fbw, 1u) * 64u,
+                                            into.height, into.psm);
+        if (target == 0u)
+            return refuse(s.counts.opsNoTarget);
+        const bool greenToAlpha = (op.flags & GSNativeEffect::kGreenToAlpha) != 0u;
+        native::MeshDraw draw;
+        draw.target = target;
+        native::Material &m = draw.material;
+        bool known = true;
+        if (greenToAlpha)
+        {
+            // The target's own pixels (the renderer reads a copy), alpha's
+            // bits 2-7 from green's, only alpha written.
+            ++s.counts.opsGreenToAlpha;
+            ++s.counts.opsFeedback;
+            m.sourceTarget = target;
+            m.textureWidth = m.textureHeight = 1u;
+            m.function = native::TextureFunction::Decal;
+            m.textureAlpha = true;
+            m.shuffle = native::ChannelShuffle::GreenToAlpha;
+        }
+        else if (op.source >= 0)
+        {
+            const uint32_t source = static_cast<uint32_t>(op.source);
+            if (source >= e.bufferCount)
+                return refuse(s.counts.opsNoSource);
+            // A tail's sprite from the object's layer (step 5c).
+            const bool fromLayer = e.buffers[source].layer != 0u;
+            if (fromLayer && (!tail || s.layer == 0u))
+                return refuse(s.counts.opsLayer);
+            const auto from = fromLayer ? s.targetAt.end() : s.targetAt.find(e.buffers[source].base);
+            if (fromLayer)
+                m.sourceTarget = s.layer;
+            else if (from == s.targetAt.end())
+                return refuse(s.counts.opsNoSource);
+            if (!fromLayer)
+            {
+                if (from->second == draw.target)
+                    ++s.counts.opsFeedback; // the renderer reads a copy
+                m.sourceTarget = from->second;
+            }
+            m.textureWidth = m.textureHeight = 1u; // the op's UVs are texels
+            m.linear = (op.flags & GSNativeEffect::kLinear) != 0u;
+            m.function = (op.flags & GSNativeEffect::kDecal)        ? native::TextureFunction::Decal
+                         : (op.flags & GSNativeEffect::kHighlight)  ? native::TextureFunction::Highlight
+                         : (op.flags & GSNativeEffect::kHighlight2) ? native::TextureFunction::Highlight2
+                                                                    : native::TextureFunction::Modulate;
+            m.textureAlpha = (op.flags & GSNativeEffect::kTextureAlpha) != 0u;
+            if (op.flags & GSNativeEffect::kCt24)
+            {
+                const uint32_t texa = (op.flags & GSNativeEffect::kTexaFromGs) ? gsTexa : op.texa;
+                m.fixedTextureAlpha = static_cast<int16_t>(texa & 0xFFu);
+                m.alphaZeroOnBlack = (texa & 0x8000u) != 0u;
+            }
+        }
+        if (op.flags & GSNativeEffect::kBlend)
+            known = blendOf(op.alpha, m) && known;
+        const bool zmask = true; // the op's depth buffer is never written
+        known = testOf(op.test, zmask, m) && known;
+        m.colorWrite = (op.flags & GSNativeEffect::kKeepAlpha)   ? 0x7u
+                       : (op.flags & GSNativeEffect::kKeepColor) ? 0x8u
+                                                                 : 0xFu;
+        if (greenToAlpha)
+            m.colorWrite = 0x8u;
+        if (m.depthTest != native::Compare::Always)
+        {
+            ++s.counts.opsDepth;
+            const uint32_t zbp = static_cast<uint32_t>(op.zbuf & 0x1FFu) * 32u;
+            draw.depthTarget = depthTarget(s, zbp, e.buffers[op.target].base, draw.target);
+            draw.camera = s.lastCamera;
+        }
+        const float x0 = op.rect[0], y0 = op.rect[1], x1 = op.rect[2], y1 = op.rect[3];
+        const float z0 = static_cast<float>(op.z[0]), z1 = static_cast<float>(op.z[1]);
+        // A green-to-alpha op reads each pixel of its own rect (the colour
+        // filter's carries no UVs).
+        const float u0 = greenToAlpha ? x0 : op.uv[0], v0 = greenToAlpha ? y0 : op.uv[1];
+        const float u1 = greenToAlpha ? x1 : op.uv[2], v1 = greenToAlpha ? y1 : op.uv[3];
+        const float corners[4][5] = {{x0, y0, z0, u0, v0},
+                                     {x1, y0, z1, u1, v0},
+                                     {x0, y1, z0, u0, v1},
+                                     {x1, y1, z1, u1, v1}};
+        draw.vertices.resize(4);
+        for (int v = 0; v < 4; ++v)
+        {
+            native::Vertex &out = draw.vertices[v];
+            out.position[0] = corners[v][0];
+            out.position[1] = corners[v][1];
+            out.position[2] = corners[v][2];
+            out.uv[0] = corners[v][3];
+            out.uv[1] = corners[v][4];
+            for (int ch = 0; ch < 4; ++ch)
+                out.color[ch] = op.rgba[ch];
+        }
+        draw.indices = {0u, 1u, 2u, 1u, 3u, 2u};
+        draw.scissor = {static_cast<int32_t>(op.scissor[0]), static_cast<int32_t>(op.scissor[1]),
+                        static_cast<int32_t>(op.scissor[2]) + 1, static_cast<int32_t>(op.scissor[3]) + 1};
+        draw.fog[0] = draw.fog[1] = 255.0f;
+        m.known = known;
+        made.push_back(std::move(draw));
+        bases.push_back(into.base);
+    }
+    for (size_t k = 0; k < made.size(); ++k)
+    {
+        if (made[k].target != s.layer || s.layer == 0u)
+            s.drawnSeq[bases[k]] = ++s.sequence;
+        native::push(native::MeshDraw(std::move(made[k])));
+    }
+    ++s.counts.effectsMade;
+    if (tail)
+        ++s.counts.tailsMade;
+    s.counts.opsMade += made.size();
+    return true;
+}
+
+uint64_t uploadHash(const uint8_t *data, size_t size)
+{
+    return imageHash(data, size);
+}
+
 bool pipelineOn()
 {
     return native::enabled();
@@ -2086,10 +2649,14 @@ bool takeProduced(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, bool &, uint
 void noteContinuedInPacket() {}
 bool mesh(const GSNativeMesh &, const GSDrawState *, const uint8_t *, uint32_t) { return false; }
 bool pipelineOn() { return false; }
+uint64_t uploadHash(const uint8_t *, size_t) { return 0u; }
 uint32_t captureTarget(uint32_t) { return 0u; }
 bool readDepth(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, std::vector<uint8_t> &) { return false; }
 void replaceUpload(bool, uint32_t, uint32_t, uint32_t, uint32_t, const uint8_t *, uint32_t) {}
 void hostUpload(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const uint8_t *, uint32_t) {}
+void noteEffect(const GSNativeEffect &) {}
+bool piece(const GSNativeMesh &, const GSDrawState *, bool) { return false; }
+bool effect(const GSNativeEffect &) { return false; }
 void noteLocalCopy(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
                    uint32_t, uint32_t) {}
 uint32_t textureAt(uint32_t, uint32_t) { return 0u; }
