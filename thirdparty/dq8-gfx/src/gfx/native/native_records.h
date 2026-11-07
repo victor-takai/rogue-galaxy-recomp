@@ -238,6 +238,13 @@ struct MeshDraw
     uint8_t fogColor[3] = {};
     uint32_t pass = 0;   // the game's pass, for grouping
     uint32_t source = 0; // what made it (a VU1 program, a hook), for profiles
+    // With hasModel: the program's window depth is the camera's, times
+    // depthScale, capped at depthMax per vertex (Z = min(Zwin * depthScale,
+    // depthMax), the game's integer Z). The game draws decals (lights on
+    // walls, layers on the ground) at a depthScale a little over 1 so they
+    // sit in front of the surface they lie on.
+    float depthScale = 1.0f;
+    float depthMax = 3.402823466e38f;
 };
 
 struct SpriteDraw
