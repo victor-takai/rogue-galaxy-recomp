@@ -565,6 +565,8 @@ void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data = null
 void flushEffect();
 // Stage E's batch, at a list's end or before what is no composite's.
 void flushComposites();
+// Both dropped, after a flush that threw.
+void discardHeld();
 // For busyReport's VU1 pair counts.
 PS2Runtime *g_runtime = nullptr;
 
@@ -994,12 +996,22 @@ private:
                 {
                     memory.processVIF1Data(m_current.data.data(), static_cast<uint32_t>(m_current.data.size()));
                 }
+            }
+            catch (const std::exception &error)
+            {
+                std::fprintf(stderr, "[vif1] list failed: %s\n", error.what());
+            }
+            // What the list held goes on before the next list's packets, also
+            // when it threw. If that throws too, it is dropped.
+            try
+            {
                 flushEffect();
                 flushComposites();
             }
             catch (const std::exception &error)
             {
-                std::fprintf(stderr, "[vif1] list failed: %s\n", error.what());
+                std::fprintf(stderr, "[vif1] the list's held packets failed: %s\n", error.what());
+                discardHeld();
             }
             // The list's GS packets go over before it counts as done, so a
             // drain that sees it done waits for them too.
@@ -1854,6 +1866,14 @@ void flushComposites()
     t_batch.uploading = false;
 }
 
+void discardHeld()
+{
+    t_held.effect = rg::nativefx::Effect::None;
+    t_held.unit = 0u;
+    t_held.packets.clear();
+    t_batch = CompositeBatch{};
+}
+
 void compositeOther(const char *what = "?", uint32_t address = ~0u, uint32_t cursor = ~0u)
 {
     static const bool trace = std::getenv("RG_COMPOSITE_TRACE") != nullptr;
@@ -1987,21 +2007,29 @@ bool compositePacket(GS &gs, const uint8_t *data, uint32_t size, uint32_t addres
 
 void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
 {
-    if (composites() && t_onVif1Thread && compositePacket(gs, data, size, listAddress(data)))
-    {
-        return;
-    }
-    // Step 5: an effect's packets, held until the effect's run ends.
-    if (nativeEffects() && t_onVif1Thread)
+    // Step 5: an effect's packets, held until the effect's run ends. A
+    // packet outside the held run ends it first, before a composite can
+    // take the packet: the effect goes on ahead of what follows it.
+    rg::nativefx::Effect effect = rg::nativefx::Effect::None;
+    uint32_t unit = 0u;
+    const bool effects = nativeEffects() && t_onVif1Thread;
+    if (effects)
     {
         const uint32_t address = listAddress(data);
         const rg::nativefx::Place place = address == ~0u ? rg::nativefx::Place{} : rg::nativefx::placeAt(address);
-        const rg::nativefx::Effect effect = place.effect;
-        const uint32_t unit = effect == rg::nativefx::Effect::ColorFilter ? place.unit : 0u;
+        effect = place.effect;
+        unit = effect == rg::nativefx::Effect::ColorFilter ? place.unit : 0u;
         if (effect != t_held.effect || unit != t_held.unit)
         {
             flushEffect();
         }
+    }
+    if (composites() && t_onVif1Thread && compositePacket(gs, data, size, listAddress(data)))
+    {
+        return;
+    }
+    if (effects)
+    {
         if (effect == rg::nativefx::Effect::ShadowSetup)
         {
             rg::nativefx::observe(effect, data, size);
@@ -2046,6 +2074,12 @@ void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
 
 void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data)
 {
+    // A held effect goes on first: a composite's head decided here sends
+    // its packets.
+    if (nativeEffects() && t_onVif1Thread)
+    {
+        flushEffect();
+    }
     if (composites() && t_onVif1Thread)
     {
         t_batch.gs = &gs;
@@ -2058,10 +2092,6 @@ void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data)
         {
             compositeOther("a mesh");
         }
-    }
-    if (nativeEffects() && t_onVif1Thread)
-    {
-        flushEffect();
     }
     // Steps 4a and 4c of docs/NATIVE-PIPELINE.md: a VU1 program's mesh as a
     // native mesh draw, under the draw state the GS would draw it with; made
@@ -2281,6 +2311,12 @@ void install(PS2Runtime &runtime)
     // A texture split over DIRECT packets continues in place, without the
     // copy behind a synthesized IMAGE tag.
     memory.setGifImageCallback([&gs = runtime.gs()](const uint8_t *data, uint32_t size) {
+        // A held effect goes on first: a composite's head decided here sends
+        // its packets.
+        if (t_onVif1Thread)
+        {
+            flushEffect();
+        }
         if (composites() && t_onVif1Thread)
         {
             t_batch.gs = &gs;
@@ -2293,10 +2329,6 @@ void install(PS2Runtime &runtime)
             {
                 compositeOther("an image");
             }
-        }
-        if (t_onVif1Thread)
-        {
-            flushEffect();
         }
         if (uploadsTaken())
         {

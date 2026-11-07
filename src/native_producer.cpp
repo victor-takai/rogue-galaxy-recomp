@@ -37,7 +37,7 @@ constexpr uint32_t kCT32 = 0x00u, kCT16 = 0x02u, kCT16S = 0x0Au, kT8 = 0x13u, kT
 
 struct Counts
 {
-    uint64_t levels = 0, texturesNew = 0, texturesKnown = 0;
+    uint64_t levels = 0, texturesNew = 0, texturesKnown = 0, texturesResent = 0;
     uint64_t refusedFormat = 0, refusedBytes = 0, refusedLayout = 0;
     uint64_t palettesNew = 0, palettesKnown = 0, palettesRefused = 0;
     uint64_t targetsNew = 0, targetsAuto = 0, targetsGrown = 0, texturesOverTargets = 0;
@@ -158,10 +158,13 @@ struct State
         std::shared_ptr<std::vector<uint8_t>> data;
         uint32_t width = 0u, height = 0u;
         bool indexed = false;
+        native::Id palette = 0u; // the record's own, for one sent again
     };
     std::unordered_map<native::Id, Kept> keptTextures, keptPalettes;
     // Every live texture record's texels (a byte a texel, or RGBA8), for
-    // local copies (mirrorCopy); forgotten with the renderer's evictions.
+    // local copies (mirrorCopy) and for a record the renderer evicted that
+    // GS memory still holds (forgetEvicted sends it again); forgotten with
+    // the renderer's other evictions.
     std::unordered_map<native::Id, Kept> texels;
     std::set<uint64_t> dumped;
     Counts counts, reported;
@@ -266,7 +269,7 @@ std::string statsLine()
     const auto d = [](uint64_t a, uint64_t b) { return std::to_string(a - b); };
     std::string line = "[native-producer] texture levels " + d(n.levels, r.levels) + ": new " +
                        d(n.texturesNew, r.texturesNew) + ", known " + d(n.texturesKnown, r.texturesKnown) +
-                       ", refused: format " + d(n.refusedFormat, r.refusedFormat) + ", bytes " +
+                       ", resent " + d(n.texturesResent, r.texturesResent) + ", refused: format " + d(n.refusedFormat, r.refusedFormat) + ", bytes " +
                        d(n.refusedBytes, r.refusedBytes) + ", layout " + d(n.refusedLayout, r.refusedLayout) +
                        " | palettes new " + d(n.palettesNew, r.palettesNew) + ", known " +
                        d(n.palettesKnown, r.palettesKnown) + ", refused " + d(n.palettesRefused, r.palettesRefused) +
@@ -352,7 +355,24 @@ void noteProduced(State &s, uint32_t dbp, uint32_t dbw, uint32_t dpsm, uint32_t 
         {dbp & 0x3FFFu, std::max(dbw, 1u), dpsm & 0x3Fu, width, height, palette, key, psm, id, hash, bytes});
 }
 
-// Locked. The renderer's evictions, forgotten here so they are sent again.
+// Locked. Whether a texture record is what GS memory holds at some address,
+// for the game thread (textureAt) or the VIF1 thread (residentTexture).
+bool textureNamed(const State &s, native::Id id)
+{
+    for (const auto &[tbp, at] : s.textureAt)
+        if (at.second == id)
+            return true;
+    for (const auto &[tbp, at] : s.residentTexture)
+        if (at.second == id)
+            return true;
+    return false;
+}
+
+// Locked. The renderer's evictions (the oldest records past its budget). One
+// that GS memory still holds is sent again under the same id, since draws
+// keep naming it and its upload may never come again (text, the HUD, an
+// area's textures uploaded once); what GS memory holds is bounded by its
+// 4 MiB. The rest are forgotten here, so they are made again when uploaded.
 void forgetEvicted(State &s)
 {
     for (const native::Id id : native::takeEvicted())
@@ -360,9 +380,24 @@ void forgetEvicted(State &s)
         const auto key = s.textureKeys.find(id);
         if (key == s.textureKeys.end())
             continue;
+        const auto kept = s.texels.find(id);
+        if (kept != s.texels.end() && kept->second.data && textureNamed(s, id))
+        {
+            native::Texture record;
+            record.id = id;
+            record.width = static_cast<uint16_t>(kept->second.width);
+            record.height = static_cast<uint16_t>(kept->second.height);
+            record.format = kept->second.indexed ? native::PixelFormat::Index8 : native::PixelFormat::Rgba8;
+            record.palette = kept->second.palette;
+            record.texels = kept->second.data;
+            native::push(std::move(record));
+            ++s.counts.texturesResent;
+            continue;
+        }
         s.textureIds.erase(key->second);
         s.textureKeys.erase(key);
-        s.texels.erase(id);
+        if (kept != s.texels.end())
+            s.texels.erase(kept);
     }
     if (!s.statsSet)
     {
@@ -516,7 +551,8 @@ void texture(const TextureLevel &l)
     if (dumpingTextures())
         s.keptTextures[record.id] = {out, record.width, record.height,
                                      record.format == native::PixelFormat::Index8};
-    s.texels[record.id] = {out, record.width, record.height, record.format == native::PixelFormat::Index8};
+    s.texels[record.id] = {out, record.width, record.height, record.format == native::PixelFormat::Index8,
+                           record.palette};
     record.texels = std::move(out);
     s.textureIds[key] = record.id;
     s.textureKeys[record.id] = key;

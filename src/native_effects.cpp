@@ -271,7 +271,11 @@ void gameSceneTintApply(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             filter(rdram, ctx, runtime);
         }
+        // GameSceneTintApply itself is not run: return to its caller, as a
+        // replaced function must (a hook that left pc where it was froze
+        // the game before).
         *ctx = saved;
+        ctx->pc = getRegU32(ctx, 31);
         return;
     }
     g_tintApplyOriginal(rdram, ctx, runtime);
