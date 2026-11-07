@@ -25,6 +25,14 @@ enum class SdlGpuFilter : uint8_t {
     Fsr,     // AMD FSR 1 (EASU then RCAS) when enlarging; Smooth otherwise (Rogue Galaxy: added)
 };
 
+// Whether FSR 1 acts on the picture as shown (Rogue Galaxy: added): it needs
+// the picture enlarged on both sides, and SPIR-V shaders (not Metal).
+enum class SdlGpuFsrState : uint8_t {
+    Acts,
+    NotEnlarged,
+    Unsupported,
+};
+
 // What fills the window beside a picture that does not reach its edges
 // (Rogue Galaxy: added).
 enum class SdlGpuSides : uint8_t {
@@ -53,7 +61,7 @@ struct SdlGpuDisplayOptions {
     uint32_t crop = 0u;
     SdlGpuSides sides = SdlGpuSides::Black;
     // FSR 1's sharpening, 0 to 100 (Rogue Galaxy: added): 100 is RCAS at 0
-    // stops (the sharpest), 0 at 2 stops.
+    // stops (the sharpest), 1 at 2 stops, 0 no RCAS at all.
     int fsrSharpness = 70;
     bool operator==(const SdlGpuDisplayOptions &) const = default;
 };
