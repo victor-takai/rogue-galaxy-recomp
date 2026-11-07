@@ -105,6 +105,8 @@ add_executable(roguegalaxy
     vu1_native.cpp
     draw_state_mirror.cpp
     native_capture.cpp
+    native_2d.cpp
+    native_effects.cpp
     native_producer.cpp
     gif_events.cpp
     vu0_flags.cpp

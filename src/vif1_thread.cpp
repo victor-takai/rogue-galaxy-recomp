@@ -25,6 +25,8 @@
 #include "native_renderer.h"
 #include "vu1_native.h"
 #include "draw_state_mirror.h"
+#include "native_2d.h"
+#include "native_effects.h"
 #include "native_producer.h"
 #include "ps2_runtime.h"
 #include "ps2_syscalls.h"
@@ -51,6 +53,26 @@ thread_local uint32_t t_vu1Camera = 0;
 // VU1, its packets are collected (check) or dropped (replace).
 thread_local std::vector<std::vector<uint8_t>> *t_vu1Packets = nullptr;
 thread_local bool t_dropVu1Packets = false;
+// The native pipeline's effects (src/native_effects.h); read at first use,
+// after the menu's setting.
+bool nativeEffects()
+{
+    static const bool on = rg::nativefx::enabled();
+    return on;
+}
+// RG_NATIVE_COMPOSITE: stage E's objects in object layers (deliverPacket).
+bool composites()
+{
+    static const bool on = rg::nativefx::compositesBatched();
+    return on;
+}
+// For the VIF code a VU1 program's packets came from (vif1Cursor, patch 0032).
+PS2Memory *g_vif1Memory = nullptr;
+// The VIF1 thread's list: its bytes and where each piece came from, for the
+// EE address of a packet in it (listAddress).
+thread_local const uint8_t *t_listData = nullptr;
+thread_local size_t t_listSize = 0u;
+thread_local const std::vector<std::pair<uint32_t, uint32_t>> *t_listOrigins = nullptr;
 // Read when the thread starts, after the menu's native renderer setting
 // (static initializers run before the menu hands it over).
 rg::vu1native::Mode nativeMode()
@@ -538,6 +560,11 @@ void deliverPacket(GS &gs, const uint8_t *data, uint32_t size);
 // data memory a program's mesh was built from, for the native pipeline's
 // mesh draw (rg::nativeproducer::mesh); null for others.
 void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data = nullptr);
+// An effect's packets held on the VIF1 thread go on, as the renderer's
+// effect or as they are (below).
+void flushEffect();
+// Stage E's batch, at a list's end or before what is no composite's.
+void flushComposites();
 // For busyReport's VU1 pair counts.
 PS2Runtime *g_runtime = nullptr;
 
@@ -960,10 +987,15 @@ private:
             const auto started = std::chrono::steady_clock::now();
             try
             {
+                t_listData = m_current.data.data();
+                t_listSize = m_current.data.size();
+                t_listOrigins = &m_current.origins;
                 if (!m_current.data.empty())
                 {
                     memory.processVIF1Data(m_current.data.data(), static_cast<uint32_t>(m_current.data.size()));
                 }
+                flushEffect();
+                flushComposites();
             }
             catch (const std::exception &error)
             {
@@ -1049,8 +1081,370 @@ private:
 
 Vif1Thread *g_thread = nullptr;
 
-void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
+// Steps 3b and 6 of docs/NATIVE-PIPELINE.md, under the native pipeline:
+// uploads the producer made records of are withheld from the GS, a record
+// whose memory the game changed after the texture hook is made again from
+// what was sent, and host uploads nobody took and local copies are handed
+// to the producer (which keeps them as images) on their way to the GS.
+bool uploadsTaken()
 {
+    static const bool on = rg::nativeproducer::pipelineOn();
+    return on;
+}
+
+// The transfer registers as the packets set them (this thread's).
+thread_local uint64_t t_bitbltbuf = 0u, t_trxpos = 0u, t_trxreg = 0u;
+
+// Step 3b.
+struct UploadWithhold
+{
+    uint32_t transferBytes = 0; // the withheld transfer's data still to come in IMAGE tags
+    uint32_t imageBytes = 0;    // an IMAGE tag's data still to come outside its packet
+    bool palette = false;
+    // The withheld data as sent, against the record's hash of the guest
+    // memory it was made from (a record made before the game finished
+    // writing that memory is stale): RG_NATIVE_UPLOAD_CHECK.
+    std::vector<uint8_t> seen;
+    uint64_t expectHash = 0u;
+    uint32_t expectBytes = 0u, dbp = 0u, dpsm = 0u, width = 0u, height = 0u;
+};
+std::atomic<uint64_t> g_uploadsChecked{0}, g_uploadsStale{0};
+
+// On under the pipeline (RG_NATIVE_UPLOAD_CHECK=0 off): a stale record is
+// made again from what was sent (rg::nativeproducer::replaceUpload).
+bool checkingUploads()
+{
+    static const bool on = [] {
+        const char *v = std::getenv("RG_NATIVE_UPLOAD_CHECK");
+        return !(v && *v == '0');
+    }();
+    return on;
+}
+
+// The largest upload checked (RG_NATIVE_UPLOAD_CHECK=all: every one). The
+// stale records seen were all palettes (1 KiB) and 64x64 CT32 textures
+// (16 KiB); at the boss, checking every upload was about a twentieth of
+// this thread and found none.
+uint32_t checkedUploadLimit()
+{
+    static const uint32_t limit = [] {
+        const char *v = std::getenv("RG_NATIVE_UPLOAD_CHECK");
+        return v && std::strcmp(v, "all") == 0 ? ~0u : 16u * 1024u;
+    }();
+    return limit;
+}
+thread_local UploadWithhold t_upload;
+
+// Withheld bytes, for the check; compared when all have come.
+void seeWithheld(const uint8_t *data, uint32_t size)
+{
+    UploadWithhold &u = t_upload;
+    if (!checkingUploads() || u.expectBytes == 0u || u.seen.size() >= u.expectBytes)
+        return;
+    const uint32_t n = std::min<uint32_t>(size, u.expectBytes - static_cast<uint32_t>(u.seen.size()));
+    u.seen.insert(u.seen.end(), data, data + n);
+    if (u.seen.size() < u.expectBytes)
+        return;
+    g_uploadsChecked.fetch_add(1u, std::memory_order_relaxed);
+    if (rg::nativeproducer::uploadHash(u.seen.data(), u.expectBytes) != u.expectHash)
+    {
+        const uint64_t stale = g_uploadsStale.fetch_add(1u, std::memory_order_relaxed);
+        if (stale < 8u)
+            std::fprintf(stderr,
+                         "[native-upload] stale record: DBP %04x DPSM %02x %ux%u%s, %u bytes (sent differs from the "
+                         "record's guest memory): made again from what was sent\n",
+                         u.dbp, u.dpsm, u.width, u.height, u.palette ? " (palette)" : "", u.expectBytes);
+        rg::nativeproducer::replaceUpload(u.palette, u.dbp, u.dpsm, u.width, u.height, u.seen.data(),
+                                          u.expectBytes);
+    }
+    u.expectBytes = 0u;
+}
+
+uint32_t transferBits(uint32_t psm)
+{
+    switch (psm & 0x3Fu)
+    {
+    case 0x00u: return 32u; // CT32
+    case 0x01u: return 24u; // CT24
+    case 0x02u: case 0x0Au: return 16u; // CT16, CT16S
+    case 0x13u: return 8u;  // T8
+    case 0x14u: return 4u;  // T4
+    default: return 0u;
+    }
+}
+
+// What of the packet goes to the GS, into `kept`; false: all of it, as it is.
+bool withholdUploads(const uint8_t *data, uint32_t size, std::vector<uint8_t> &kept)
+{
+    namespace producer = rg::nativeproducer;
+    if (!uploadsTaken())
+        return false;
+    kept.clear();
+    bool changed = false;
+    uint32_t pos = 0u;
+    if (t_upload.imageBytes > 0u)
+    {
+        // A withheld image's data at the packet's start, not behind a tag.
+        const uint32_t n = std::min(t_upload.imageBytes, size);
+        t_upload.imageBytes -= n;
+        seeWithheld(data, n);
+        pos = n;
+        changed = true;
+        producer::noteContinuedInPacket();
+    }
+    while (pos + 16u <= size)
+    {
+        uint64_t lo = 0u, hi = 0u;
+        std::memcpy(&lo, data + pos, 8u);
+        std::memcpy(&hi, data + pos + 8u, 8u);
+        const uint32_t nloop = static_cast<uint32_t>(lo & 0x7FFFu);
+        const uint32_t flg = static_cast<uint32_t>((lo >> 58) & 3u);
+        uint32_t nreg = static_cast<uint32_t>((lo >> 60) & 0xFu);
+        nreg = nreg ? nreg : 16u;
+        const uint64_t body = flg == 0u   ? uint64_t(nloop) * nreg * 16u
+                              : flg == 1u ? (uint64_t(nloop) * nreg + 1u) / 2u * 16u
+                                          : uint64_t(nloop) * 16u;
+        const uint32_t end = static_cast<uint32_t>(std::min<uint64_t>(size, pos + 16u + body));
+        bool drop = false;
+        if (flg == 0u && nreg == 1u && (hi & 0xFu) == 0xEu)
+        {
+            // A+D: a transfer's registers alone, its TRXDIR host to local?
+            uint64_t bitbltbuf = 0u, trxreg = 0u, trxdir = ~0ull;
+            uint32_t others = 0u;
+            for (uint32_t at = pos + 16u; at + 16u <= end; at += 16u)
+            {
+                uint64_t value = 0u;
+                std::memcpy(&value, data + at, 8u);
+                const uint8_t reg = data[at + 8u];
+                if (reg == 0x50u)
+                    bitbltbuf = value;
+                else if (reg == 0x52u)
+                    trxreg = value;
+                else if (reg == 0x53u)
+                    trxdir = value;
+                else if (reg != 0x51u)
+                    ++others;
+            }
+            if (trxdir != ~0ull)
+            {
+                t_upload.transferBytes = 0u;
+                const uint32_t dbp = static_cast<uint32_t>((bitbltbuf >> 32) & 0x3FFFu);
+                const uint32_t dbw = std::max<uint32_t>(static_cast<uint32_t>((bitbltbuf >> 48) & 0x3Fu), 1u);
+                const uint32_t dpsm = static_cast<uint32_t>((bitbltbuf >> 56) & 0x3Fu);
+                const uint32_t rrw = static_cast<uint32_t>(trxreg & 0xFFFu);
+                const uint32_t rrh = static_cast<uint32_t>((trxreg >> 32) & 0xFFFu);
+                const uint32_t bits = transferBits(dpsm);
+                bool palette = false;
+                uint64_t hash = 0u;
+                uint32_t hashedBytes = 0u;
+                if ((trxdir & 3u) != 0u || bits == 0u)
+                    ; // not an upload this takes
+                else if (!producer::takeProduced(dbp, dbw, dpsm, rrw, rrh, palette, hash, hashedBytes))
+                    producer::notePassed(producer::Passed::NotProduced);
+                else
+                {
+                    t_upload.transferBytes = (rrw * rrh * bits / 8u + 15u) & ~15u;
+                    t_upload.palette = palette;
+                    t_upload.seen.clear();
+                    t_upload.expectHash = hash;
+                    t_upload.expectBytes = hashedBytes <= checkedUploadLimit() ? hashedBytes : 0u;
+                    t_upload.dbp = dbp;
+                    t_upload.dpsm = dpsm;
+                    t_upload.width = rrw;
+                    t_upload.height = rrh;
+                    drop = true;
+                    if (others != 0u)
+                    {
+                        // The block's other registers, as a block of their own.
+                        const uint64_t tag = (lo & ~uint64_t(0x7FFFu)) | others;
+                        const size_t at = kept.size();
+                        kept.resize(at + 16u);
+                        std::memcpy(kept.data() + at, &tag, 8u);
+                        std::memcpy(kept.data() + at + 8u, &hi, 8u);
+                        for (uint32_t q = pos + 16u; q + 16u <= end; q += 16u)
+                            if (data[q + 8u] < 0x50u || data[q + 8u] > 0x53u)
+                                kept.insert(kept.end(), data + q, data + q + 16u);
+                        producer::noteSplit();
+                    }
+                }
+            }
+        }
+        else if (flg >= 2u && t_upload.transferBytes > 0u)
+        {
+            // The withheld transfer's data, as many IMAGE tags as it takes.
+            drop = true;
+            const uint32_t taken = static_cast<uint32_t>(std::min<uint64_t>(body, t_upload.transferBytes));
+            t_upload.transferBytes -= taken;
+            seeWithheld(data + pos + 16u, std::min<uint32_t>(taken, end - (pos + 16u)));
+            t_upload.imageBytes = static_cast<uint32_t>(pos + 16u + body - end);
+            if (t_upload.transferBytes == 0u)
+                producer::noteWithheld(t_upload.palette, taken);
+        }
+        if (drop)
+            changed = true;
+        else
+            kept.insert(kept.end(), data + pos, data + end);
+        pos = end;
+    }
+    if (changed && pos < size)
+        kept.insert(kept.end(), data + pos, data + size);
+    return changed;
+}
+
+// An image continuation's bytes that belong to a withheld upload; the rest,
+// if any, goes on.
+uint32_t withheldContinuation(const uint8_t *data, uint32_t size)
+{
+    if (t_upload.imageBytes == 0u)
+        return 0u;
+    const uint32_t n = std::min(t_upload.imageBytes, size);
+    t_upload.imageBytes -= n;
+    seeWithheld(data, n);
+    return n;
+}
+
+// A host upload nobody took (no record withheld it), its pixels gathered
+// from the IMAGE data that follows (in the packet or continuing past it)
+// for the producer, which keeps what it leaves in GS memory
+// (rg::nativeproducer::hostUpload). The upload still goes to the GS.
+struct HostCapture
+{
+    bool active = false;
+    uint64_t bitbltbuf = 0u, trxpos = 0u, trxreg = 0u;
+    uint32_t need = 0u;
+    std::vector<uint8_t> data;
+};
+thread_local HostCapture t_capture;
+
+uint32_t captureBits(uint32_t psm)
+{
+    switch (psm & 0x3Fu)
+    {
+    case 0x00u: return 32u;                     // CT32
+    case 0x02u: case 0x0Au: return 16u;         // CT16, CT16S
+    case 0x13u: case 0x1Bu: return 8u;          // T8, T8H
+    case 0x14u: case 0x24u: case 0x2Cu: return 4u; // T4, T4HL, T4HH
+    default: return 0u;
+    }
+}
+
+void startCapture()
+{
+    HostCapture &c = t_capture;
+    c.active = false;
+    c.data.clear();
+    const uint32_t bits = captureBits(static_cast<uint32_t>(t_bitbltbuf >> 56));
+    const uint64_t need = (uint64_t(t_trxreg & 0xFFFu) * ((t_trxreg >> 32) & 0xFFFu) * bits + 7u) / 8u;
+    if (bits == 0u || need == 0u || need > (16u << 20))
+        return;
+    c.active = true;
+    c.bitbltbuf = t_bitbltbuf;
+    c.trxpos = t_trxpos;
+    c.trxreg = t_trxreg;
+    c.need = static_cast<uint32_t>(need);
+    c.data.reserve(c.need);
+}
+
+// IMAGE bytes of the upload being captured; whatever is past it is not.
+void feedCapture(const uint8_t *data, uint32_t size)
+{
+    HostCapture &c = t_capture;
+    if (!c.active)
+        return;
+    const uint32_t n = std::min<uint32_t>(size, c.need - static_cast<uint32_t>(c.data.size()));
+    c.data.insert(c.data.end(), data, data + n);
+    if (c.data.size() < c.need)
+        return;
+    c.active = false;
+    const uint64_t b = c.bitbltbuf;
+    rg::nativeproducer::hostUpload(
+        static_cast<uint32_t>((b >> 32) & 0x3FFFu), static_cast<uint32_t>((b >> 48) & 0x3Fu),
+        static_cast<uint32_t>((b >> 56) & 0x3Fu), static_cast<uint32_t>((c.trxpos >> 32) & 0x7FFu),
+        static_cast<uint32_t>((c.trxpos >> 48) & 0x7FFu), static_cast<uint32_t>(c.trxreg & 0xFFFu),
+        static_cast<uint32_t>((c.trxreg >> 32) & 0xFFFu), c.data.data(), static_cast<uint32_t>(c.data.size()));
+    c.data.clear();
+}
+
+void transferRegister(uint8_t reg, uint64_t value)
+{
+    switch (reg)
+    {
+    case 0x50u: t_bitbltbuf = value; break;
+    case 0x51u: t_trxpos = value; break;
+    case 0x52u: t_trxreg = value; break;
+    case 0x53u: // TRXDIR
+        if ((value & 3u) == 0u)
+            startCapture();
+        else
+            t_capture.active = false;
+        if ((value & 3u) == 2u)
+        {
+            const uint64_t b = t_bitbltbuf;
+            rg::nativeproducer::noteLocalCopy(
+                unsigned(b & 0x3FFFu), unsigned((b >> 16) & 0x3Fu), unsigned((b >> 24) & 0x3Fu),
+                unsigned(t_trxpos & 0x7FFu), unsigned((t_trxpos >> 16) & 0x7FFu), unsigned((b >> 32) & 0x3FFFu),
+                unsigned((b >> 48) & 0x3Fu), unsigned((b >> 56) & 0x3Fu), unsigned((t_trxpos >> 32) & 0x7FFu),
+                unsigned((t_trxpos >> 48) & 0x7FFu), unsigned(t_trxreg & 0xFFFu), unsigned((t_trxreg >> 32) & 0xFFFu));
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+// A packet on its way to the GS: its transfers, for the producer.
+void watchTransfers(const uint8_t *data, uint32_t size)
+{
+    uint32_t pos = 0u;
+    while (pos + 16u <= size)
+    {
+        uint64_t lo = 0u, hi = 0u;
+        std::memcpy(&lo, data + pos, 8u);
+        std::memcpy(&hi, data + pos + 8u, 8u);
+        const uint32_t nloop = static_cast<uint32_t>(lo & 0x7FFFu);
+        const uint32_t flg = static_cast<uint32_t>((lo >> 58) & 3u);
+        uint32_t nreg = static_cast<uint32_t>((lo >> 60) & 0xFu);
+        nreg = nreg ? nreg : 16u;
+        pos += 16u;
+        if (flg == 0u)
+        {
+            // PACKED: a qword a register; only A+D reaches the transfer ones.
+            for (uint32_t i = 0; i < nloop * nreg && pos + 16u <= size; ++i, pos += 16u)
+                if (((hi >> ((i % nreg) * 4u)) & 0xFu) == 0xEu)
+                {
+                    uint64_t value = 0u;
+                    std::memcpy(&value, data + pos, 8u);
+                    transferRegister(data[pos + 8u], value);
+                }
+        }
+        else if (flg == 1u)
+        {
+            pos += ((nloop * nreg * 8u) + 15u) & ~15u; // REGLIST: no A+D
+        }
+        else
+        {
+            const uint32_t bytes = std::min<uint32_t>(nloop * 16u, size - std::min(size, pos));
+            feedCapture(data + pos, bytes);
+            pos += bytes;
+        }
+    }
+}
+
+// A packet to the GS as it is.
+void sendRaw(GS &gs, const uint8_t *data, uint32_t size)
+{
+    if (uploadsTaken())
+    {
+        thread_local std::vector<uint8_t> kept;
+        if (withholdUploads(data, size, kept))
+        {
+            if (kept.empty())
+                return;
+            data = kept.data();
+            size = static_cast<uint32_t>(kept.size());
+        }
+        watchTransfers(data, size);
+    }
     // The native pipeline's draw-state mirror follows every packet, in the
     // order the GS gets them.
     if (g_stage && t_onVif1Thread)
@@ -1071,8 +1465,604 @@ void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
     gs.processGIFPacket(data, size);
 }
 
+// A native strip to the GS, in order with the packets.
+void meshToGs(GS &gs, const GSNativeMesh &mesh)
+{
+    if (g_stage && t_onVif1Thread)
+    {
+        g_stage->mesh(mesh);
+        return;
+    }
+    if (g_stage)
+    {
+        g_thread->drain();
+    }
+    gs.submitNativeMesh(mesh);
+}
+
+// The native pipeline's 2D (src/native_2d.h); read at first use, after the
+// menu's setting.
+bool native2D()
+{
+    static const bool on = rg::native2d::enabled();
+    return on;
+}
+std::atomic<uint64_t> g_packetsConverted{0u}, g_packetsRefused{0u}, g_piecesMade{0u}, g_piecesToGs{0u};
+
+// Step 5b: a converter mesh as the producer's window-space draw, under the
+// draw state the packets before it left (the PRIM write just before it
+// among them); one it refuses goes to the GS.
+void deliverPiece(GS &gs, const rg::native2d::Piece &piece)
+{
+    if (!t_onVif1Thread)
+    {
+        g_thread->drain(); // the lists in flight first, as for the GS
+    }
+    const GSDrawState state = rg::drawstate::current();
+    if (rg::nativeproducer::piece(piece.mesh, &state, piece.texelUvs))
+    {
+        ++g_piecesMade;
+        return;
+    }
+    ++g_piecesToGs;
+    meshToGs(gs, piece.mesh);
+}
+
+// A packet on to the GS. Under the native pipeline's 2D its primitives
+// become the producer's draws and only the rest goes on (src/native_2d.h).
+void sendPacket(GS &gs, const uint8_t *data, uint32_t size)
+{
+    if (native2D() && data && size >= 16u)
+    {
+        thread_local std::vector<rg::native2d::Piece> pieces;
+        const rg::native2d::Span one{data, size};
+        std::string why;
+        if (rg::native2d::build(&one, 1u, pieces, why))
+        {
+            const bool anyMesh = std::any_of(pieces.begin(), pieces.end(),
+                                             [](const rg::native2d::Piece &p) { return !p.isPacket(); });
+            if (!anyMesh)
+            {
+                sendRaw(gs, data, size); // the converter has seen it
+                return;
+            }
+            for (const rg::native2d::Piece &piece : pieces)
+            {
+                if (piece.isPacket())
+                    sendRaw(gs, piece.bytes(), piece.size());
+                else
+                    deliverPiece(gs, piece);
+            }
+            const uint64_t count = ++g_packetsConverted;
+            if (count == 1u || count % 100000u == 0u)
+                std::fprintf(stderr, "[native2d] packets converted: %llu (pieces made %llu, to the GS %llu), %llu refused\n",
+                             static_cast<unsigned long long>(count),
+                             static_cast<unsigned long long>(g_piecesMade.load()),
+                             static_cast<unsigned long long>(g_piecesToGs.load()),
+                             static_cast<unsigned long long>(g_packetsRefused.load()));
+            return;
+        }
+        ++g_packetsRefused;
+        static std::mutex toldMutex;
+        static std::vector<std::string> told;
+        std::lock_guard lock(toldMutex);
+        if (told.size() < 8u && std::find(told.begin(), told.end(), why) == told.end())
+        {
+            told.push_back(why);
+            std::fprintf(stderr, "[native2d] a packet stays a packet: %s\n", why.c_str());
+        }
+        rg::native2d::observe(data, size);
+    }
+    sendRaw(gs, data, size);
+}
+
+// The packets of an effect the producer may draw (src/native_effects.h),
+// held on the VIF1 thread until something else goes to the GS (an effect's
+// packets come in one run) or the list ends.
+struct HeldEffect
+{
+    rg::nativefx::Effect effect = rg::nativefx::Effect::None;
+    uint32_t unit = 0u; // the colour filter's colour
+    GS *gs = nullptr;
+    std::vector<std::vector<uint8_t>> packets;
+};
+thread_local HeldEffect t_held;
+std::atomic<uint64_t> g_effectsNative{0u};
+std::atomic<uint64_t> g_effectsAsPackets{0u};
+
+// The EE address of a packet in the VIF1 thread's list, or ~0u.
+uint32_t listAddress(const uint8_t *data)
+{
+    if (!t_listData || !t_listOrigins || data < t_listData || data >= t_listData + t_listSize)
+    {
+        return ~0u;
+    }
+    const uint32_t offset = static_cast<uint32_t>(data - t_listData);
+    auto it = std::upper_bound(t_listOrigins->begin(), t_listOrigins->end(), offset,
+                               [](uint32_t value, const auto &piece) { return value < piece.first; });
+    if (it == t_listOrigins->begin())
+    {
+        return ~0u;
+    }
+    --it;
+    return it->second + (offset - it->first);
+}
+
+// An effect built from its packets, as the producer's draws: then its
+// packets go on with their kicks withheld (the registers they set still
+// reach the GS and the draw-state mirror). False, with `why`, leaves the
+// packets to go on as they are.
+bool drawEffect(rg::nativefx::Effect kind, const std::vector<std::vector<uint8_t>> &packets, uint32_t unit,
+                GS &gs, std::string &why)
+{
+    thread_local GSNativeEffect effect;
+    thread_local std::vector<std::vector<uint8_t>> withheld;
+    if (!rg::nativefx::build(kind, packets, effect, withheld, why, unit))
+        return false;
+    rg::nativeproducer::noteEffect(effect);
+    if (!rg::nativeproducer::effect(effect))
+    {
+        why = "the producer cannot draw it (its stats line says why)";
+        return false;
+    }
+    for (const std::vector<uint8_t> &packet : withheld)
+    {
+        sendPacket(gs, packet.data(), static_cast<uint32_t>(packet.size()));
+    }
+    return true;
+}
+
+void countEffect(bool drawn, rg::nativefx::Effect kind, const std::string &why,
+                 const std::vector<std::vector<uint8_t>> &packets)
+{
+    if (drawn)
+    {
+        const uint64_t count = ++g_effectsNative;
+        if (count == 1u || count % 3600u == 0u)
+        {
+            std::fprintf(stderr, "[nativefx] %llu drawn by the renderer, %llu as packets\n",
+                         static_cast<unsigned long long>(count),
+                         static_cast<unsigned long long>(g_effectsAsPackets.load()));
+        }
+        return;
+    }
+    ++g_effectsAsPackets;
+    static std::mutex toldMutex;
+    static std::vector<std::string> told;
+    const std::string line = std::string(rg::nativefx::name(kind)) + ": " + why;
+    std::lock_guard lock(toldMutex);
+    if (told.size() < 16u && std::find(told.begin(), told.end(), line) == told.end())
+    {
+        told.push_back(line);
+        std::fprintf(stderr, "[nativefx] an effect stays packets: %s\n", line.c_str());
+        static const bool dump = std::getenv("RG_NATIVE_EFFECTS_TRACE") != nullptr;
+        if (dump)
+            rg::nativefx::dumpPackets("nativefx refused", packets);
+    }
+}
+
+void flushEffect()
+{
+    if (t_held.effect == rg::nativefx::Effect::None)
+    {
+        return;
+    }
+    GS &gs = *t_held.gs;
+    std::string why;
+    const bool drawn = drawEffect(t_held.effect, t_held.packets, t_held.unit, gs, why);
+    if (!drawn)
+    {
+        for (const std::vector<uint8_t> &packet : t_held.packets)
+        {
+            sendPacket(gs, packet.data(), static_cast<uint32_t>(packet.size()));
+        }
+    }
+    countEffect(drawn, t_held.effect, why, t_held.packets);
+    t_held.effect = rg::nativefx::Effect::None;
+    t_held.unit = 0u;
+    t_held.packets.clear();
+}
+
+// RG_NATIVE_COMPOSITE: stage E's objects, each drawn into the offscreen
+// buffer (its head: a clear of its box, its model) and then laid over the
+// frame (its tail), drawn by the renderer into object layers of its own
+// (GSNativeEffect::kRouteLayer): the head's draws into the buffer go to the
+// object's layer, the tail's sprites become a kObjectTail from that layer,
+// their kicks withheld, and the waiting tails are drawn together
+// (kComposite) before anything else reaches the GS. Uploads and TEXFLUSHes
+// between objects go on: the layers are not GS memory. So the GS's buffer is
+// never drawn, and the renderer switches target twice a run of objects
+// instead of twice an object.
+struct CompositeBatch
+{
+    enum class State : uint8_t
+    {
+        Outside,
+        Head,
+        Tail,
+    };
+    State state = State::Outside;
+    uint32_t unit = 0u;
+    bool decided = false;   // the head's box known and its packets sent
+    bool routed = false;    // its draws go to a layer, its tail held
+    bool waiting = false;   // tails sent that no kComposite has drawn yet
+    bool uploading = false; // an upload's data goes on too
+    GS *gs = nullptr;
+    rg::nativefx::Box box;
+    std::vector<std::vector<uint8_t>> head; // the head's packets until its box is known
+    std::vector<std::vector<uint8_t>> tail;
+};
+thread_local CompositeBatch t_batch;
+std::atomic<uint64_t> g_compositeUnits{0u}, g_compositeRouted{0u}, g_compositeRuns{0u}, g_compositeRefused{0u};
+
+// A layer command or a tail to the producer; false when it refused it.
+bool sendEffect(GS &, const GSNativeEffect &effect)
+{
+    rg::nativeproducer::noteEffect(effect);
+    return rg::nativeproducer::effect(effect);
+}
+
+void sendCommand(GS &gs, uint32_t command)
+{
+    thread_local GSNativeEffect effect;
+    effect = GSNativeEffect{};
+    effect.command = command;
+    sendEffect(gs, effect);
+}
+
+// The waiting tails drawn, before what comes next.
+void compositeRun()
+{
+    CompositeBatch &batch = t_batch;
+    if (!batch.waiting)
+        return;
+    batch.waiting = false;
+    ++g_compositeRuns;
+    sendCommand(*batch.gs, GSNativeEffect::kComposite);
+}
+
+// The head's box is known (or will not be): routed to a layer with it, or,
+// without one, drawn as the game draws it, after the waiting tails.
+void decideHead()
+{
+    CompositeBatch &batch = t_batch;
+    batch.routed = rg::nativefx::clearBox(batch.head, batch.box);
+    if (batch.routed)
+    {
+        thread_local GSNativeEffect route;
+        route = GSNativeEffect{};
+        route.command = GSNativeEffect::kRouteLayer;
+        route.bufferCount = 1u;
+        route.buffers[0].base = batch.box.base;
+        route.buffers[0].fbw = batch.box.fbw;
+        route.box[0] = batch.box.x0;
+        route.box[1] = batch.box.y0;
+        route.box[2] = batch.box.x1;
+        route.box[3] = batch.box.y1;
+        sendEffect(*batch.gs, route);
+        ++g_compositeRouted;
+    }
+    else
+    {
+        compositeRun();
+    }
+    for (const std::vector<uint8_t> &packet : batch.head)
+        sendPacket(*batch.gs, packet.data(), static_cast<uint32_t>(packet.size()));
+    batch.head.clear();
+    batch.decided = true;
+    const uint64_t units = ++g_compositeUnits;
+    if (units == 1u || units % 5000u == 0u)
+        std::fprintf(stderr, "[composite] %llu objects, %llu in layers, %llu runs drawn, %llu tails refused\n",
+                     static_cast<unsigned long long>(units), static_cast<unsigned long long>(g_compositeRouted.load()),
+                     static_cast<unsigned long long>(g_compositeRuns.load()),
+                     static_cast<unsigned long long>(g_compositeRefused.load()));
+}
+
+// A routed object's tail, whole: its sprites to the renderer, from the
+// layer, and its packets to the GS with their kicks withheld. Refused, the
+// object's layer goes back into the GS's buffer first (kObjectTail without
+// sprites) and the packets as they are.
+void finishTail()
+{
+    CompositeBatch &batch = t_batch;
+    if (batch.tail.empty())
+        return;
+    GS &gs = *batch.gs;
+    thread_local GSNativeEffect effect;
+    thread_local std::vector<std::vector<uint8_t>> withheld;
+    std::string why;
+    bool ok = rg::nativefx::build(rg::nativefx::Effect::CompositeTail, batch.tail, effect, withheld, why);
+    if (ok)
+    {
+        bool fromLayer = false;
+        for (uint32_t i = 0; i < effect.bufferCount; ++i)
+        {
+            GSNativeEffect::Buffer &buffer = effect.buffers[i];
+            if (buffer.base == batch.box.base && buffer.fbw == batch.box.fbw)
+            {
+                buffer.layer = 1u;
+                fromLayer = true;
+            }
+        }
+        ok = fromLayer;
+        why = ok ? why : "no sprite from the object's buffer";
+    }
+    if (ok)
+    {
+        effect.command = GSNativeEffect::kObjectTail;
+        ok = sendEffect(gs, effect);
+        why = ok ? why : "the producer cannot draw it (its stats line says why)";
+    }
+    if (ok)
+    {
+        for (const std::vector<uint8_t> &packet : withheld)
+            sendPacket(gs, packet.data(), static_cast<uint32_t>(packet.size()));
+        batch.waiting = true;
+    }
+    else
+    {
+        const bool nothing = why == "no sprites";
+        static std::vector<std::string> told;
+        if (!nothing && told.size() < 8u && std::find(told.begin(), told.end(), why) == told.end())
+        {
+            told.push_back(why);
+            std::fprintf(stderr, "[composite] a tail stays packets: %s\n", why.c_str());
+        }
+        if (!nothing)
+            ++g_compositeRefused;
+        static const bool trace = std::getenv("RG_COMPOSITE_TRACE") != nullptr;
+        static int dumped = 0;
+        if (trace && !nothing && dumped++ < 3)
+        {
+            std::fprintf(stderr, "[composite] refused (%s), box %d,%d-%d,%d:\n", why.c_str(), batch.box.x0, batch.box.y0,
+                         batch.box.x1, batch.box.y1);
+            rg::nativefx::dumpPackets("composite", batch.tail);
+        }
+        effect = GSNativeEffect{};
+        effect.command = GSNativeEffect::kObjectTail;
+        effect.bufferCount = nothing ? 0u : 1u;
+        effect.buffers[0].base = batch.box.base;
+        effect.buffers[0].fbw = batch.box.fbw;
+        sendEffect(gs, effect);
+        batch.waiting = false;
+        for (const std::vector<uint8_t> &packet : batch.tail)
+            sendPacket(gs, packet.data(), static_cast<uint32_t>(packet.size()));
+    }
+    batch.tail.clear();
+}
+
+// The object being read is over (what comes next is not its).
+void endObject()
+{
+    CompositeBatch &batch = t_batch;
+    if (batch.state == CompositeBatch::State::Head && !batch.decided)
+        decideHead();
+    if (batch.state == CompositeBatch::State::Head && batch.routed)
+        sendCommand(*batch.gs, GSNativeEffect::kRouteEnd);
+    finishTail();
+    batch.state = CompositeBatch::State::Outside;
+    batch.routed = false;
+}
+
+// At a list's end, or before anything that is no composite's.
+void flushComposites()
+{
+    if (!t_batch.gs)
+        return;
+    endObject();
+    compositeRun();
+    t_batch.uploading = false;
+}
+
+void compositeOther(const char *what = "?", uint32_t address = ~0u, uint32_t cursor = ~0u)
+{
+    static const bool trace = std::getenv("RG_COMPOSITE_TRACE") != nullptr;
+    static int traced = 0;
+    if (trace && traced < 40 && (t_batch.waiting || t_batch.state != CompositeBatch::State::Outside))
+    {
+        ++traced;
+        std::fprintf(stderr, "[composite]   run ended by %s @%08x cursor %08x (state %d)\n", what, address, cursor,
+                     int(t_batch.state));
+    }
+    flushComposites();
+}
+
+bool uploadOrFlush(const uint8_t *data, uint32_t size)
+{
+    uint32_t first, last;
+    if (rg::nativefx::uploadPages(data, size, first, last))
+        return true;
+    // A packet that only flushes the texture cache (TEXFLUSH: no state, no
+    // drawing).
+    if (size < 32u)
+        return false;
+    uint64_t tag, regs;
+    std::memcpy(&tag, data, 8);
+    std::memcpy(&regs, data + 8, 8);
+    const uint32_t nloop = static_cast<uint32_t>(tag & 0x7FFFu);
+    bool flushOnly = (tag >> 58) == 0x4u && (regs & 0xFu) == 0xEu && nloop != 0u && 16u + nloop * 16u <= size;
+    for (uint32_t i = 0; flushOnly && i < nloop; ++i)
+        flushOnly = data[16u + i * 16u + 8u] == 0x3Fu;
+    return flushOnly;
+}
+
+// A packet of a composite (its place in the list's EE memory, or for what a
+// VU1 program kicked, the part being run): true when it was taken.
+bool compositePacket(GS &gs, const uint8_t *data, uint32_t size, uint32_t address)
+{
+    CompositeBatch &batch = t_batch;
+    batch.gs = &gs;
+    rg::nativefx::Place place;
+    // What a VU1 program kicked: the part whose list holds the MSCAL.
+    uint32_t cursor = ~0u;
+    if (address == ~0u && g_vif1Memory)
+        cursor = listAddress(g_vif1Memory->vif1Cursor());
+    if (address != ~0u)
+        place = rg::nativefx::placeAt(address);
+    else if (cursor != ~0u)
+        place = rg::nativefx::placeAt(cursor);
+    // Until its tail, a head goes on through what it refers to: the model's
+    // packets from the model's memory, and what its VU1 programs kick.
+    // (Every object marked has a tail.)
+    if (batch.state == CompositeBatch::State::Head && place.effect == rg::nativefx::Effect::None)
+        place = {rg::nativefx::Effect::CompositeHead, batch.unit};
+    {
+        static const bool trace = std::getenv("RG_COMPOSITE_TRACE") != nullptr;
+        static int traced = 0;
+        if (trace && traced < 400 && (place.effect != rg::nativefx::Effect::None || batch.state != CompositeBatch::State::Outside))
+        {
+            ++traced;
+            std::fprintf(stderr, "[composite]   %s unit %u (state %d unit %u decided %d) @%08x cursor %08x %u bytes\n",
+                         rg::nativefx::name(place.effect), place.unit, int(batch.state), batch.unit, int(batch.decided),
+                         address, cursor, size);
+        }
+    }
+    if (place.effect == rg::nativefx::Effect::CompositeHead)
+    {
+        if (batch.state != CompositeBatch::State::Head || batch.unit != place.unit)
+        {
+            endObject();
+            batch.state = CompositeBatch::State::Head;
+            batch.unit = place.unit;
+            batch.decided = false;
+        }
+        batch.uploading = false;
+        if (!batch.decided)
+        {
+            if (address != ~0u && rg::nativefx::placeAt(address).effect == rg::nativefx::Effect::CompositeHead)
+            {
+                batch.head.emplace_back(data, data + size);
+                return true;
+            }
+            decideHead();
+        }
+        sendPacket(gs, data, size);
+        return true;
+    }
+    // (Unit 0: the fixed chain every tail calls.)
+    if (place.effect == rg::nativefx::Effect::CompositeTail && (place.unit == batch.unit || place.unit == 0u) &&
+        (batch.state == CompositeBatch::State::Head || batch.state == CompositeBatch::State::Tail))
+    {
+        if (batch.state == CompositeBatch::State::Head)
+        {
+            if (!batch.decided)
+                decideHead();
+            if (batch.routed)
+                sendCommand(gs, GSNativeEffect::kRouteEnd);
+            batch.state = CompositeBatch::State::Tail;
+        }
+        if (batch.routed)
+            batch.tail.emplace_back(data, data + size);
+        else
+            sendPacket(gs, data, size);
+        return true;
+    }
+    // The upload's data, as an IMAGE packet.
+    if (batch.uploading && size >= 16u)
+    {
+        uint64_t tag;
+        std::memcpy(&tag, data, 8);
+        if (((tag >> 58) & 3u) == 2u)
+        {
+            sendPacket(gs, data, size);
+            return true;
+        }
+    }
+    batch.uploading = false;
+    // Between objects the caller uploads textures (CLUTs) and flushes the
+    // texture cache: on ahead of the waiting tails, which read only their
+    // layers (each tail's packets set every register it draws with).
+    if (batch.state != CompositeBatch::State::Head && (batch.waiting || batch.state == CompositeBatch::State::Tail) &&
+        uploadOrFlush(data, size))
+    {
+        endObject();
+        uint32_t first, last;
+        batch.uploading = rg::nativefx::uploadPages(data, size, first, last);
+        sendPacket(gs, data, size);
+        return true;
+    }
+    compositeOther(rg::nativefx::name(place.effect), address, cursor);
+    return false;
+}
+
+void deliverPacket(GS &gs, const uint8_t *data, uint32_t size)
+{
+    if (composites() && t_onVif1Thread && compositePacket(gs, data, size, listAddress(data)))
+    {
+        return;
+    }
+    // Step 5: an effect's packets, held until the effect's run ends.
+    if (nativeEffects() && t_onVif1Thread)
+    {
+        const uint32_t address = listAddress(data);
+        const rg::nativefx::Place place = address == ~0u ? rg::nativefx::Place{} : rg::nativefx::placeAt(address);
+        const rg::nativefx::Effect effect = place.effect;
+        const uint32_t unit = effect == rg::nativefx::Effect::ColorFilter ? place.unit : 0u;
+        if (effect != t_held.effect || unit != t_held.unit)
+        {
+            flushEffect();
+        }
+        if (effect == rg::nativefx::Effect::ShadowSetup)
+        {
+            rg::nativefx::observe(effect, data, size);
+        }
+        else if (effect != rg::nativefx::Effect::None)
+        {
+            t_held.effect = effect;
+            t_held.unit = unit;
+            t_held.gs = &gs;
+            t_held.packets.emplace_back(data, data + size);
+            return;
+        }
+    }
+    // The flip's copy, from the game thread: after the lists in flight, as
+    // the GS would get it.
+    if (!t_onVif1Thread && rg::nativefx::flipNative())
+    {
+        thread_local GSNativeEffect effect;
+        thread_local std::vector<std::vector<uint8_t>> withheld;
+        if (rg::nativefx::flipPacket(data, size, effect, withheld))
+        {
+            g_thread->drain();
+            rg::nativeproducer::noteEffect(effect);
+            const bool drawn = rg::nativeproducer::effect(effect);
+            if (drawn)
+            {
+                for (const std::vector<uint8_t> &packet : withheld)
+                {
+                    sendPacket(gs, packet.data(), static_cast<uint32_t>(packet.size()));
+                }
+            }
+            else
+            {
+                sendPacket(gs, data, size);
+            }
+            countEffect(drawn, rg::nativefx::Effect::Flip, "the producer cannot draw it", {});
+            return;
+        }
+    }
+    sendPacket(gs, data, size);
+}
+
 void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data)
 {
+    if (composites() && t_onVif1Thread)
+    {
+        t_batch.gs = &gs;
+        if (t_batch.state == CompositeBatch::State::Head)
+        {
+            if (!t_batch.decided)
+                decideHead();
+        }
+        else
+        {
+            compositeOther("a mesh");
+        }
+    }
+    if (nativeEffects() && t_onVif1Thread)
+    {
+        flushEffect();
+    }
     // Steps 4a and 4c of docs/NATIVE-PIPELINE.md: a VU1 program's mesh as a
     // native mesh draw, under the draw state the GS would draw it with; made
     // one, it does not go to the GS at all.
@@ -1084,16 +2074,7 @@ void deliverMesh(GS &gs, const GSNativeMesh &mesh, const uint8_t *vu1Data)
         if (rg::nativeproducer::mesh(mesh, &state, vu1Data, 0u))
             return;
     }
-    if (g_stage && t_onVif1Thread)
-    {
-        g_stage->mesh(mesh);
-        return;
-    }
-    if (g_stage)
-    {
-        g_thread->drain();
-    }
-    gs.submitNativeMesh(mesh);
+    meshToGs(gs, mesh);
 }
 // The thread that runs guest code, as the first hooked DMA call sees it.
 std::thread::id g_gameThread;
@@ -1168,6 +2149,10 @@ void send(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, PS2Runtime::Re
         {
             list.data.reserve(qwc * 16u);
             appendBytes(memory, list.data, address, qwc * 16u);
+            if (nativeEffects())
+            {
+                list.origins.emplace_back(0u, address);
+            }
         }
         catch (const std::exception &)
         {
@@ -1179,7 +2164,7 @@ void send(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, PS2Runtime::Re
         static uint32_t listNumber = 0u;
         list.number = ++listNumber;
         gatherChain(memory, address, (chcr & kChcrTte) != 0u, (chcr & kChcrTie) != 0u, list.data,
-                    g_capture ? &list.origins : nullptr);
+                    (g_capture || nativeEffects()) ? &list.origins : nullptr);
     }
     reportFinished(rdram, ctx, runtime);
     g_thread->submit(std::move(list));
@@ -1257,6 +2242,7 @@ void install(PS2Runtime &runtime)
     }
     g_thread = new Vif1Thread(runtime);
     g_runtime = &runtime;
+    g_vif1Memory = &runtime.memory();
 
     // GS packets from the VIF1 thread and from the game's own GIF transfers
     // reach the GS through PS2Memory. Its GifArbiter queues them unlocked and
@@ -1295,6 +2281,34 @@ void install(PS2Runtime &runtime)
     // A texture split over DIRECT packets continues in place, without the
     // copy behind a synthesized IMAGE tag.
     memory.setGifImageCallback([&gs = runtime.gs()](const uint8_t *data, uint32_t size) {
+        if (composites() && t_onVif1Thread)
+        {
+            t_batch.gs = &gs;
+            if (t_batch.state == CompositeBatch::State::Head)
+            {
+                if (!t_batch.decided)
+                    decideHead();
+            }
+            else if (!t_batch.uploading)
+            {
+                compositeOther("an image");
+            }
+        }
+        if (t_onVif1Thread)
+        {
+            flushEffect();
+        }
+        if (uploadsTaken())
+        {
+            // A withheld upload's rest goes no further; another's is
+            // gathered for the producer on its way.
+            const uint32_t withheld = withheldContinuation(data, size);
+            data += withheld;
+            size -= withheld;
+            if (size == 0u)
+                return;
+            feedCapture(data, size);
+        }
         if (g_stage && t_onVif1Thread)
         {
             g_stage->image(data, size);
