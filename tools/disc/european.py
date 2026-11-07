@@ -1181,6 +1181,8 @@ def build_language(us: Disc, pal: Disc, code: str, report: Report,
             chain = build_chain_pack(us.read(name), pal.read(name), code) if name in pal_names else None
             if chain is not None:
                 yield name, chain
+            else:
+                report.kept_us.append(f"{name}:common.img")
             continue
         target = to_language(name, code)
         if target == name:
