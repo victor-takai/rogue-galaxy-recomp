@@ -45,4 +45,12 @@ bool wide();
 // (16:9 until told); clamped to 4:3..32:9.
 void setAspect(float aspect);
 
+// That shape is wider than 4:3. Not with Display > Aspect ratio on 4:3 or
+// Native, nor in a window no wider than 4:3 under Auto or Stretch: there the
+// option does nothing (the battle bench's frames came out the same with it
+// on and off, 2026-11-07), and the menu greys it out. wide() does not ask:
+// it would change with the window's shape in the middle of a frame (the
+// presenting thread sets it), and the wide frame at 4:3 is the game's own.
+bool shownWide();
+
 } // namespace rg::widescreen

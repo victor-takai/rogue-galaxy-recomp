@@ -81,8 +81,7 @@ void staticInitLangCodeTables(uint8_t *rdram, R5900Context *ctx, PS2Runtime *run
     }
     if (std::strcmp(wanted, "JA") == 0)
     {
-        std::error_code ec;
-        if (!std::filesystem::exists(PS2Runtime::getIoPaths().cdRoot / kJapaneseFolder / "DATA0_1.HD6", ec))
+        if (!installed())
         {
             std::fprintf(stderr,
                          "[rg] Japanese voices need the Japanese disc's files in disc/JA: "
@@ -227,6 +226,12 @@ void eventVoiceMakePath(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 }
 
 } // namespace
+
+bool installed()
+{
+    std::error_code ec;
+    return std::filesystem::exists(PS2Runtime::getIoPaths().cdRoot / kJapaneseFolder / "DATA0_1.HD6", ec);
+}
 
 void setEnabled(bool on)
 {

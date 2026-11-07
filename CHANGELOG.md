@@ -50,6 +50,19 @@
   instead of Low and High.
 - Fast Revelation Flow is gone: the Revelation Flow plays at the
   console's pace again.
+- An option that does nothing as things stand is greyed out in the F1
+  menu, with a line under it saying what would make it work: Mouse
+  sensitivity and Invert mouse vertical without Mouse camera, Widescreen
+  while the picture is shown at 4:3, Borders while the picture fills the
+  window, the Director's Cut options and the undub before
+  `Install-Undub.bat`, Text before `Install-European.bat` (and a language
+  it did not install), the volume
+  while muted, the frame-rate counter's position while it is off, and a
+  texture pack of 2D art alone at 1x. Widescreen and Borders are no longer
+  on the game's own Settings screen, which has no room for that line.
+- The frame-rate counter (F3) and the fast-forward badge stay in the
+  window's corners with the picture at 4:3 too, as the notifications do;
+  they sat in the picture's corners, inside the bars.
 
 ## 0.2.0 (pre-release)
 

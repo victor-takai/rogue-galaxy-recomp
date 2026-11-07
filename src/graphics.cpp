@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 #include "debug/gs_census.h"
@@ -443,6 +444,83 @@ void applyGameNumber(const std::string &key, int value)
         rg::textlanguage::setPreferred(value);
 }
 
+// The text's languages, numbered as Language > Text's choices.
+constexpr int kTextLanguages = 5;
+
+// What the discs' install scripts left in the disc folder. Looked at again
+// when the menu asks after a second without asking (a page shown again),
+// not on each of its frames: a disc installed while the game runs counts
+// the next time its page is opened.
+struct Installed
+{
+    bool balance = false;                  // Director's Cut balance
+    bool files = false;                    // Director's Cut enemy behavior and party AI
+    bool japanese = false;                 // Undub
+    bool languages[kTextLanguages] = {};   // Text (English always)
+    bool european = false;                 // any of those but English
+};
+
+const Installed &installed()
+{
+    static Installed known;
+    static std::chrono::steady_clock::time_point asked;
+    static bool ever = false;
+    const auto now = std::chrono::steady_clock::now();
+    if (!ever || now - asked >= std::chrono::seconds(1))
+    {
+        known.balance = rg::dcbalance::balanceInstalled();
+        known.files = rg::dcbalance::filesInstalled();
+        known.japanese = rg::voicelanguage::installed();
+        known.european = false;
+        for (int language = 0; language < kTextLanguages; ++language)
+        {
+            known.languages[language] = rg::textlanguage::installed(language);
+            known.european = known.european || (language != 0 && known.languages[language]);
+        }
+        ever = true;
+    }
+    asked = now;
+    return known;
+}
+
+// A game option that does nothing now, as the line the menu shows under it
+// greyed out (HostServices::gameOptionBlocked): what would make it work.
+// `aspect` is Display > Aspect ratio as the presenter has it, the one
+// rg::widescreen::shownWide() comes from. The window's thread, the menu's.
+const char *gameOptionBlocked(const std::string &key, dq8::gfx::SdlGpuAspect aspect)
+{
+    if ((key == "mouse_sensitivity" || key == "mouse_invert_vertical") && !rg::mousecamera::enabled())
+        return "Turn on Mouse camera for this.";
+    if (key == "widescreen" && !rg::widescreen::shownWide())
+    {
+        // Under Auto or Stretch the window is no wider than 4:3 (a 4:3
+        // screen, or a tall window).
+        return aspect == dq8::gfx::SdlGpuAspect::Standard || aspect == dq8::gfx::SdlGpuAspect::Native
+                   ? "Set Display > Aspect ratio to Auto for this."
+                   : "Needs a window wider than 4:3, or Display > Aspect ratio on 16:9.";
+    }
+    const bool balance = key == "director_cut_balance";
+    if (balance || key == "director_cut_enemies" || key == "director_cut_party_ai" || key == "japanese_voices")
+    {
+        const Installed &have = installed();
+        const bool there = balance ? have.balance : key == "japanese_voices" ? have.japanese : have.files;
+        if (!there)
+            return have.japanese ? "Run Install-Undub.bat again for this: it adds these files."
+                                 : "Needs your Japanese disc: run Install-Undub.bat.";
+    }
+    if (key == "text_language" && !installed().european)
+        return "Needs your European disc: run Install-European.bat.";
+    return nullptr;
+}
+
+// A button of a game option that would do nothing
+// (HostServices::gameChoiceBlocked): a language Install-European.bat did not
+// make (its --languages can leave some out).
+bool gameChoiceBlocked(const std::string &key, int value)
+{
+    return key == "text_language" && value >= 0 && value < kTextLanguages && !installed().languages[value];
+}
+
 // F9 and F10 presses, counted as SDL queues their key-down events. pump()
 // read the keyboard state once a presented frame, and a quick tap between two
 // of them went unseen, most of all in a drop, when frames are long: the
@@ -596,22 +674,10 @@ bool pump(void *userData)
     // the menu alone), kept as the menu's own.
     for (rg::settingspages::Change change; g_menu && rg::settingspages::takeChange(change);)
     {
-        if (change.key == "sides")
-            g_menu->setSides(static_cast<dq8::gfx::SdlGpuSides>(change.value));
-        else if (change.number)
+        if (change.number)
             g_menu->setGameNumberValue(change.key, change.value);
         else
             g_menu->setGameOptionValue(change.key, change.value != 0);
-    }
-    // Display > Borders, which the pages show too, as the menu has it.
-    if (g_menu)
-    {
-        static int sidesWas = -1;
-        if (const int sides = static_cast<int>(g_menu->settings().display.sides); sides != sidesWas)
-        {
-            sidesWas = sides;
-            rg::settingspages::noteNumber("sides", sides);
-        }
     }
     followQuickScenes();
     // The free camera turned on or off, by F6, either menu or Start: a toast.
@@ -952,8 +1018,12 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          false},
     };
     // One switch for each pack found, on a page of their own in the menu (F1 > Settings > Textures).
+    // A pack of 2D art alone does nothing at 1x.
+    std::unordered_set<std::string> flatPacks;
     for (const rg::texturePack::PackInfo &pack : rg::texturePack::packs())
     {
+        if (pack.wholes == 0u)
+            flatPacks.insert("texture_pack_" + pack.key);
         dq8::ui::GameOption option{"texture_pack_" + pack.key, "Pack: " + pack.name,
                                    "The game's art is drawn from this pack's " + std::to_string(pack.regions) +
                                        " pictures, where it has them: 2D art above 1x, a PCSX2 pack's 3D at any "
@@ -980,11 +1050,17 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
                                         option.format == kTimes ? &dq8::ui::multiplierText : nullptr);
         }
     }
-    // And Display > Borders: Black, Blurred, Image.
-    rg::settingspages::setRange("sides", 0, 2, 1, 0);
     host.setGameOption = &applyGameOption;
     host.gameOptionState = [](const std::string &key) { return key == "free_camera" && rg::freecamera::enabled(); };
     host.setGameNumber = &applyGameNumber;
+    host.gameOptionBlocked = [&backend, flatPacks = std::move(flatPacks)](const std::string &key) -> const char * {
+        // The scale as Display shows it: one picked while paused counts.
+        const uint32_t scale = g_menu ? g_menu->shownResolutionScale() : backend.activeResolutionScale();
+        if (flatPacks.count(key) != 0u && scale <= 1u)
+            return "Its 2D art shows above 1x: raise Display > Internal resolution for this.";
+        return gameOptionBlocked(key, backend.displayOptions().aspect);
+    };
+    host.gameChoiceBlocked = &gameChoiceBlocked;
     host.newerRelease = [] {
         rg::updates::Release newer = rg::updates::newer();
         return std::make_pair(std::move(newer.version), std::move(newer.url));

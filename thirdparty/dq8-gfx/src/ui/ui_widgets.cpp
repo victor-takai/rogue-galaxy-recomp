@@ -52,16 +52,19 @@ bool toggle(const char *id, bool *value) {
     const float t = animate(ImGui::GetItemID(), *value ? 1.0f : 0.0f);
     const bool hovered = ImGui::IsItemHovered();
 
+    // Faded with the style's alpha, as ImGui's own items are under
+    // BeginDisabled() (Rogue Galaxy: added).
     ImDrawList *list = ImGui::GetWindowDrawList();
     const ImVec2 min(pos.x, pos.y + (frame - height) * 0.5f);
     const ImVec2 max(min.x + width, min.y + height);
     const ImU32 off = IM_COL32(255, 255, 255, hovered ? 48 : 34);
-    list->AddRectFilled(min, max, mix(off, withAlpha(palette::kGold, 0.92f), t), height * 0.5f);
-    list->AddRect(min, max, IM_COL32(255, 255, 255, 70), height * 0.5f, 1.0f);
+    list->AddRectFilled(min, max, ImGui::GetColorU32(mix(off, withAlpha(palette::kGold, 0.92f), t)), height * 0.5f);
+    list->AddRect(min, max, ImGui::GetColorU32(IM_COL32(255, 255, 255, 70)), height * 0.5f, 1.0f);
     const float radius = height * 0.5f - 3.0f;
     const ImVec2 knob(min.x + height * 0.5f + (width - height) * t, min.y + height * 0.5f);
-    list->AddCircleFilled(ImVec2(knob.x, knob.y + 1.0f), radius, IM_COL32(0, 0, 10, 90));
-    list->AddCircleFilled(knob, radius, mix(IM_COL32(205, 210, 230, 255), IM_COL32(255, 255, 255, 255), t));
+    list->AddCircleFilled(ImVec2(knob.x, knob.y + 1.0f), radius, ImGui::GetColorU32(IM_COL32(0, 0, 10, 90)));
+    list->AddCircleFilled(knob, radius,
+                          ImGui::GetColorU32(mix(IM_COL32(205, 210, 230, 255), IM_COL32(255, 255, 255, 255), t)));
     return pressed;
 }
 
@@ -72,7 +75,9 @@ bool segmented(const char *id, int *value, const char *const *labels, int count,
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const float rounding = ImGui::GetStyle().FrameRounding;
     ImDrawList *list = ImGui::GetWindowDrawList();
-    list->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), IM_COL32(255, 255, 255, 16), rounding);
+    // Its colors faded with the style's alpha, under BeginDisabled() too.
+    list->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(IM_COL32(255, 255, 255, 16)),
+                        rounding);
 
     const float segment = width / static_cast<float>(count);
     bool changed = false;
@@ -93,14 +98,14 @@ bool segmented(const char *id, int *value, const char *const *labels, int count,
 
         const ImVec2 min(at.x + 2.0f, at.y + 2.0f), max(at.x + segment - 2.0f, at.y + height - 2.0f);
         if (chosen) {
-            list->AddRectFilled(min, max, IM_COL32(244, 203, 82, 50), rounding - 1.0f);
-            list->AddRect(min, max, palette::kGold, rounding - 1.0f, 1.5f);
+            list->AddRectFilled(min, max, ImGui::GetColorU32(IM_COL32(244, 203, 82, 50)), rounding - 1.0f);
+            list->AddRect(min, max, ImGui::GetColorU32(palette::kGold), rounding - 1.0f, 1.5f);
         } else if (hovered && usable) {
             list->AddRectFilled(min, max, palette::kHover, rounding - 1.0f);
         }
         const ImU32 color = chosen ? palette::kGold : usable ? palette::kText : withAlpha(palette::kTextMuted, 0.6f);
         list->PushClipRect(min, max, true);
-        centeredText(list, min, max, color, labels[index]);
+        centeredText(list, min, max, ImGui::GetColorU32(color), labels[index]);
         list->PopClipRect();
     }
     ImGui::SetCursorScreenPos(pos);
@@ -275,9 +280,9 @@ void chip(const char *text, ImU32 color) {
     const ImVec2 min(at.x, std::floor(at.y + (frame - height) * 0.5f));
     const ImVec2 max(min.x + width, min.y + height);
     ImDrawList *list = ImGui::GetWindowDrawList();
-    list->AddRectFilled(min, max, withAlpha(color, 0.14f), height * 0.5f);
-    list->AddRect(min, max, withAlpha(color, 0.75f), height * 0.5f, 1.0f);
-    centeredText(list, min, max, color, text);
+    list->AddRectFilled(min, max, ImGui::GetColorU32(withAlpha(color, 0.14f)), height * 0.5f);
+    list->AddRect(min, max, ImGui::GetColorU32(withAlpha(color, 0.75f)), height * 0.5f, 1.0f);
+    centeredText(list, min, max, ImGui::GetColorU32(color), text);
     ImGui::PopFont();
 }
 

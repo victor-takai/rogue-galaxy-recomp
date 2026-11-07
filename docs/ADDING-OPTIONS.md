@@ -115,6 +115,24 @@ else if (key == "instant_text")
     rg::instanttext::setEnabled(on);
 ```
 
+**When it does nothing.** An option that has no effect as things stand
+(another option is off, a disc is not installed) stays visible, greyed
+out, with one line under it saying what would make it work. A case in
+`gameOptionBlocked`, which the menu asks each frame it draws the option
+(keep it cheap: the installed files are read through `installed()`, again
+only when a page is opened), returns that line, or null when the option
+works:
+
+```cpp
+if ((key == "mouse_sensitivity" || key == "mouse_invert_vertical") && !rg::mousecamera::enabled())
+    return "Turn on Mouse camera for this.";
+```
+
+Short and plain: what to turn on, set or run ("Needs your Japanese disc:
+run Install-Undub.bat."). The help keeps saying what the option needs. A
+value of an option with `choices` that would do nothing (a language not
+installed) is greyed out alone, by `gameChoiceBlocked`.
+
 ## 3. The game's own Settings screen (optional)
 
 The game's System > Settings has three extra pages of the menu's options
@@ -126,7 +144,9 @@ lists in `src/settings_pages.cpp` puts the option there too:
 ```
 
 - `kSwitches` takes switches, `kNumbers` numbers, `kScenes` the rest
-  (quick scenes, the bag, the borders and the HUD sizes).
+  (quick scenes, the bag and the HUD sizes).
+- An option greyed out at times (`gameOptionBlocked`, above) stays in F1
+  alone: this screen has no room for the line that says why.
 - A page shows ten rows at most (`kRows`), and the build stops when a list
   holds more. `kNumbers` is full.
 - The label is in Title Case, short, and says "(Next Start)" for a
@@ -159,7 +179,9 @@ game's own menu", among the ones in F1 alone.
 2. `src/CMakeLists.txt`: the `.cpp` in `add_executable(roguegalaxy ...)`.
 3. `src/main.cpp`: the `#include` and the `install` call after `loadELF`.
 4. `src/graphics.cpp`: the `#include`, the `GameOption` in
-   `host.gameOptions`, the line in `applyGameOption` or `applyGameNumber`.
+   `host.gameOptions`, the line in `applyGameOption` or `applyGameNumber`,
+   and a case in `gameOptionBlocked` if something else can leave it doing
+   nothing.
 5. `src/settings_pages.cpp` (optional): the row in its page, and its names
    in `kLocal`.
 6. `docs/OPTIONS.md`, `docs/DEVELOPMENT.md`, `CHANGELOG.md`.

@@ -31,6 +31,11 @@ void setPreferred(int choice);
 // texts spell them (<'e>), which the menus' font then draws.
 int language();
 
+// Install-European.bat has made that language's files (numbered as the choice;
+// disc/EU/<LANG>.idx, which the boot looks for too), for the menu; English is
+// always there. It reads the disc folder each call.
+bool installed(int language);
+
 // From the hook of StaticInitLangCodeTables, after the game filled its tables:
 // sets the text token (0x481528) to the language chosen (RG_TEXT_LANG over the
 // menu) when its files exist in disc/EU.

@@ -1173,6 +1173,17 @@ int language()
     return g_language.load(std::memory_order_relaxed);
 }
 
+bool installed(int language)
+{
+    if (language == 0)
+    {
+        return true;
+    }
+    std::error_code ec;
+    return language > 0 && language < static_cast<int>(std::size(kCodes)) &&
+           std::filesystem::is_regular_file(languageIndex(kCodes[language]), ec);
+}
+
 void chooseAtBoot(uint8_t *rdram, PS2Runtime &runtime)
 {
     // RG_TEXT_LANG (a developer's switch, any two letters of the game's table) over

@@ -626,6 +626,12 @@ void fromEnv(const char *name, std::atomic<bool> &on)
     }
 }
 
+// Where Install-Undub.bat puts the Director's Cut's tables and files.
+std::filesystem::path balanceFolder()
+{
+    return PS2Runtime::getIoPaths().cdRoot / "JA" / "balance";
+}
+
 // The numbers: the tables, and the boss rule with them. What is on, for the
 // log's last line; empty when nothing is.
 std::string installBalance(PS2Runtime &runtime, const std::filesystem::path &folder)
@@ -685,6 +691,20 @@ bool installFiles(PS2Runtime &runtime, const std::filesystem::path &folder, bool
 
 } // namespace
 
+bool balanceInstalled()
+{
+    std::error_code ec;
+    return std::filesystem::is_regular_file(balanceFolder() / "tables.txt", ec);
+}
+
+bool filesInstalled()
+{
+    std::error_code ec;
+    const std::filesystem::path folder = balanceFolder();
+    return std::filesystem::is_regular_file(folder / "files.idx", ec) &&
+           std::filesystem::is_regular_file(folder / "files.dat", ec);
+}
+
 void install(PS2Runtime &runtime)
 {
     fromEnv("RG_DIRECTOR_CUT_BALANCE", g_balance);
@@ -698,7 +718,7 @@ void install(PS2Runtime &runtime)
         return;
     }
     g_runtime = &runtime;
-    const std::filesystem::path folder = PS2Runtime::getIoPaths().cdRoot / "JA" / "balance";
+    const std::filesystem::path folder = balanceFolder();
     std::vector<std::string> on;
     if (balance)
     {

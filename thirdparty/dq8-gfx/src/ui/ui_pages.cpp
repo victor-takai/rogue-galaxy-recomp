@@ -12,6 +12,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <string>
 
 namespace dq8::ui {
@@ -30,6 +31,27 @@ constexpr ImGuiWindowFlags kDialogFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWin
                                           ImGuiWindowFlags_AlwaysAutoResize;
 
 ImVec4 color(ImU32 packed) { return ImGui::ColorConvertU32ToFloat4(packed); }
+
+// A setting that does nothing now, given the line that says what would make
+// it work (null while it works): what is drawn while this lives is greyed
+// out, and the line goes under it (Rogue Galaxy: added).
+class Blocked {
+public:
+    explicit Blocked(const char *reason) : m_reason(reason) { ImGui::BeginDisabled(reason != nullptr); }
+    ~Blocked() {
+        ImGui::EndDisabled();
+        if (m_reason) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(color(palette::kWarn), "%s", m_reason);
+            ImGui::PopTextWrapPos();
+        }
+    }
+    Blocked(const Blocked &) = delete;
+    Blocked &operator=(const Blocked &) = delete;
+
+private:
+    const char *m_reason;
+};
 
 // A round "x" in a window's corner, for the mouse: keyboard and controller
 // close with Back, and the cursor would otherwise start on it.
@@ -394,13 +416,31 @@ void Overlay::drawDisplayPage() {
             "What fills the window beside a 4:3 picture: the picture itself, softly blurred and a little darker.",
             "What fills the window beside a 4:3 picture: your image, the first PNG or JPG in the game's "
             "\"borders\" folder (the blurred picture without one)."};
-        settingRow("Borders", kSidesHelp[static_cast<int>(m_settings.display.sides)]);
-        static constexpr const char *kSides[] = {"Black", "Blurred", "Image"};
-        int sides = static_cast<int>(m_settings.display.sides);
-        if (segmented("sides", &sides, kSides, 3)) {
-            m_settings.display.sides = static_cast<gfx::SdlGpuSides>(sides);
-            m_backend.setDisplayOptions(m_settings.display);
-            markDirty();
+        // Greyed out while the picture covers the whole window at both of
+        // the game's shapes (under Auto the loading screens and the title
+        // stay 4:3 with Widescreen on), as well as in the last frame shown:
+        // there is never anything beside it.
+        const gfx::SdlGpuRect picture = m_backend.displayRect();
+        bool bars = picture.width == 0u || picture.width < m_targetWidth || picture.height < m_targetHeight;
+        for (const int wide : {0, 1}) {
+            const gfx::SdlGpuRect rect =
+                gfx::sdlGpuDisplayRect(m_settings.display, 512u, 448u, m_targetWidth, m_targetHeight, wide);
+            bars = bars || rect.width < m_targetWidth || rect.height < m_targetHeight;
+        }
+        {
+            const Blocked blocked(bars ? nullptr
+                                  : m_settings.display.aspect == gfx::SdlGpuAspect::Stretch
+                                      ? "Stretch fills the window: pick another Aspect ratio for this."
+                                      : "The picture fills the window: change Aspect ratio or turn on Integer "
+                                        "scaling for this.");
+            settingRow("Borders", kSidesHelp[static_cast<int>(m_settings.display.sides)]);
+            static constexpr const char *kSides[] = {"Black", "Blurred", "Image"};
+            int sides = static_cast<int>(m_settings.display.sides);
+            if (segmented("sides", &sides, kSides, 3)) {
+                m_settings.display.sides = static_cast<gfx::SdlGpuSides>(sides);
+                m_backend.setDisplayOptions(m_settings.display);
+                markDirty();
+            }
         }
 
         settingRow("Integer scaling", "Whole multiples of the picture's height: even lines, with borders.");
@@ -421,20 +461,29 @@ void Overlay::drawDisplayPage() {
 void Overlay::drawSoundPage() {
     sectionHeader("Volume");
     if (beginSettings("sound")) {
-        settingRow("Master volume");
-        if (ImGui::SliderInt("##volume", &m_settings.volume, 0, 100, "%d%%")) {
-            applyVolume();
-            markDirty();
+        // The volume and the background's mute greyed out while Mute
+        // silences the game anyway (Rogue Galaxy: added).
+        const char *unmute = m_settings.muted ? "Turn off Mute for this." : nullptr;
+        {
+            const Blocked blocked(unmute);
+            settingRow("Master volume");
+            if (ImGui::SliderInt("##volume", &m_settings.volume, 0, 100, "%d%%")) {
+                applyVolume();
+                markDirty();
+            }
         }
         settingRow("Mute");
         if (toggle("mute", &m_settings.muted)) {
             applyVolume();
             markDirty();
         }
-        settingRow("Mute in the background", "Silences the game while its window is not in front.");
-        if (toggle("background", &m_settings.muteInBackground)) {
-            applyVolume();
-            markDirty();
+        {
+            const Blocked blocked(unmute);
+            settingRow("Mute in the background", "Silences the game while its window is not in front.");
+            if (toggle("background", &m_settings.muteInBackground)) {
+                applyVolume();
+                markDirty();
+            }
         }
         endSettings();
     }
@@ -513,12 +562,16 @@ void Overlay::drawInterfacePage() {
         settingRow("Show the frame rate", "Frames the game draws each second. F3 toggles it.");
         if (toggle("fps", &m_settings.showFps))
             markDirty();
-        settingRow("Position");
-        static constexpr const char *kCorners[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
-        int corner = static_cast<int>(m_settings.fpsCorner);
-        if (segmented("corner", &corner, kCorners, 4)) {
-            m_settings.fpsCorner = static_cast<Corner>(corner);
-            markDirty();
+        {
+            // Greyed out while there is no counter to place (Rogue Galaxy: added).
+            const Blocked blocked(m_settings.showFps ? nullptr : "Turn on Show the frame rate for this.");
+            settingRow("Position");
+            static constexpr const char *kCorners[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
+            int corner = static_cast<int>(m_settings.fpsCorner);
+            if (segmented("corner", &corner, kCorners, 4)) {
+                m_settings.fpsCorner = static_cast<Corner>(corner);
+                markDirty();
+            }
         }
         endSettings();
     }
@@ -562,90 +615,105 @@ void Overlay::drawGameOptions(const std::string &page, const char *emptyText, co
         }
         if (!table)
             continue;
-        settingRow(option.label.c_str(), option.help.empty() ? nullptr : option.help.c_str());
-        if (option.number() && !option.choices.empty()) {
-            // Rogue Galaxy: added, a value a button (the text's language).
-            const int value = gameNumber(option);
-            int index = value - option.minimum;
-            std::vector<const char *> labels;
-            for (const std::string &choice : option.choices)
-                labels.push_back(choice.c_str());
-            if (segmented(option.key.c_str(), &index, labels.data(), static_cast<int>(labels.size()))) {
-                const int next = std::clamp(option.minimum + index, option.minimum, option.maximum);
-                if (next != value) {
-                    m_settings.gameNumbers[option.key] = next;
-                    m_settings.gameOptions.erase(option.key);
-                    if (m_host.setGameNumber)
-                        m_host.setGameNumber(option.key, next);
-                    markDirty();
-                }
-            }
-            if (waitsForRestart(option))
-                ImGui::TextColored(color(palette::kBad), "Restart the game for this to take effect.");
-            continue;
+        // Greyed out, with the line that says what would make it work, while
+        // it does nothing (Rogue Galaxy: added).
+        const char *reason = m_host.gameOptionBlocked ? m_host.gameOptionBlocked(option.key) : nullptr;
+        {
+            const Blocked blocked(reason);
+            settingRow(option.label.c_str(), option.help.empty() ? nullptr : option.help.c_str());
+            drawGameControl(option);
         }
-        if (option.number()) {
-            const int value = gameNumber(option);
-            int next = value;
-            const ImGuiStyle &style = ImGui::GetStyle();
-            const float button = ImGui::GetFrameHeight();
-            const float reset = ImGui::CalcTextSize("Default").x + style.FramePadding.x * 2.0f;
-            ImGui::PushID(option.key.c_str());
-            if (ImGui::Button("-", ImVec2(button, 0.0f)))
-                next = value - option.step;
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(std::max(button * 3.0f, ImGui::GetContentRegionAvail().x - button -
-                                                                reset - style.ItemSpacing.x * 2.0f));
-            // A multiplier's text has its value written in already: the
-            // slider prints it as it is (no % in it), and typing a value in
-            // is off, as what it would read is hundredths.
-            const bool multiplier = option.format == kMultiplierFormat;
-            char text[16];
-            const char *format = option.format.empty() ? "%d" : option.format.c_str();
-            if (multiplier) {
-                multiplierText(value, text, sizeof(text));
-                format = text;
-            }
-            ImGui::SliderInt("##value", &next, option.minimum, option.maximum, format,
-                             multiplier ? ImGuiSliderFlags_NoInput : ImGuiSliderFlags_None);
-            ImGui::SameLine();
-            if (ImGui::Button("+", ImVec2(button, 0.0f)))
-                next = value + option.step;
-            ImGui::SameLine();
-            ImGui::BeginDisabled(value == option.defaultNumber);
-            if (ImGui::Button("Default"))
-                next = option.defaultNumber;
-            ImGui::EndDisabled();
-            ImGui::PopID();
-            next = std::clamp(next, option.minimum, option.maximum);
+        if (!reason && waitsForRestart(option))
+            ImGui::TextColored(color(palette::kBad), "Restart the game for this to take effect.");
+    }
+    if (table)
+        endSettings();
+}
+
+void Overlay::drawGameControl(const GameOption &option) {
+    if (option.number() && !option.choices.empty()) {
+        // Rogue Galaxy: added, a value a button (the text's language).
+        const int value = gameNumber(option);
+        int index = value - option.minimum;
+        std::vector<const char *> labels;
+        for (const std::string &choice : option.choices)
+            labels.push_back(choice.c_str());
+        // The values that would do nothing greyed out (Rogue Galaxy: added).
+        std::unique_ptr<bool[]> usable;
+        if (m_host.gameChoiceBlocked) {
+            usable = std::make_unique<bool[]>(labels.size());
+            for (size_t choice = 0; choice < labels.size(); ++choice)
+                usable[choice] = !m_host.gameChoiceBlocked(option.key, option.minimum + static_cast<int>(choice));
+        }
+        if (segmented(option.key.c_str(), &index, labels.data(), static_cast<int>(labels.size()), usable.get())) {
+            const int next = std::clamp(option.minimum + index, option.minimum, option.maximum);
             if (next != value) {
                 m_settings.gameNumbers[option.key] = next;
-                // A "0" or "1" in the file reads as a switch too.
                 m_settings.gameOptions.erase(option.key);
                 if (m_host.setGameNumber)
                     m_host.setGameNumber(option.key, next);
                 markDirty();
             }
-            continue;
         }
-        bool on = gameOption(option);
-        if (!option.remembered) {
-            if (toggle(option.key.c_str(), &on) && m_host.setGameOption)
-                m_host.setGameOption(option.key, on);
-            continue;
+        return;
+    }
+    if (option.number()) {
+        const int value = gameNumber(option);
+        int next = value;
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float button = ImGui::GetFrameHeight();
+        const float reset = ImGui::CalcTextSize("Default").x + style.FramePadding.x * 2.0f;
+        ImGui::PushID(option.key.c_str());
+        if (ImGui::Button("-", ImVec2(button, 0.0f)))
+            next = value - option.step;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(std::max(button * 3.0f, ImGui::GetContentRegionAvail().x - button -
+                                                            reset - style.ItemSpacing.x * 2.0f));
+        // A multiplier's text has its value written in already: the
+        // slider prints it as it is (no % in it), and typing a value in
+        // is off, as what it would read is hundredths.
+        const bool multiplier = option.format == kMultiplierFormat;
+        char text[16];
+        const char *format = option.format.empty() ? "%d" : option.format.c_str();
+        if (multiplier) {
+            multiplierText(value, text, sizeof(text));
+            format = text;
         }
-        if (toggle(option.key.c_str(), &on)) {
-            m_settings.gameOptions[option.key] = on;
-            m_settings.gameNumbers.erase(option.key);
-            if (m_host.setGameOption)
-                m_host.setGameOption(option.key, on);
+        ImGui::SliderInt("##value", &next, option.minimum, option.maximum, format,
+                         multiplier ? ImGuiSliderFlags_NoInput : ImGuiSliderFlags_None);
+        ImGui::SameLine();
+        if (ImGui::Button("+", ImVec2(button, 0.0f)))
+            next = value + option.step;
+        ImGui::SameLine();
+        ImGui::BeginDisabled(value == option.defaultNumber);
+        if (ImGui::Button("Default"))
+            next = option.defaultNumber;
+        ImGui::EndDisabled();
+        ImGui::PopID();
+        next = std::clamp(next, option.minimum, option.maximum);
+        if (next != value) {
+            m_settings.gameNumbers[option.key] = next;
+            // A "0" or "1" in the file reads as a switch too.
+            m_settings.gameOptions.erase(option.key);
+            if (m_host.setGameNumber)
+                m_host.setGameNumber(option.key, next);
             markDirty();
         }
-        if (waitsForRestart(option))
-            ImGui::TextColored(color(palette::kBad), "Restart the game for this to take effect.");
+        return;
     }
-    if (table)
-        endSettings();
+    bool on = gameOption(option);
+    if (!option.remembered) {
+        if (toggle(option.key.c_str(), &on) && m_host.setGameOption)
+            m_host.setGameOption(option.key, on);
+        return;
+    }
+    if (toggle(option.key.c_str(), &on)) {
+        m_settings.gameOptions[option.key] = on;
+        m_settings.gameNumbers.erase(option.key);
+        if (m_host.setGameOption)
+            m_host.setGameOption(option.key, on);
+        markDirty();
+    }
 }
 
 void Overlay::drawControlsPage() {
