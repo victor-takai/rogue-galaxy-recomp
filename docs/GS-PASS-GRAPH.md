@@ -1,10 +1,11 @@
 # One frame of Salgin's first scene, pass by pass
 
 From `[frame]` lines (`SIGUSR2` with `DQ8_GFX_PROFILE_CYCLE` set; see
-`sdlgpu_backend.cpp`), 4x, 2026-10-28. A pass is what the backend submits as
-one render pass; a snapshot pass is one that a feedback draw forced, preceded
-by a copy of its whole target. The dump holds one frame, and the next one
-starts identically at pass 191.
+`sdlgpu_backend.cpp`), 4x, 2026-10-28. The dump and the cycle were on the
+contributor's machine; neither is in this repository. A pass is what the
+backend submits as one render pass; a snapshot pass is one that a feedback
+draw forced, preceded by a copy of its whole target. The dump holds one
+frame, and the next one starts identically at pass 191.
 
 **191 passes, 805 draws, 222 Mpx of draw bounding boxes, 98 snapshot passes.**
 
@@ -39,8 +40,15 @@ targets hold 190.7 Mpx.
 
 - Derive the exact blur from the draws (needs the UV offsets of each
   sprite, not in this dump) and replace the chain with a native blur at the
-  buffer's own resolution: ~100 passes become a handful.
+  buffer's own resolution: ~100 passes become a handful. (Since: `d911d1e`
+  calls 0x2C40 a zoom streak, each pass adding a zoomed copy of the buffer
+  to itself, which does not reduce to one filter, and 0x3800 a glow, and
+  draws both at scale 2, `DQ8_GFX_EFFECT_SCALE`; see
+  [GS-AUDIT.md](GS-AUDIT.md), "What is left", items 1 and 2.)
 - The per-object pairs (E): what the offscreen is for, and whether a draw
   limited to the object's box does the same with the render area set.
+  ([GS-AUDIT.md](GS-AUDIT.md), item 1, describes them since.)
 - The `SMALL_SCALE` switch (targets of 256x256 or less capped to a lower
-  scale) cuts those 129 passes' pixel work but not their count.
+  scale) cuts those 129 passes' pixel work but not their count. (It was on
+  the contributor's machine; not in this repository. `DQ8_GFX_EFFECT_SCALE`
+  does it for the two blur buffers only.)

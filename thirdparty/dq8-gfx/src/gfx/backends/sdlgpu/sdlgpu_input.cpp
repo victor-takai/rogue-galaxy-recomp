@@ -44,6 +44,7 @@ constexpr PadInputInfo kInputs[kPadInputCount] = {
     {0u, "Right stick down", "rstick_down"},
     {0u, "Right stick left", "rstick_left"},
     {0u, "Right stick right", "rstick_right"},
+    {0u, "Walk (hold)", "walk"},
 };
 
 constexpr int kAxisFull = 32768;
@@ -51,12 +52,20 @@ constexpr int kAxisFull = 32768;
 size_t index(PadInput input) { return static_cast<size_t>(input); }
 
 // How hard a binding pushes its input, 0 to 32768. Keys and buttons are all
-// or nothing; an axis pushes only in its own direction.
-int bindingValue(const PadBinding &binding, SDL_Gamepad *gamepad, const bool *keys) {
+// or nothing; an axis pushes only in its own direction; the wheel is only
+// ever pressed (handleEvent()).
+int bindingValue(const PadBinding &binding, SDL_Gamepad *gamepad, const bool *keys,
+                 SDL_MouseButtonFlags mouse = 0u) {
     switch (binding.kind) {
     case PadBinding::Kind::Key:
         return keys && binding.code >= 0 && binding.code < SDL_SCANCODE_COUNT && keys[binding.code]
                    ? kAxisFull : 0;
+    case PadBinding::Kind::Mouse:
+        return binding.code >= SDL_BUTTON_LEFT && binding.code <= SDL_BUTTON_X2 &&
+                       (mouse & SDL_BUTTON_MASK(binding.code)) != 0u
+                   ? kAxisFull : 0;
+    case PadBinding::Kind::Wheel:
+        return 0;
     case PadBinding::Kind::Button:
         return gamepad && SDL_GetGamepadButton(gamepad, static_cast<SDL_GamepadButton>(binding.code))
                    ? kAxisFull : 0;
@@ -90,15 +99,16 @@ PadBinding PadBinding::button(SDL_GamepadButton button) {
 PadBinding PadBinding::axis(SDL_GamepadAxis axis, int direction) {
     return {Kind::Axis, static_cast<int16_t>(axis), static_cast<int8_t>(direction < 0 ? -1 : 1)};
 }
+PadBinding PadBinding::mouse(int button) {
+    return {Kind::Mouse, static_cast<int16_t>(button), 1};
+}
+PadBinding PadBinding::wheel(int direction) {
+    return {Kind::Wheel, 0, static_cast<int8_t>(direction < 0 ? -1 : 1)};
+}
 
 PadConfig PadConfig::defaults() {
     PadConfig config;
     const auto pad = [&](PadInput input, PadBinding binding) { config.controller[index(input)][0] = binding; };
-    const auto keys = [&](PadInput input, SDL_Scancode first, SDL_Scancode second = SDL_SCANCODE_UNKNOWN) {
-        config.keyboard[index(input)][0] = PadBinding::key(first);
-        if (second != SDL_SCANCODE_UNKNOWN)
-            config.keyboard[index(input)][1] = PadBinding::key(second);
-    };
     pad(PadInput::Cross, PadBinding::button(SDL_GAMEPAD_BUTTON_SOUTH));
     pad(PadInput::Circle, PadBinding::button(SDL_GAMEPAD_BUTTON_EAST));
     pad(PadInput::Square, PadBinding::button(SDL_GAMEPAD_BUTTON_WEST));
@@ -124,6 +134,54 @@ PadConfig PadConfig::defaults() {
     pad(PadInput::RightStickLeft, PadBinding::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1));
     pad(PadInput::RightStickRight, PadBinding::axis(SDL_GAMEPAD_AXIS_RIGHTX, 1));
 
+    // For the keyboard and mouse, what each button does in Rogue Galaxy: the
+    // sword (and talk, look, confirm) on the left click, the guard (R1, held)
+    // on E or the right click, jump (and back) on Space, the gun on F, the menu
+    // on Tab or Esc (which in the menus goes back), the shoulders on Q and E,
+    // 1 and 2 (L1 and L2 take the
+    // allies' suggestions), L3 (wave one off, or swap the leader) on C, the
+    // first-person view on V, the target lock on the arrows and the next
+    // target on the wheel. The user's layout, 2026-11-06.
+    const auto bind = [&](PadInput input, PadBinding first, PadBinding second = {}) {
+        config.keyboard[index(input)] = {first, second};
+    };
+    const auto key = [](SDL_Scancode scancode) { return PadBinding::key(scancode); };
+    bind(PadInput::Up, key(SDL_SCANCODE_UP));
+    bind(PadInput::Down, key(SDL_SCANCODE_DOWN));
+    bind(PadInput::Left, key(SDL_SCANCODE_LEFT), PadBinding::wheel(1));
+    bind(PadInput::Right, key(SDL_SCANCODE_RIGHT), PadBinding::wheel(-1));
+    bind(PadInput::Cross, PadBinding::mouse(SDL_BUTTON_LEFT));
+    bind(PadInput::Circle, key(SDL_SCANCODE_SPACE));
+    bind(PadInput::Square, key(SDL_SCANCODE_F));
+    // Esc opens the menu, and in the game's menus goes back (setInMenus).
+    bind(PadInput::Triangle, key(SDL_SCANCODE_TAB), key(SDL_SCANCODE_ESCAPE));
+    bind(PadInput::L1, key(SDL_SCANCODE_Q));
+    bind(PadInput::R1, key(SDL_SCANCODE_E), PadBinding::mouse(SDL_BUTTON_RIGHT));
+    bind(PadInput::L2, key(SDL_SCANCODE_1));
+    bind(PadInput::R2, key(SDL_SCANCODE_2));
+    bind(PadInput::L3, key(SDL_SCANCODE_C));
+    bind(PadInput::R3, key(SDL_SCANCODE_V));
+    bind(PadInput::Start, key(SDL_SCANCODE_RETURN));
+    bind(PadInput::Select, key(SDL_SCANCODE_M));
+    bind(PadInput::LeftStickUp, key(SDL_SCANCODE_W));
+    bind(PadInput::LeftStickDown, key(SDL_SCANCODE_S));
+    bind(PadInput::LeftStickLeft, key(SDL_SCANCODE_A));
+    bind(PadInput::LeftStickRight, key(SDL_SCANCODE_D));
+    bind(PadInput::RightStickUp, key(SDL_SCANCODE_I));
+    bind(PadInput::RightStickDown, key(SDL_SCANCODE_K));
+    bind(PadInput::RightStickLeft, key(SDL_SCANCODE_J));
+    bind(PadInput::RightStickRight, key(SDL_SCANCODE_L));
+    bind(PadInput::Walk, key(SDL_SCANCODE_LCTRL));
+    return config;
+}
+
+std::array<PadBindingSlots, kPadInputCount> PadConfig::firstKeyboardLayout() {
+    std::array<PadBindingSlots, kPadInputCount> keyboard{};
+    const auto keys = [&](PadInput input, SDL_Scancode first, SDL_Scancode second = SDL_SCANCODE_UNKNOWN) {
+        keyboard[index(input)][0] = PadBinding::key(first);
+        if (second != SDL_SCANCODE_UNKNOWN)
+            keyboard[index(input)][1] = PadBinding::key(second);
+    };
     keys(PadInput::Up, SDL_SCANCODE_UP);
     keys(PadInput::Down, SDL_SCANCODE_DOWN);
     keys(PadInput::Left, SDL_SCANCODE_LEFT);
@@ -148,7 +206,7 @@ PadConfig PadConfig::defaults() {
     keys(PadInput::RightStickDown, SDL_SCANCODE_K);
     keys(PadInput::RightStickLeft, SDL_SCANCODE_J);
     keys(PadInput::RightStickRight, SDL_SCANCODE_L);
-    return config;
+    return keyboard;
 }
 
 uint32_t padButtonMask(PadInput input) {
@@ -161,8 +219,19 @@ const char *padInputKey(PadInput input) {
     return input < PadInput::Count ? kInputs[index(input)].key : "";
 }
 
+namespace {
+// The mouse's buttons in the settings file, by SDL's numbers (1 to 5).
+constexpr const char *kMouseNames[] = {"left", "middle", "right", "x1", "x2"};
+} // namespace
+
 std::string padBindingToString(const PadBinding &binding) {
     switch (binding.kind) {
+    case PadBinding::Kind::Mouse:
+        if (binding.code >= SDL_BUTTON_LEFT && binding.code <= SDL_BUTTON_X2)
+            return std::string("mouse:") + kMouseNames[binding.code - SDL_BUTTON_LEFT];
+        break;
+    case PadBinding::Kind::Wheel:
+        return binding.direction < 0 ? "wheel:down" : "wheel:up";
     case PadBinding::Kind::Key:
         if (const char *name = SDL_GetScancodeName(static_cast<SDL_Scancode>(binding.code)); name && *name)
             return std::string("key:") + name;
@@ -201,6 +270,12 @@ std::optional<PadBinding> padBindingFromString(const std::string &text) {
         if (const SDL_GamepadAxis axis = SDL_GetGamepadAxisFromString(name.c_str() + 1);
             axis != SDL_GAMEPAD_AXIS_INVALID)
             return PadBinding::axis(axis, direction);
+    } else if (kind == "mouse") {
+        for (int button = SDL_BUTTON_LEFT; button <= SDL_BUTTON_X2; ++button)
+            if (name == kMouseNames[button - SDL_BUTTON_LEFT])
+                return PadBinding::mouse(button);
+    } else if (kind == "wheel" && (name == "up" || name == "down")) {
+        return PadBinding::wheel(name == "down" ? -1 : 1);
     }
     return std::nullopt;
 }
@@ -282,6 +357,8 @@ const SdlPadInput::Gamepad *SdlPadInput::chosenGamepad() const {
 void SdlPadInput::clearState() {
     m_held = m_pressed = 0u;
     m_sticks = 0x80808080u;
+    m_walking = false;
+    m_mouseButtons = 0u;
 }
 
 void SdlPadInput::setConfig(const PadConfig &config) {
@@ -316,10 +393,79 @@ std::vector<ControllerInfo> SdlPadInput::controllers() const {
 
 void SdlPadInput::handleEvent(const SDL_Event &event) {
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && m_config.keyboardEnabled) {
+        const bool escape = event.key.scancode == SDL_SCANCODE_ESCAPE;
+        if (escape)
+            m_escSuppressed = false; // a fresh press
+        // In the game's menus Esc goes back, while it is the menu's key.
+        if (m_inMenus && escape && escOpensMenu()) {
+            m_pressed |= Circle;
+            m_keyboardMouseAt = SDL_GetTicks();
+            return;
+        }
         for (size_t input = 0; input < kPadInputCount; ++input)
             for (const auto &binding : m_config.keyboard[input])
-                if (binding.kind == PadBinding::Kind::Key && binding.code == event.key.scancode)
+                if (binding.kind == PadBinding::Kind::Key && binding.code == event.key.scancode) {
                     m_pressed |= kInputs[input].mask;
+                    m_keyboardMouseAt = SDL_GetTicks();
+                }
+        return;
+    }
+    // The mouse: only in the game's window while it has the keyboard focus
+    // (Windows scrolls a window under the cursor without it), never a touch
+    // screen's (SDL makes clicks of touches, a Steam Deck's screen too).
+    // Using it counts with the keyboard switched off; its bindings do not.
+    const auto fromMouse = [](SDL_MouseID which, SDL_WindowID window) {
+        SDL_Window *focus = SDL_GetKeyboardFocus();
+        return which != SDL_TOUCH_MOUSEID && focus != nullptr && SDL_GetWindowID(focus) == window;
+    };
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+        if (event.button.which != SDL_TOUCH_MOUSEID && event.button.button >= SDL_BUTTON_LEFT &&
+            event.button.button <= SDL_BUTTON_X2)
+            m_mouseButtons &= ~SDL_BUTTON_MASK(event.button.button);
+        return;
+    }
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+        const int button = event.button.button;
+        if (!fromMouse(event.button.which, event.button.windowID) || button < SDL_BUTTON_LEFT ||
+            button > SDL_BUTTON_X2)
+            return;
+        m_mouseButtons |= SDL_BUTTON_MASK(button);
+        m_keyboardMouseAt = SDL_GetTicks();
+        if (!m_config.keyboardEnabled)
+            return;
+        if (m_inMenus && button == SDL_BUTTON_RIGHT) {
+            m_pressed |= Circle;
+            return;
+        }
+        for (size_t input = 0; input < kPadInputCount; ++input)
+            for (const auto &binding : m_config.keyboard[input])
+                if (binding.kind == PadBinding::Kind::Mouse && binding.code == button)
+                    m_pressed |= kInputs[input].mask;
+        return;
+    }
+    if (event.type == SDL_EVENT_MOUSE_WHEEL) {
+        // Whole notches: a touchpad or a fine wheel sends parts of one.
+        int notches = event.wheel.integer_y;
+        if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
+            notches = -notches;
+        if (notches == 0 || !fromMouse(event.wheel.which, event.wheel.windowID))
+            return;
+        m_keyboardMouseAt = SDL_GetTicks();
+        if (!m_config.keyboardEnabled)
+            return;
+        if (m_inMenus) {
+            m_pressed |= notches > 0 ? Up : Down;
+            return;
+        }
+        for (size_t input = 0; input < kPadInputCount; ++input)
+            for (const auto &binding : m_config.keyboard[input])
+                if (binding.kind == PadBinding::Kind::Wheel && binding.direction == (notches > 0 ? 1 : -1))
+                    m_pressed |= kInputs[input].mask;
+        return;
+    }
+    if (event.type == SDL_EVENT_MOUSE_MOTION) {
+        if (fromMouse(event.motion.which, event.motion.windowID))
+            m_mouseMotionAt = SDL_GetTicks();
         return;
     }
     if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
@@ -343,6 +489,7 @@ void SdlPadInput::handleEvent(const SDL_Event &event) {
         const Gamepad *gamepad = findGamepad(event.gbutton.which);
         if (!gamepad || !gamepadActive(*gamepad))
             return;
+        m_controllerAt = SDL_GetTicks();
         for (size_t input = 0; input < kPadInputCount; ++input)
             for (const auto &binding : m_config.controller[input])
                 if (binding.kind == PadBinding::Kind::Button && binding.code == event.gbutton.button)
@@ -353,6 +500,8 @@ void SdlPadInput::handleEvent(const SDL_Event &event) {
         Gamepad *gamepad = findGamepad(event.gaxis.which);
         if (!gamepad || !gamepadActive(*gamepad) || event.gaxis.axis >= SDL_GAMEPAD_AXIS_COUNT)
             return;
+        if (std::abs(static_cast<int>(event.gaxis.value)) > kAxisFull / 2)
+            m_controllerAt = SDL_GetTicks();
         // Latch only the crossing, so a trigger resting past the threshold
         // does not repeat its press with every small movement.
         const int threshold = static_cast<int>(m_config.triggerThreshold * kAxisFull);
@@ -371,20 +520,57 @@ void SdlPadInput::handleEvent(const SDL_Event &event) {
 }
 
 PadSnapshot SdlPadInput::preview() const {
-    return sample(SDL_GetKeyboardState(nullptr));
+    // The bindings as Controls lists them, without the menus' own meanings.
+    return sample(SDL_GetKeyboardState(nullptr), m_mouseButtons & SDL_GetMouseState(nullptr, nullptr), false);
 }
 
-PadSnapshot SdlPadInput::sample(const bool *keys) const {
+bool SdlPadInput::escOpensMenu() const {
+    const PadBinding escape = PadBinding::key(SDL_SCANCODE_ESCAPE);
+    for (const PadBinding &binding : m_config.keyboard[index(PadInput::Triangle)])
+        if (binding == escape)
+            return true;
+    return false;
+}
+
+void SdlPadInput::setInMenus(bool on) {
+    if (on != m_inMenus) {
+        m_mouseSuppressed = m_mouseButtons;
+        m_escSuppressed = SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_ESCAPE];
+    }
+    m_inMenus = on;
+}
+
+PadSnapshot SdlPadInput::sample(const bool *keys, SDL_MouseButtonFlags mouse, bool overrides) const {
     if (!m_config.keyboardEnabled)
         keys = nullptr;
+    if (!keys)
+        mouse = 0u;
+    const bool menus = overrides && m_inMenus;
+    const bool escHeldOver = overrides && m_escSuppressed;
     const int threshold = static_cast<int>(m_config.triggerThreshold * kAxisFull);
     uint32_t held = 0u;
+    // In the game's menus the right click is Circle, whatever it is bound
+    // to, and so is Esc while it is the menu's key (on Triangle; a player's
+    // other use of it stays). Esc held since the menus came or went is
+    // neither, until it is let go.
+    if (menus && (mouse & SDL_BUTTON_RMASK) != 0u) {
+        held |= Circle;
+        mouse &= ~SDL_BUTTON_RMASK;
+    }
+    std::array<bool, SDL_SCANCODE_COUNT> keyCopy; // filled whole before use
+    if (keys && keys[SDL_SCANCODE_ESCAPE] && escOpensMenu() && (menus || escHeldOver)) {
+        if (menus && !escHeldOver)
+            held |= Circle;
+        std::copy(keys, keys + SDL_SCANCODE_COUNT, keyCopy.begin());
+        keyCopy[SDL_SCANCODE_ESCAPE] = false;
+        keys = keyCopy.data();
+    }
     int stick[kPadInputCount] = {};
     const auto read = [&](SDL_Gamepad *gamepad, const bool *keyState,
                           const std::array<PadBindingSlots, kPadInputCount> &bindings) {
         for (size_t input = 0; input < kPadInputCount; ++input) {
             for (const auto &binding : bindings[input]) {
-                const int value = bindingValue(binding, gamepad, keyState);
+                const int value = bindingValue(binding, gamepad, keyState, keyState ? mouse : 0u);
                 if (kInputs[input].mask != 0u) {
                     if (value > threshold)
                         held |= kInputs[input].mask;
@@ -414,7 +600,8 @@ PadSnapshot SdlPadInput::sample(const bool *keys) const {
     const uint8_t ly = stickByte(axis(PadInput::LeftStickUp, PadInput::LeftStickDown), deadZone);
     const uint8_t rx = stickByte(rightX, deadZone);
     const uint8_t ry = stickByte(rightY, deadZone);
-    return {held, (uint32_t(rx) << 24u) | (uint32_t(ry) << 16u) | (uint32_t(lx) << 8u) | ly};
+    return {held, (uint32_t(rx) << 24u) | (uint32_t(ry) << 16u) | (uint32_t(lx) << 8u) | ly,
+            stick[index(PadInput::Walk)] > threshold};
 }
 
 void SdlPadInput::poll(const bool *keys, bool focused) {
@@ -422,7 +609,16 @@ void SdlPadInput::poll(const bool *keys, bool focused) {
         clearState();
         return;
     }
-    const PadSnapshot state = sample(keys);
+    // The mouse buttons pressed in the window (handleEvent: no touches), let
+    // go of when SDL says they are up, which also covers a release the menu
+    // took. Those held since the menus came or went stay released until they
+    // are let go.
+    m_mouseButtons &= SDL_GetMouseState(nullptr, nullptr);
+    if (m_escSuppressed && !(keys && keys[SDL_SCANCODE_ESCAPE]))
+        m_escSuppressed = false;
+    const SDL_MouseButtonFlags mouse = m_mouseButtons;
+    m_mouseSuppressed &= mouse;
+    const PadSnapshot state = sample(keys, mouse & ~m_mouseSuppressed);
     uint32_t held = state.held;
     if (m_suppressPending) {
         m_suppressed = held;
@@ -434,6 +630,7 @@ void SdlPadInput::poll(const bool *keys, bool focused) {
     m_pressed |= held & ~m_held;
     m_held = held;
     m_sticks = state.sticks;
+    m_walking = state.walking;
 }
 
 void SdlPadInput::read(uint32_t &held, uint32_t &pressed, uint32_t &sticks) {

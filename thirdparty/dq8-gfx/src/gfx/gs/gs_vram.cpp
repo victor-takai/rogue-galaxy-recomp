@@ -718,6 +718,26 @@ void GsVram::readRowT4(uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint3
     }
 }
 
+template <class F>
+void appendBlocksOf(const uint8_t *data, uint32_t base, uint32_t bw, uint32_t width, uint32_t height, std::vector<uint8_t> &out) {
+    const BlockMap<F> at = blockMap<F>(const_cast<uint8_t *>(data), base, bw);
+    for (uint32_t y = 0; y < height; y += F::kBlockH)
+        for (uint32_t x = 0; x < width; x += F::kBlockW) {
+            const uint8_t *block = at(x, y);
+            out.insert(out.end(), block, block + 256u);
+        }
+}
+
+void GsVram::appendBlocks(bool four, uint32_t base, uint32_t bw, uint32_t width, uint32_t height,
+                          std::vector<uint8_t> &out) const {
+    if (!attached())
+        return;
+    if (four)
+        appendBlocksOf<FormatT4>(m_data, base, bw, width, height, out);
+    else
+        appendBlocksOf<FormatT8>(m_data, base, bw, width, height, out);
+}
+
 void GsVram::writeRunT4(uint32_t base, uint32_t bw, uint32_t dsax, uint32_t rowEnd, uint32_t x, uint32_t y,
                         const uint8_t *src, uint32_t count) {
     if (!attached())

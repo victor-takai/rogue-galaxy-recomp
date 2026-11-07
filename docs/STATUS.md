@@ -4,14 +4,16 @@
 game, plays the opening movie and the real-time cutscenes in Salgin, and
 fights battles (HUD, damage, allies, results screen) at 60 frames per
 second with `Rogue Galaxy.exe` (the scene's step follows the frame time, so
-a slow frame does not play in slow motion; the game's own 30 without
-`RG_FPS=60`), with the GS on the GPU, VU1 compiled ahead of time and on a
+a slow frame does not play in slow motion; the menu's Game > 60 frames
+per second, on by default; `RG_FPS=30` gives the game's own 30 for one
+run), with the GS on the GPU, VU1 compiled ahead of time and on a
 thread of its own, music and sound effects, keyboard or gamepad. The
 heaviest field scene measured, a boss gate, holds 50 to 60, limited by the
 VU1 programs.
-Known gaps: a rare hang after the Story loading screen (below). Release
-0.1.0 is the source with an installer that builds the game from the
-player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
+Known gaps: a rare hang after the Story loading screen (below; possibly
+the checkpoint unwind that patch 0010 fixed, not confirmed). Each release
+(0.2.0 the latest) is the source with an installer that builds the game
+from the player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
 
 | Phase | Goal | State |
 |---|---|---|
@@ -20,7 +22,51 @@ player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
 | 2 | Build ELF + overlays into one executable; overlay-aware dispatch | done |
 | 3 | Boot to the title screen | done |
 | 4 | Field, battle, movies, sound | done |
-| 5 | Performance, widescreen, 60 fps, launcher | 60 fps mode by default (50-60 in the heaviest scenes), launcher, in-game menu, widescreen option, installer (0.1.0) |
+| 5 | Performance, widescreen, 60 fps, launcher | 60 fps mode by default (50-60 in the heaviest scenes), launcher, in-game menu, widescreen option, installer (0.1.0), `Update.bat` (0.2.0) |
+
+## Where things stand (2026-11-03)
+
+- The whole game plays: field, battles, movies, sound. The 60 fps mode is
+  on by default (Game > 60 frames per second); widescreen up to 32:9 and
+  up to 8x internal resolution are menu options ([OPTIONS.md](OPTIONS.md)).
+- Release 0.2.0 is out. Since 0.1.0 (`Install.bat`), it brought, in
+  [`CHANGELOG.md`](../CHANGELOG.md): `Update.bat`, the undub from the
+  player's own Japanese disc (`Install-Undub.bat`, F1 > Settings > Language; see
+  [dialogue.md](dialogue.md)), texture packs
+  ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)), the Xbox buttons in the text,
+  the inventory options and the F1 menu with only a controller.
+- In progress:
+  - Performance: the heaviest battles and some bosses still drop below
+    60 fps.
+  - Drawing the game with the PC's renderer instead of through the
+    emulation of the PS2's graphics chip
+    ([NATIVE-RENDERER.md](NATIVE-RENDERER.md)). Off by default, for
+    development: the VU1 programs done natively (`RG_VU1_NATIVE`,
+    [VU1-NATIVE.md](VU1-NATIVE.md)) and the menu's "Native renderer"
+    switch, which nothing reads yet.
+  - A native Linux build, for Linux PCs and the Steam Deck (the Windows
+    build through Proton is prepared but untested:
+    [BUILDING.md](BUILDING.md#steam-deck-untested)).
+  - The European release's languages, read from the player's own disc of
+    that version ([#42](https://github.com/victor-takai/rogue-galaxy-recomp/pull/42)):
+    they work, marked experimental, and are not yet in a release; played
+    in Spanish and tested in all four up to the first scenes, the rest of
+    the story still to be seen in them.
+- Taken out at the user's request: the menus in 4:3 on a wide screen
+  (2026-10-28, never committed), Save anywhere and Sharp letters
+  (2026-10-30, 3b09797; the sources are at b55f0ea).
+- Known issues: the CHANGELOG's list, and the open questions at the end of
+  this file.
+- How it works and where things are: [HOW-IT-WORKS.md](HOW-IT-WORKS.md),
+  [DEVELOPMENT.md](DEVELOPMENT.md), [HOOKS.md](HOOKS.md) and
+  [FINDING-THINGS.md](FINDING-THINGS.md).
+- The log below stops at 2026-10-30, and it is in two runs. From phase 2
+  to "Save anywhere and Sharp letters taken out" it runs forward,
+  2026-10-16 to 2026-10-30. From "A launcher without the terminal" to
+  "Throughput, round one" it runs backward, 2026-10-23 to 2026-10-18.
+  Later work (the native VU1 and GS pull
+  requests, texture packs, `Update.bat`, the undub) is in the CHANGELOG and
+  the pull requests.
 
 ## Phase 1 in short
 
@@ -68,10 +114,16 @@ below; `a5d3049` resume points for standalone `entry_*` functions (#271);
 `2c5fbb9` syscalls 0x79/0x7A (#274). Upstream's own IOP emulator (`75d729c`,
 #244) diverges from the fork's and is not needed.
 
+Our own changes to the framework are patches in `patches/ps2recomp/`,
+applied to the checkout when the game is configured; what each one does is
+in [patches/README.md](../patches/README.md). The GS backend and the
+in-game menu are `thirdparty/dq8-gfx`, taken from DQ8-Recompiled and kept
+in this repository with our changes (its README lists them).
+
 ## What the game needs (known so far)
 
 **Overlays.** Main ELF code is 0x00100000-0x00436958 plus static constructors
-at 0x00469300-0x0046F9BC (layout in [MAPS.md](MAPS.md)). Five real overlays
+at 0x00469180-0x0046F9BC (layout in [MAPS.md](MAPS.md)). Five real overlays
 (TITLE, INSMENU, NORMAL, FACTORY, INSECT) share the arena
 0x004E9E80-0x00528200, each with its own map and generated code. Dispatch
 must follow whichever one is resident: the main ELF calls into the arena
@@ -88,8 +140,10 @@ sound kit (SKSOUND/SKHSYNTH/SKMIDI/SKMSIN, MODHSYN/MODMIDI/MODMSIN).
 
 **CD/DVD.** Data archives are opened per layer with `sceCdLayerSearchFile`
 (0x001297E0) and `sceCdReadDvdDualInfo` (0x0012ACD0). Neither upstream's
-runtime nor the fork has a handler for them; they need one (in a host-folder
-layout both can resolve by name, see [DISC.md](DISC.md)). Streaming uses
+runtime nor the fork has a handler for them, and they need none: both run
+as the game's own code, the dual-layer query gets no answer, so the game
+takes the disc for single-layer, and the extracted folder holds both
+layers' files (phase 3, below; [DISC.md](DISC.md)). Streaming uses
 CDVDSTM.
 
 **Movies.** Sony libmpeg + IPU (`PsIIlibipu 3000`), PSS demuxed by the game
@@ -99,7 +153,8 @@ converter (`tools/mvi/mvi_decrypt.py`) for the same container.
 **FPU.** PCSX2 patches `0x00124898` to `3442fffe` (clamp to 0x7FFFFFFE
 instead of 0x7FFFFFFF) for the out-of-bounds glitch in the Vedan/Myna area
 ([pcsx2#3544](https://github.com/PCSX2/pcsx2/issues/3544)). The runtime must
-reproduce PS2 float saturation or apply the same patch.
+reproduce PS2 float saturation or apply the same patch. (The patch is not
+applied; `src/ee_fpu.h` makes CVT.W.S saturate. See Open questions.)
 
 **GS.** The PCSX2 GameDB carries only hardware-renderer fixes for this game,
 which name the features it leans on: accurate blending (text/menu colour),
@@ -108,7 +163,9 @@ auto flush (lamp glow), round sprite (minimap/menu), preloaded frame data
 (bloom), native scaling (post-processing / DOF). No EE/VU game fixes.
 
 **Timing.** Game logic runs at 30 fps; the PAL 60 fps pnach has to patch
-gravity and timers too.
+gravity and timers too. Our 60 fps mode does it with hooks instead
+(`src/scene_timing.cpp`, `src/step_fixes.cpp`; see
+[sixty-fps-logic.md](sixty-fps-logic.md)).
 
 ## Phase 2: one executable
 
@@ -693,7 +750,8 @@ INSMENU, LAUNCHER, NORMAL, FACTORY, INSECT) for `cfc2` of registers
 with the same register side effects (`RG_VU0_FLAGS=0` keeps the
 generated ones); the proper fix, status and MAC flags for macro-mode
 FMAC instructions in the recompiler, is pending and would need a full
-regeneration. Nothing to do with the 60 fps mode or the random numbers;
+regeneration (later: patch 0017, below). Nothing to do with the 60 fps
+mode or the random numbers;
 with every `AabbContainsPoint` true, `CollShapeContainsPoint` was also
 always true, so trigger shapes may have fired early before this.
 
@@ -1836,6 +1894,33 @@ user here. The Xbox buttons in the text and the loading screen's cross
 are still redrawn into their pictures at the PS2's size. The sources as
 they were are in the history at b55f0ea.
 
+**Fast Revelation Flow taken out; multipliers for the percentages
+(2026-11-05).** The user found the Revelation Flow too quick with its
+switch on and asked whether its pace was right. A scripted placement
+(the gate's save, Jaster's board, the developers' giver,
+`RG_SCENE_TRACE=1`, from the zoom on the cell to the board's step back at
+0) took 4.09 s at 60 fps and 4.10 s at 30 with the switch off: the main
+menu runs at the game's own 60 Hz in both modes (60 frames presented a
+second), so that is the console's pace. With it on, 2.22 s, the twice
+the switch was made for (the first steps hurried a moment late). The user
+asked for the switch to go, as the chests' did: `fast_revelation`, the
+hook on RevelationBoardUpdate and `Scene::Revelation` with it. The F1
+menu's numbers set against the game's own (the slider format
+`kMultiplierFormat`) and the game's Settings screen show them as a
+multiplier, 1.0x, 1.25x, instead of a percentage (dq8-gfx's
+`ui/ui_multiplier.h` writes both; graphics.cpp hands it to the screen with
+each number's range); the settings file keeps
+the hundredths, so nothing set changes. Typing a value into those sliders
+(Ctrl+click) is off, as it would read hundredths. The user then asked for
+better words than Low and High on the Settings screen's numbers. Those
+words are pieces of the screen's picture (each widget's sprites come from
+the one picture its name finds, UiDrawWidgets), which holds only Low/High,
+On/Off, Stereo/Mono and Normal/Reversed. So a number's choices now end
+their sprite list after the button (the word's x set to -1) and get a text
+list of ours, "-" or "+" in the row names' font, white (their grey left
+the "-" hard to see), centred by widget flag 0x1000; the game's page gets
+its words and no texts back.
+
 **A launcher without the terminal (2026-10-23).** The user asked for
 RogueGalaxy.bat not to open a terminal. A batch file always opens one, and
 this one stays the whole game, waiting to keep the log and show an error.
@@ -1947,6 +2032,8 @@ the user did not like it yet either. It waits on the `texture-pack`
 branch for a better way (one idea: drawing each glyph from a similar
 high-resolution typeface instead of enlarging the picture); what the
 user collected stays in `textures\collected`, out of the repository.
+(Later: texture packs came to main in another form, see
+[TEXTURE_PACKS.md](TEXTURE_PACKS.md).)
 Found with it: in about one item-menu run in twenty, digits came out
 missing or as noise, with the same draws as a good run's. SDL defragments
 memory at a presenting submission and moves textures while the GS
@@ -2547,9 +2634,13 @@ it; the user's play profile is the better read.
 ## Open questions
 
 - What leaves the data table's VM pointer stale before the Story hang.
-- The two `sceCdGetDiskType` entries (0x12A9D8, called by the game; 0x12AA70,
-  the wrapper ps2_analyzer names) are both bound; phase 3 confirms which is
-  the public one.
+  (Possibly the checkpoint unwind that patch 0010 fixed; not confirmed.)
+- Whether the out-of-bounds glitch in the Vedan/Myna area shows here.
+  PCSX2 patches 0x00124898 for it; we do not, and `src/ee_fpu.h` makes
+  CVT.W.S saturate as the R5900 does.
+- What lost the device (`VK_ERROR_DEVICE_LOST`) once at the
+  Story-to-cutscene transition (phase 5, "A VIF1-thread race").
+- What made a load take 30 s on 2026-10-19 ("The freezes' cause").
 
 ## References
 

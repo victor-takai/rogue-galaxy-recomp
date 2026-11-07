@@ -1,7 +1,7 @@
 # Building by hand
 
 For developers and other systems: these are the steps
-[`Install.bat`](../README.md#install-windows) runs on Windows.
+[`Install.bat`](INSTALL.md#install-windows) runs on Windows.
 
 ## Setup
 
@@ -32,8 +32,10 @@ python setup.py check
 
 From the repository root. The generated code is built with clang (the flags
 are GNU-style; on Windows an LLVM MinGW clang works). Configuring the game
-downloads raylib, SDL3 and glslang (for the GPU backend's shaders) and, on
-Windows, a prebuilt LGPL FFmpeg whose hash the framework pins.
+downloads raylib and SDL3, glslang (for the GPU backend's shaders) when no
+GLSL compiler is installed, and, on Windows, a prebuilt LGPL FFmpeg whose
+hash the framework pins. `-DRG_GS_SDLGPU=OFF` at configure leaves out the
+GPU backend, and with it the menu: the game draws with the software GS.
 
 ```bash
 # 1. The recompiler: applies patches/ps2recomp to the pinned framework, then
@@ -113,6 +115,22 @@ What each step keeps:
   `build` as above. `Install.bat` also keeps the toolchain it downloaded
   while its hash matches the version pinned in `tools/install/install.ps1`.
 
+## Linux
+
+The game builds on Linux too, but it is less tested than on Windows: it was
+built and played on Arch Linux, with clang 23 and GNU ld (pull request #2).
+The steps are the ones above, with these differences:
+
+- clang is required: `setup.py` configures with `clang` and `clang++`.
+- FFmpeg comes from the system, through pkg-config. Install pkg-config and
+  the development packages of libavcodec, libavformat, libavutil,
+  libswresample and libswscale.
+- There is no `Rogue Galaxy.exe`. Run the game from the repository's folder:
+  `build/game/src/roguegalaxy disc/SCUS_974.90`.
+- Some diagnosis tools do nothing there: the profiler (`RG_PROFILE`), the
+  hardware watch (`RG_HWWATCH`), the host stacks in the stall report and
+  the crash report. The check for a newer release is Windows only too.
+
 ## Steam Deck (untested)
 
 The installer needs Windows, but the game it builds can go to a Steam Deck
@@ -122,10 +140,11 @@ and run through Proton. On the Windows PC, after the install:
 
 copies the game, its DLLs, `disc/` and the borders into that folder (about
 6.5 GB; `--saves` adds your memory cards, which then go their own way on
-the Deck). Copy the folder to the Deck, add `Rogue Galaxy.exe` to Steam as
-a non-Steam game, and force a Proton version in its Properties >
-Compatibility. It starts in fullscreen there; Back + Start opens the menu
-(F1).
+the Deck). Texture packs are not copied: copy `textures\packs` (and
+`textures\hd`) into the new folder's `textures\` by hand. Copy the folder
+to the Deck, add `Rogue Galaxy.exe` to Steam as a non-Steam game, and
+force a Proton version in its Properties > Compatibility. It starts in
+fullscreen there; Back + Start opens the menu (F1).
 
 ## Layout
 
@@ -133,16 +152,28 @@ Compatibility. It starts in fullscreen there; Back + Start opens the menu
 |---|---|
 | `Install.bat`, `tools/install/` | The Windows installer: build tools into `toolchain\`, then `setup.py install` |
 | `Update.bat`, `tools/install/update.ps1` | Brings a folder `Install.bat` built to the newest release and rebuilds what changed (a git checkout uses `git pull` instead) |
+| `Install-Undub.bat`, `tools/install/install-undub.ps1` | The Japanese voices from your own Japanese disc, into `disc/JA` (`setup.py extract-japanese`), and its battle balance into `disc/JA/balance` (`setup.py director-cut-balance`) |
+| `Install-European.bat`, `tools/install/install-european.ps1` | The French, German, Spanish and Italian texts from your own European disc, built into `disc/EU` (`setup.py extract-european`, `tools/disc/european.py`) |
 | `CHANGELOG.md` | What each release brings, and its known issues |
-| `setup.py` | `verify`, `extract`, `info`, `overlays`, `check`, `recompile`, `tools`, `build`, `install`, `portable` (and `make-hashes`, `maps`, `vu1-manifest`, `vu-blocks-manifest` for maintainers) |
-| `CMakeLists.txt`, `src/` | The game executable: build of the generated trees, overlay manager (`src/overlay/`), call tracing (`src/debug/`), `main.cpp`; the Windows launcher, `Rogue Galaxy.exe` (`src/launcher/`) |
+| `setup.py` | `verify`, `extract`, `extract-japanese`, `extract-european`, `director-cut-balance`, `info`, `overlays`, `check`, `recompile`, `tools`, `build`, `install`, `portable` (and `make-hashes`, `maps`, `vu1-manifest`, `vu-blocks-manifest` for maintainers) |
+| `CMakeLists.txt`, `src/` | The game executable: `main.cpp`, the hooks, one file per feature ([HOOKS.md](HOOKS.md)), the overlay manager (`src/overlay/`), the diagnosis tools (`src/debug/`: traces, watches, profiler, stall watch, GS census, self-test) and the Windows launcher, `Rogue Galaxy.exe` (`src/launcher/`) |
+| `cmake/framework_patches.cmake` | Applies `patches/ps2recomp/` to the framework, at configure and from `setup.py tools` |
+| `debug/` | Launchers for diagnosis: `RogueGalaxy.bat` (the game in a terminal), `-profile`, `-hitches`, `-capture` and `-collect` ([DEVELOPMENT.md](DEVELOPMENT.md)) |
+| `borders/` | An image you put here fills the window beside the 4:3 picture (`borders/README.txt`) |
 | `config/SCUS_974.90/` | `hashes.json` (known-good dump), `overlays.toml` (MWo3 table, loader hook), `funcmap.toml` (map sources and corrections), `functions_<image>.csv` (function maps), `recomp/<image>.toml` (ps2_recomp configs, SDK bindings), `vu1-programs.txt` and `vu-blocks.txt` (VU1 and VU0 microcode locations) |
 | `tools/disc/iso9660.py` | Read-only ISO9660 reader for dual-layer PS2 DVDs |
+| `tools/disc/archive.py`, `cfgbin.py`, `balance.py` | The game's archives (`.HD6` index, `.pac`), its compiled tables (`.cfg.bin`), and the Director's Cut balance's tables and enemy files built from them |
 | `tools/mwo3/mwo3.py` | MWo3 overlay header parser, ELF cross-check, overlay-to-ELF wrapper |
 | `tools/funcmap/` | Function-map builder and the checks behind `setup.py check` |
-| `tools/bench/` | `walk.sh NAME [SCALE] [FPS]`: the scripted Salgin walk on the pad clock, for speed (3x, 60 fps mode, the `[gfx]` intervals before the logged frame) and for regressions (1x, 30 fps mode, `cmpvram.py` against a reference frame made with the same save); `PROFILE=1` samples the threads as well |
+| `tools/bench/` | `walk.sh NAME [SCALE] [FPS]`: the scripted Salgin walk on the pad clock, for speed (3x, 60 fps mode, the `[gfx]` intervals before the logged frame) and for regressions (1x, 30 fps mode, `cmpvram.py` against a reference frame made with the same save); `PROFILE=1` samples the threads as well. It needs the maintainer's input scripts in `build/run/` and saves in `disc/mc0`, which are not in the repository |
+| `tools/mipsdis.py` | Disassembler for the main program, with the map's names ([FINDING-THINGS.md](FINDING-THINGS.md)) |
+| `tools/hang/` | A frozen game's memory dumped (`dumpmem.ps1`), a thread's call chain read from it (`stackwalk.py`), an AI script decoded (`aiscript.py`) |
+| `tools/profile/report.py` | Reads the profiles `RG_PROFILE` writes ([DEVELOPMENT.md](DEVELOPMENT.md)) |
+| `tools/vu1/` | Study of the VU1 programs: disassembler, census, captures, and the oracle the native ones are checked against ([VU1-NATIVE.md](VU1-NATIVE.md)) |
+| `tools/texture_pack/` | Making the larger 2D art from what `debug\RogueGalaxy-collect.bat` collected (`make-pack.bat`), and checks of the game's zip and DDS readers ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)) |
+| `tools/release/` | `source_zip.py`: the release's source archive, with the submodules; `release_notes.py VERSION`: the release page's text, from that version's section of the CHANGELOG |
 | `thirdparty/PS2Recomp` | Framework submodule; `patches/ps2recomp/` holds our changes to it, applied on configure ([`patches/README.md`](../patches/README.md)) |
 | `thirdparty/dq8-gfx` | SDL3 GPU GS backend and in-game menu from DQ8-Recompiled (GPL-3.0), see its README |
 | `thirdparty/imgui` | Dear ImGui submodule (MIT), which the menu draws with |
-| `docs/` | [`STATUS.md`](STATUS.md) (state, plan, what the game needs), [`DISC.md`](DISC.md), [`MAPS.md`](MAPS.md) (function maps, SDK bindings) |
+| `docs/` | Every page, by who it is for: [`docs/README.md`](README.md) |
 | `disc/` | Your extracted disc (gitignored) |

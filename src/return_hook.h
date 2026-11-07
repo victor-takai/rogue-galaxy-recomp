@@ -28,4 +28,17 @@ void callThen(PS2Runtime::RecompiledFunction original, uint8_t *rdram, R5900Cont
 // read from its thread without a lock, for the log only).
 void describePending(std::FILE *out);
 
+// Runs the guest function at `entry` (`function`, its code: a hook's saved
+// original) to its end from host code, on `local`, a copy of the game
+// thread's context with the arguments set. A scheduler checkpoint due inside
+// it unwinds it as it does any guest code, here into this loop instead of
+// the run loop, which goes on where it stopped, through the table, as the run
+// loop would (a host function that returns with pc at its entry has
+// returned, as in the dispatcher); the checkpoint stays pending for the
+// game's own code. For functions that never wait: a wait, which unwinds by
+// an exception, would leave it half done. False if it could not finish (a
+// stop request, an address without code), with local.pc where it stopped.
+bool runToEnd(PS2Runtime::RecompiledFunction function, uint32_t entry, uint8_t *rdram, R5900Context &local,
+              PS2Runtime *runtime);
+
 } // namespace rg::hooks

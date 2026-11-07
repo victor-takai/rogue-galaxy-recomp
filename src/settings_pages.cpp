@@ -11,6 +11,7 @@
 #include "free_camera.h"
 #include "ps2_runtime.h"
 #include "scene_timing.h"
+#include "text_language.h"
 
 namespace rg::settingspages
 {
@@ -65,7 +66,25 @@ constexpr uint32_t kPadLastButtons = 0x5Cu;
 constexpr uint32_t kPadLock = 0x24Cu;
 constexpr uint32_t kButtonL1 = 0x4u;
 constexpr uint32_t kButtonR1 = 0x8u;
-constexpr uint32_t kTextBytes = 48u;
+// A row's name and value; an accent is a tag of four or five bytes (<'e>).
+constexpr uint32_t kTextBytes = 64u;
+// A text entry (kTextStride bytes): x and y (s16, from the widget's place),
+// the string, the wrap (u16), the font (s8) and the colour (u32); a list
+// ended by x -1. UiDrawWidgets draws a widget's texts after every sprite,
+// each centred on its x under widget flag 0x1000, in the colour given (the
+// widget's own colour sets only their alpha).
+constexpr uint32_t kTextWrap = 0x8u;
+constexpr int16_t kCentreTexts = 0x1000;
+// A number's choices read "-" and "+" instead of the game's Low and High:
+// its words are pieces of the screen's picture, and it has none better. The
+// signs' text, its top this far above the button's middle, white as the
+// words are (the row names' grey left the "-" hard to see; 0x80 is full).
+// At 8 both signs' middles sat 1.5 lines under the button's (the button
+// 97-117 with its rim, the "+" 103-114 with its outline, at 1x); at 10 they
+// sit half a line over it, which the eye takes for the middle.
+constexpr int16_t kSignRise = 10;
+constexpr uint32_t kTextColour = 0xCu;
+constexpr uint32_t kSignColour = 0x80808080u;
 
 enum class Kind
 {
@@ -78,48 +97,101 @@ struct Row
     const char *key;
     const char *label;
     Kind kind;
-    const char *suffix;
-    // A number that names a choice: its value's name in the label.
-    const char *const *names = nullptr;
 };
 
-// The F1 menu's Display > Borders, in its order.
-constexpr const char *kSidesNames[] = {"Black", "Blurred", "Image"};
-
+// Widescreen and Display > Borders are in the F1 menu alone: there each says
+// when it does nothing (at 4:3, with no bars), and this screen has no room
+// for that line.
 constexpr Row kSwitches[] = {
-    {"widescreen", "Widescreen", Kind::Switch, ""},
-    {"skip_opening", "Skip the Opening", Kind::Switch, ""},
-    {"instant_loading_recap", "Quick Loading Recap", Kind::Switch, ""},
-    {"instant_text", "Instant Text", Kind::Switch, ""},
-    {"map_chests", "Chests on Map", Kind::Switch, ""},
-    {"faster_camera", "Faster Camera", Kind::Switch, ""},
-    {"free_camera", "Free Camera", Kind::Switch, ""},
-    {"dev_tools", "Developer Tools", Kind::Switch, ""},
-    {"sixty_fps", "60 FPS (Next Start)", Kind::Switch, ""},
+    {"skip_opening", "Skip the Opening", Kind::Switch},
+    {"instant_loading_recap", "Quick Loading Recap", Kind::Switch},
+    {"instant_text", "Instant Text", Kind::Switch},
+    {"map_chests", "Chests on Map", Kind::Switch},
+    {"faster_camera", "Faster Camera", Kind::Switch},
+    {"free_camera", "Free Camera", Kind::Switch},
+    {"dev_tools", "Developer Tools", Kind::Switch},
+    {"sixty_fps", "60 FPS (Next Start)", Kind::Switch},
 };
 constexpr Row kNumbers[] = {
-    {"field_of_view", "Field of View", Kind::Number, ""},
-    {"camera_distance", "Camera Distance", Kind::Number, "%"},
-    {"draw_distance", "Draw Distance", Kind::Number, "%"},
-    {"encounter_rate", "Encounters", Kind::Number, "%"},
-    {"battle_experience", "Experience", Kind::Number, "%"},
-    {"battle_money", "Money", Kind::Number, "%"},
-    {"item_drops", "Item Drops", Kind::Number, "%"},
-    {"weapon_growth", "Weapon Growth", Kind::Number, "%"},
-    {"shop_prices", "Shop Prices", Kind::Number, "%"},
-    {"action_gauge", "Action Gauge", Kind::Number, "%"},
+    {"field_of_view", "Field of View", Kind::Number},
+    {"camera_distance", "Camera Distance", Kind::Number},
+    {"draw_distance", "Draw Distance", Kind::Number},
+    {"encounter_rate", "Encounter Rate", Kind::Number},
+    {"battle_experience", "Experience", Kind::Number},
+    {"battle_money", "Money", Kind::Number},
+    {"item_drops", "Item Drops", Kind::Number},
+    {"weapon_growth", "Weapon Growth", Kind::Number},
+    {"shop_prices", "Shop Prices", Kind::Number},
+    {"action_gauge", "Action Gauge", Kind::Number},
 };
 
 constexpr Row kScenes[] = {
-    {"fast_transporter", "Fast Transporters", Kind::Switch, ""},
-    {"fast_revelation", "Fast Revelation", Kind::Switch, ""},
-    {"full_bag_to_storage", "Full Bag to Storage", Kind::Switch, ""},
-    {"stack_limit_99", "Item Limit 99", Kind::Switch, ""},
-    {"bigger_bag", "Bag Page 7 (Next Start)", Kind::Switch, ""},
-    {"sides", "Borders", Kind::Number, "", kSidesNames},
-    {"minimap_size", "Minimap Size", Kind::Number, "%"},
-    {"compass_size", "Compass Size", Kind::Number, "%"},
+    {"fast_transporter", "Fast Transporters", Kind::Switch},
+    {"full_bag_to_storage", "Full Bag to Storage", Kind::Switch},
+    {"stack_limit_99", "Item Limit 99", Kind::Switch},
+    {"bigger_bag", "Bag Page 7 (Next Start)", Kind::Switch},
+    {"minimap_size", "Minimap Size", Kind::Number},
+    {"compass_size", "Compass Size", Kind::Number},
 };
+
+// The rows' names when the text is in a European language
+// (rg::textlanguage::language(): French, German, Spanish, Italian), in the
+// European release's own words where it has them: the game's page (Kampfkamera,
+// Minikarte anzeigen, Visuale in battaglia), its bag, storage, chests,
+// transporter and Action Gauge. Its accent tags (<'e>) are what its menu font
+// draws. A name, with its value, fits in about as much room as
+// "Bag Page 7 (Next Start)".
+struct Local
+{
+    const char *key;
+    const char *text[4];
+};
+constexpr Local kLocal[] = {
+    {"skip_opening", {"Passer l'introduction", "Intro <:u>berspringen", "Saltar introducci<'o>n", "Salta l'introduzione"}},
+    {"instant_loading_recap", {"R<'e>sum<'e> imm<'e>diat", "Handlung sofort", "Resumen inmediato", "Riassunto immediato"}},
+    {"instant_text", {"Texte instantan<'e>", "Sofortiger Text", "Texto instant<'a>neo", "Testo istantaneo"}},
+    {"map_chests", {"Coffres sur la carte", "Truhen auf Karte", "Cofres en el mapa", "Scrigni sulla mappa"}},
+    {"faster_camera", {"Cam<'e>ra rapide", "Schnelle Kamera", "C<'a>mara r<'a>pida", "Visuale rapida"}},
+    {"free_camera", {"Cam<'e>ra libre", "Freie Kamera", "C<'a>mara libre", "Visuale libera"}},
+    {"dev_tools", {"Outils d<'e>veloppeur", "Entwicklerwerkzeuge", "Modo desarrollador", "Strumenti di sviluppo"}},
+    {"sixty_fps", {"60 FPS (red<'e>marrage)", "60 FPS (Neustart)", "60 FPS (reinicio)", "60 FPS (riavvio)"}},
+    {"field_of_view", {"Champ de vision", "Sichtfeld", "Campo de visi<'o>n", "Campo visivo"}},
+    {"camera_distance", {"Distance cam<'e>ra", "Kameradistanz", "Distancia c<'a>mara", "Distanza visuale"}},
+    {"draw_distance", {"Distance de vue", "Sichtweite", "Distancia visual", "Raggio visivo"}},
+    {"encounter_rate", {"Fr<'e>q. des combats", "Kampfh<:a>ufigkeit", "Frec. de combates", "Frequenza scontri"}},
+    {"battle_experience", {"Exp<'e>rience", "Erfahrung", "Experiencia", "Esperienza"}},
+    {"battle_money", {"Argent", "Geld", "Dinero", "Denaro"}},
+    {"item_drops", {"Butin", "Beute", "Bot<'i>n", "Bottino"}},
+    {"weapon_growth", {"<'E>volution armes", "Waffenwachstum", "Mejora de armas", "Crescita armi"}},
+    {"shop_prices", {"Prix en magasin", "Ladenpreise", "Precios de tienda", "Prezzi negozi"}},
+    {"action_gauge", {"Jauge d'action", "Aktionsanzeige", "Ind. de acci<'o>n", "Barra Azione"}},
+    {"fast_transporter", {"Transporteurs rapides", "Schnelle Transporter", "Transportador r<'a>pido", "Warp rapido"}},
+    {"full_bag_to_storage", {"Surplus en r<'e>serve", "<:U>berschuss ins Lager", "Exceso al inventario", "Eccesso in Inventario"}},
+    {"stack_limit_99", {"Limite d'objets 99", "Gegenstandslimit 99", "L<'i>mite de objetos 99", "Limite oggetti 99"}},
+    {"bigger_bag", {"Sac page 7 (red<'e>m.)", "Taschenseite 7 (Neust.)", "Mochila p<'a>g. 7 (reinicio)", "Sacca pag. 7 (riavvio)"}},
+    {"minimap_size", {"Taille mini-carte", "Minikartengr<:o><ss>e", "Tama<~n>o minimapa", "Dim. minimappa"}},
+    {"compass_size", {"Taille boussole", "Kompassgr<:o><ss>e", "Tama<~n>o br<'u>jula", "Dim. bussola"}},
+};
+
+// The European language the text is in, 1 to 4, or 0.
+int textLanguage()
+{
+    const int language = rg::textlanguage::language();
+    return language >= 1 && language <= 4 ? language : 0;
+}
+
+const char *label(const Row &row)
+{
+    const int language = textLanguage();
+    for (const Local &local : kLocal)
+    {
+        if (language != 0 && std::strcmp(local.key, row.key) == 0)
+        {
+            return local.text[language - 1];
+        }
+    }
+    return row.label;
+}
 
 struct Page
 {
@@ -142,6 +214,8 @@ struct Range
     int minimum = 0;
     int maximum = 0;
     int step = 1;
+    // How the value reads (the F1 menu's multiplier), or a plain number.
+    NumberText text = nullptr;
 };
 
 PS2Runtime::RecompiledFunction g_setItem = nullptr;
@@ -159,8 +233,19 @@ std::map<std::string, Range> g_ranges;
 std::mutex g_changesMutex;
 std::deque<Change> g_changes;
 
-// Our strings in guest memory: a row's name each, and an empty one.
+// Our strings in guest memory: a row's name each, an empty one, "-" and "+".
 uint32_t g_text = 0u;
+constexpr uint32_t kEmptyString = kRows;
+constexpr uint32_t kMinusString = kRows + 1;
+constexpr uint32_t kStrings = kRows + 3;
+// Our text lists in guest memory: a choice's sign and the list's end each.
+uint32_t g_signs = 0u;
+constexpr uint32_t kSignsBytes = kChoices * 2 * kTextStride;
+
+bool ourSigns(uint32_t texts)
+{
+    return g_signs != 0u && texts >= g_signs && texts < g_signs + kSignsBytes;
+}
 
 // The screen's widgets and grid, as found in guest memory.
 struct Screen
@@ -184,6 +269,7 @@ struct Saved
     int16_t flags[kChoices] = {};
     float colours[kChoices][4] = {};
     int16_t v[kChoices] = {};
+    uint32_t texts[kChoices] = {};
     int16_t lastRow = 0;
 };
 Saved g_saved;
@@ -279,12 +365,19 @@ bool findScreen(const uint8_t *rdram, Screen &screen)
     }
     for (int choice = 0; choice < kChoices; ++choice)
     {
+        // A button, its word and the list's end; or, under a sign of ours
+        // while one of our pages is up, the word made the end (setSign).
+        // Signs left on what should be the game's page are not taken for
+        // it, so save() never keeps them as the game's.
         screen.choices[choice] = findWidget(rdram, layout, static_cast<uint16_t>(kFirstChoice + choice));
         int16_t wordX = -1, endX = 0;
+        uint32_t texts = 0u;
         if (!screen.choices[choice] ||
             !readGuest(rdram, screen.choices[choice] + kWidgetSprites, screen.sprites[choice]) ||
+            !readGuest(rdram, screen.choices[choice] + kWidgetTexts, texts) ||
             !readGuest(rdram, screen.sprites[choice] + kSpriteBytes, wordX) ||
-            !readGuest(rdram, screen.sprites[choice] + 2u * kSpriteBytes, endX) || wordX == -1 || endX != -1)
+            !readGuest(rdram, screen.sprites[choice] + 2u * kSpriteBytes, endX) || endX != -1 ||
+            (wordX == -1 && (g_page == 0 || !ourSigns(texts))))
         {
             return false;
         }
@@ -334,17 +427,36 @@ void writeLabel(uint8_t *rdram, const Screen &screen, int index, const Row &row)
 {
     const uint32_t string = g_text + static_cast<uint32_t>(index) * kTextBytes;
     char text[kTextBytes];
-    if (row.names)
+    // French puts a space before the colon, as its game texts do ("Magasin :").
+    const char *colon = textLanguage() == 1 ? " :" : ":";
+    if (row.kind == Kind::Number)
     {
-        std::snprintf(text, sizeof(text), "%s: %s", row.label, row.names[value(row)]);
-    }
-    else if (row.kind == Kind::Number)
-    {
-        std::snprintf(text, sizeof(text), "%s: %d%s", row.label, value(row), row.suffix);
+        // As the F1 menu writes it (its multiplier: 1.0x).
+        NumberText number = nullptr;
+        {
+            std::lock_guard lock(g_valuesMutex);
+            const auto found = g_ranges.find(row.key);
+            number = found != g_ranges.end() ? found->second.text : nullptr;
+        }
+        char shown[16];
+        if (number)
+        {
+            number(value(row), shown, sizeof(shown));
+        }
+        else
+        {
+            std::snprintf(shown, sizeof(shown), "%d", value(row));
+        }
+        if (textLanguage() != 0)
+        {
+            // A decimal comma (1,5x).
+            std::replace(shown, shown + std::strlen(shown), '.', ',');
+        }
+        std::snprintf(text, sizeof(text), "%s%s %s", label(row), colon, shown);
     }
     else
     {
-        std::snprintf(text, sizeof(text), "%s", row.label);
+        std::snprintf(text, sizeof(text), "%s", label(row));
     }
     writeString(rdram, string, text);
     writeGuest(rdram, screen.texts + static_cast<uint32_t>(index) * kTextStride + kTextString, string);
@@ -394,6 +506,7 @@ void save(const uint8_t *rdram, const Screen &screen)
         readGuest(rdram, screen.choices[choice] + kWidgetFlags, g_saved.flags[choice]);
         readGuest(rdram, screen.choices[choice] + kWidgetColour, g_saved.colours[choice]);
         readGuest(rdram, screen.sprites[choice] + kSpriteV, g_saved.v[choice]);
+        readGuest(rdram, screen.choices[choice] + kWidgetTexts, g_saved.texts[choice]);
     }
     readGuest(rdram, screen.grid + 0xEu, g_saved.lastRow);
     g_saved.valid = true;
@@ -412,6 +525,7 @@ void restore(uint8_t *rdram, const Screen &screen)
         writeGuest(rdram, screen.choices[choice] + kWidgetFlags, g_saved.flags[choice]);
         writeGuest(rdram, screen.choices[choice] + kWidgetColour, g_saved.colours[choice]);
         writeGuest(rdram, screen.sprites[choice] + kSpriteV, g_saved.v[choice]);
+        writeGuest(rdram, screen.choices[choice] + kWidgetTexts, g_saved.texts[choice]);
     }
     writeGuest(rdram, screen.grid + 0xEu, g_saved.lastRow);
 }
@@ -430,10 +544,59 @@ void copyWord(uint8_t *rdram, const Screen &screen, int from, int to)
     writeGuest(rdram, screen.sprites[to] + kSpriteBytes, word);
 }
 
+// A number's choice: its word ends the sprite list (an x of -1), so the
+// button is drawn alone, and a text of ours, "-" on the left and "+" on the
+// right, in the row names' font, is centred on it. Otherwise the
+// choice's own texts (none) and centring, as the game left them.
+void setSign(uint8_t *rdram, const Screen &screen, int choice, bool sign)
+{
+    int16_t flags = 0;
+    readGuest(rdram, screen.choices[choice] + kWidgetFlags, flags);
+    if (!sign)
+    {
+        // A hidden row's word is not copied in again: one a sign ended
+        // gets the game's back, or findScreen would not know the screen.
+        int16_t wordX = 0;
+        if (readGuest(rdram, screen.sprites[choice] + kSpriteBytes, wordX) && wordX == -1)
+        {
+            writeGuest(rdram, screen.sprites[choice] + kSpriteBytes, g_saved.words[choice]);
+        }
+        writeGuest(rdram, screen.choices[choice] + kWidgetTexts, g_saved.texts[choice]);
+        const int16_t centre = static_cast<int16_t>(g_saved.flags[choice] & kCentreTexts);
+        writeGuest(rdram, screen.choices[choice] + kWidgetFlags,
+                   static_cast<int16_t>((flags & ~kCentreTexts) | centre));
+        return;
+    }
+    // The button: x, y, w, h, u, v, its piece's w and h (w and h 0 or less
+    // for the piece's).
+    int16_t button[8] = {};
+    readGuest(rdram, screen.sprites[choice], button);
+    const int width = button[2] > 0 ? button[2] : button[6];
+    const int height = button[3] > 0 ? button[3] : button[7];
+    uint8_t list[2][kTextStride] = {};
+    readGuest(rdram, screen.texts, list[0]);
+    const int16_t x = static_cast<int16_t>(button[0] + width / 2);
+    const int16_t y = static_cast<int16_t>(button[1] + height / 2 - kSignRise);
+    const uint32_t string = g_text + (kMinusString + static_cast<uint32_t>(choice % 2)) * kTextBytes;
+    const uint16_t noWrap = 0u;
+    const int16_t end = -1;
+    std::memcpy(list[0], &x, sizeof(x));
+    std::memcpy(list[0] + 2, &y, sizeof(y));
+    std::memcpy(list[0] + kTextString, &string, sizeof(string));
+    std::memcpy(list[0] + kTextWrap, &noWrap, sizeof(noWrap));
+    std::memcpy(list[0] + kTextColour, &kSignColour, sizeof(kSignColour));
+    std::memcpy(list[1], &end, sizeof(end));
+    const uint32_t texts = g_signs + static_cast<uint32_t>(choice) * sizeof(list);
+    writeGuest(rdram, texts, list);
+    writeGuest(rdram, screen.sprites[choice] + kSpriteBytes, end);
+    writeGuest(rdram, screen.choices[choice] + kWidgetTexts, texts);
+    writeGuest(rdram, screen.choices[choice] + kWidgetFlags, static_cast<int16_t>(flags | kCentreTexts));
+}
+
 void showPage(uint8_t *rdram, const Screen &screen, int page)
 {
     const Page &shown = kPages[page];
-    const uint32_t empty = g_text + kRows * kTextBytes;
+    const uint32_t empty = g_text + kEmptyString * kTextBytes;
     for (int index = 0; index < kRows; ++index)
     {
         if (index >= shown.count)
@@ -441,6 +604,8 @@ void showPage(uint8_t *rdram, const Screen &screen, int page)
             writeGuest(rdram, screen.texts + static_cast<uint32_t>(index) * kTextStride + kTextString, empty);
             setHidden(rdram, screen, index * 2, true);
             setHidden(rdram, screen, index * 2 + 1, true);
+            setSign(rdram, screen, index * 2, false);
+            setSign(rdram, screen, index * 2 + 1, false);
             continue;
         }
         const Row &row = shown.rows[index];
@@ -450,6 +615,8 @@ void showPage(uint8_t *rdram, const Screen &screen, int page)
         copyWord(rdram, screen, number ? kLowChoice + 1 : kOnChoice + 1, index * 2 + 1);
         setHidden(rdram, screen, index * 2, false);
         setHidden(rdram, screen, index * 2 + 1, false);
+        setSign(rdram, screen, index * 2, number);
+        setSign(rdram, screen, index * 2 + 1, number);
         highlight(rdram, screen, index, row);
     }
     writeGuest(rdram, screen.grid + 0xEu, static_cast<int16_t>(shown.count - 1));
@@ -665,9 +832,16 @@ void closeState(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 
 void install(PS2Runtime &runtime)
 {
-    g_text = runtime.guestCalloc(kRows + 1, kTextBytes);
+    g_text = runtime.guestCalloc(kStrings, kTextBytes);
+    g_signs = runtime.guestCalloc(kChoices * 2, kTextStride);
+    if (g_text != 0u)
+    {
+        uint8_t *rdram = runtime.memory().getRDRAM();
+        writeString(rdram, g_text + kMinusString * kTextBytes, "-");
+        writeString(rdram, g_text + (kMinusString + 1u) * kTextBytes, "+");
+    }
     const bool complete =
-        g_text != 0u && rg::timing::hookFunction(runtime, kOptionsSetItem, &setItem, g_setItem) &&
+        g_text != 0u && g_signs != 0u && rg::timing::hookFunction(runtime, kOptionsSetItem, &setItem, g_setItem) &&
         rg::timing::hookFunction(runtime, kOptionsRefresh, &refresh, g_refresh) &&
         rg::timing::hookFunction(runtime, kOptionsCloseState, &closeState, g_closeState) &&
         rg::timing::hookFunction(runtime, kOptionsSelectState, &selectState, g_selectState) &&
@@ -696,10 +870,10 @@ void noteNumber(const std::string &key, int value)
     g_values[key] = value;
 }
 
-void setRange(const std::string &key, int minimum, int maximum, int step, int defaultValue)
+void setRange(const std::string &key, int minimum, int maximum, int step, int defaultValue, NumberText text)
 {
     std::lock_guard lock(g_valuesMutex);
-    g_ranges[key] = Range{minimum, maximum, std::max(step, 1)};
+    g_ranges[key] = Range{minimum, maximum, std::max(step, 1), text};
     g_values.emplace(key, defaultValue);
 }
 

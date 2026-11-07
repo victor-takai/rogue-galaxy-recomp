@@ -1,0 +1,73 @@
+diff --git a/ps2xRuntime/include/runtime/gs/gs_frontend.h b/ps2xRuntime/include/runtime/gs/gs_frontend.h
+--- a/ps2xRuntime/include/runtime/gs/gs_frontend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_frontend.h
+@@ -110,6 +110,28 @@ public:
+     // A strip a VU1 program would have drawn (GSNativeMesh), under the draw
+     // state of now, in order with the packets (Rogue Galaxy: added).
+     void submitNativeMesh(const GSNativeMesh &mesh);
++    // The same under a draw state the submitter keeps itself (Rogue Galaxy:
++    // added; its converter mirrors the draw registers).
++    void submitNativeMesh(const GSNativeMesh &mesh, const GSDrawState &state);
++    // The draw registers as the front end holds them now (Rogue Galaxy:
++    // added): what a mirror of them reads back after something wrote them
++    // directly (writeRegister, the libgraph stubs).
++    struct DrawRegisters
++    {
++        GSContext ctx[2]{};
++        GSPrimReg primRegister{};
++        GSPrimReg prmodeRegister{};
++        bool prmodecont = true;
++        GSTexaReg texa{};
++        GSTexClutReg texclut{};
++        bool pabe = false;
++        uint64_t scanmsk = 0;
++        uint64_t dimx = 0;
++        uint64_t dthe = 0;
++        uint64_t colclamp = 0;
++        uint8_t fogR = 0, fogG = 0, fogB = 0;
++    };
++    DrawRegisters drawRegisters() const;
+     // Image data continuing the open transfer, as an IMAGE GIFtag's payload
+     // would: the VIF1 thread hands over a DIRECT's bytes in place instead of
+     // copying them behind a synthesized tag (Rogue Galaxy: added).
+diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+--- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+@@ -1881,6 +1881,37 @@ void GS::submitNativeMesh(const GSNativeMesh &mesh)
+         m_backend->SubmitNativeMesh(mesh, currentDrawState());
+ }
+ 
++void GS::submitNativeMesh(const GSNativeMesh &mesh, const GSDrawState &state)
++{
++    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
++    m_vtxCount = 0;
++    m_vtxIndex = 0;
++    if (m_backend && mesh.vertices.size() >= 3u)
++        m_backend->SubmitNativeMesh(mesh, state);
++}
++
++GS::DrawRegisters GS::drawRegisters() const
++{
++    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
++    DrawRegisters r;
++    r.ctx[0] = m_ctx[0];
++    r.ctx[1] = m_ctx[1];
++    r.primRegister = m_primRegister;
++    r.prmodeRegister = m_prmodeRegister;
++    r.prmodecont = m_prmodecont;
++    r.texa = m_texa;
++    r.texclut = m_texclut;
++    r.pabe = m_pabe;
++    r.scanmsk = m_scanmsk;
++    r.dimx = m_dimx;
++    r.dthe = m_dthe;
++    r.colclamp = m_colclamp;
++    r.fogR = m_fogR;
++    r.fogG = m_fogG;
++    r.fogB = m_fogB;
++    return r;
++}
++
+ void GS::updatePreferredDisplaySourceForDraw(const GSPrimitiveBatch &batch)
+ {
+     const GSDrawState &state = batch.state;

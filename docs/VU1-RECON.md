@@ -8,7 +8,8 @@ ours. This file records what was measured, what is built, and what is left.
 
 Work so far: [PR #2](https://github.com/notavolleyball-dev/rogue-galaxy-recomp/pull/2)
 (classifier, capture, report) and branch `vu1-jitter-motion-vectors` (jitter,
-camera plumbing, this file).
+camera plumbing, this file), on the contributor's fork. Both are in main
+since PR #7 (`adcadd9`: `4e14705` and `d534265`).
 
 ## Tools
 
@@ -48,12 +49,15 @@ Quadwords of 16 bytes, matrices as four row quads, row-vector convention
 - The pc 0x000 program (86 pairs) builds 64-75 from the inputs; the pc 0x1900
   programs (83-249 pairs) and pc 0xb00 read 68-71, divide by w and convert XY
   with `FTOI4` (GS 12.4). The 600-pair programs at 0x2620 and 0x28d8 (13
-  divides, 16 clips, 6 `XGKICK`) probably do lighting; not read.
+  divides, 16 clips, 6 `XGKICK`) probably do lighting; not read. (Read
+  since: 0x2620 is slot E, clipping; lighting is in slot C,
+  [VU1-NATIVE.md](VU1-NATIVE.md).)
 - The main projection: focal 1.5377 x 2.7337, near 1, far about 60,134. A
   second state (focal 1.4464 x 2.5714, view translation (0, 0, -50)) is a menu
   or preview scene. Other captures showed near 5, far 5000.
 - Vertices in the 0x1900 stream are model-space floats (a character-sized mesh
-  reads about 33 units tall). Normals, UVs, colors, skin weights: not decoded.
+  reads about 33 units tall). Normals, UVs, colors, skin weights: not decoded
+  (decoded since, [VU1-NATIVE.md](VU1-NATIVE.md), "Pieces known").
   The first two quads at TOP are either pointer words (`4 2c 802c 2d`,
   `5a 87 b4`) or screen-space floats, depending on which of the two buffers.
 
@@ -112,7 +116,8 @@ From 973,784 draws over 2,309 consecutive DMA lists:
   for draws from a VU1 program that test depth. HUD and dialog boxes did not
   move; the world's textures shimmer, as expected without temporal
   accumulation. The game tags draws with their program only when `RG_JITTER`
-  or `DQ8_GFX_PROFILE_CYCLE` is set.
+  or `DQ8_GFX_PROFILE_CYCLE` is set (the cycle itself was on the
+  contributor's machine; not in this repository).
 - **Camera plumbing.** `patches/ps2recomp/0020-gs-source-camera.patch` adds
   `SceneCamera` (viewport, projection, view), a `CameraRegistry` (the newest
   4096), and `GSPrimitiveBatch::sourceCamera`. `src/vif1_thread.cpp` registers
@@ -142,9 +147,9 @@ Things to settle first:
    present is the working rule.
 4. **Pass order.** The scene is two passes (pass 80 into 0x0, 83 draws; pass 81
    into 0x2A00, 325 blended draws) before the bloom blur chains and the
-   per-object composites (`GS-PASS-GRAPH.md`). The upscaler has to take the
-   scene before those. Pass 81's sprites draw into a second target; how to give
-   them vectors is open.
+   per-object composites ([GS-PASS-GRAPH.md](GS-PASS-GRAPH.md)). The
+   upscaler has to take the scene before those. Pass 81's sprites draw into a
+   second target; how to give them vectors is open.
 5. **Depth sampling in SDL GPU.** The scene's depth surface has to be readable
    by a pass.
 6. **FSR 2/3 and DLSS want native Vulkan handles and command buffers.** SDL's
@@ -155,7 +160,8 @@ Things to settle first:
    scene.
 
 Then: an upscaler (or TAA first), then ray tracing, which needs the vertex
-format (normals, UVs, colors, skinning) and a decision about the baked or
+format (normals, UVs, colors, skinning; decoded since,
+[VU1-NATIVE.md](VU1-NATIVE.md)) and a decision about the baked or
 VU1-computed lighting. Not started.
 
 ## Estimates

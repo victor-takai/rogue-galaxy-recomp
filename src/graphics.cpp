@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 #include "debug/gs_census.h"
@@ -19,10 +20,13 @@
 #include "button_glyphs.h"
 #include "update_check.h"
 #include "camera_view.h"
+#include "dc_balance.h"
 #include "dev_tools.h"
 #include "draw_distance.h"
 #include "free_camera.h"
+#include "mouse_camera.h"
 #include "instant_text.h"
+#include "text_language.h"
 #include "voice_language.h"
 #include "map_chests.h"
 #include "native_renderer.h"
@@ -32,6 +36,7 @@
 #include "scene_timing.h"
 #include "settings_pages.h"
 #include "shop_prices.h"
+#include "texture_pack.h"
 #include "vif1_thread.h"
 #include "hud_size.h"
 #include "inventory.h"
@@ -39,6 +44,7 @@
 #include "ps2_runtime.h"
 #include "stick_response.h"
 #include "runtime/gs/gs_cpu_backend.h"
+#include "Stubs/Pad.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/gs/gs_threaded_backend.h"
 
@@ -46,6 +52,7 @@
 #include <SDL3/SDL.h>
 
 #include "gfx/backends/sdlgpu/sdlgpu_backend.h"
+#include "gfx/native/native_pipeline.h"
 #include "runtime/ee_scheduler.h"
 #include "runtime/ps2_native_iop.h"
 #include "runtime/ps2_pad_host.h"
@@ -74,6 +81,9 @@ std::string env(const char *name, const char *fallback)
 #if defined(RG_HAS_SDLGPU)
 bool g_hasMenu = false;
 dq8::ui::Overlay *g_menu = nullptr;
+// The menu's pause (F2, or with the window's focus lost): the mouse camera
+// lets the mouse go meanwhile.
+std::atomic<bool> g_hostPaused{false};
 PS2Runtime *g_runtime = nullptr;
 
 // The game's speed: the menu's (fast-forward, 0 unpaced) times a quick
@@ -89,11 +99,24 @@ void applySpeed()
     }
 }
 
+// RG_SPEED (createMenu): set once its pad read comes.
+double g_scriptedSpeed = 1.0;
+uint64_t g_scriptedSpeedFrom = 0u;
+bool g_scriptedSpeedPending = false;
+
 void followQuickScenes()
 {
     if (!g_runtime)
     {
         return;
+    }
+    // Pad reads, the clock RG_INPUT_CLOCK=pad scripts count, not vsyncs.
+    if (g_scriptedSpeedPending &&
+        ps2_stubs::getPadDebugSnapshot().ports[0][0].readCount >= g_scriptedSpeedFrom)
+    {
+        g_scriptedSpeedPending = false;
+        g_menuSpeed = g_scriptedSpeed;
+        applySpeed();
     }
     const double scene = rg::quickscenes::speed(g_runtime->memory().getRDRAM());
     if (scene != g_sceneSpeed)
@@ -143,6 +166,115 @@ rg::buttons::Glyph glyphFor(const dq8::gfx::PadBinding &binding, SDL_GamepadType
     }
 }
 
+// What the game's text shows for a key or mouse button: a letter or digit,
+// a short name (TAB, ESC...), or a picture (the mouse's buttons, the space
+// bar, the arrows).
+rg::buttons::KeyLabel keyLabelFor(const dq8::gfx::PadBinding &binding)
+{
+    using dq8::gfx::PadBinding;
+    using rg::buttons::KeyIcon;
+    rg::buttons::KeyLabel label;
+    const auto text = [&](const char *value) { std::snprintf(label.text, sizeof(label.text), "%s", value); };
+    if (binding.kind == PadBinding::Kind::Mouse)
+    {
+        switch (binding.code)
+        {
+        case SDL_BUTTON_LEFT:
+            label.icon = KeyIcon::MouseLeft;
+            break;
+        case SDL_BUTTON_RIGHT:
+            label.icon = KeyIcon::MouseRight;
+            break;
+        case SDL_BUTTON_MIDDLE:
+            label.icon = KeyIcon::MouseMiddle;
+            break;
+        default:
+            text(binding.code == SDL_BUTTON_X1 ? "M4" : "M5");
+            break;
+        }
+        return label;
+    }
+    if (binding.kind == PadBinding::Kind::Wheel)
+    {
+        text("WHL");
+        return label;
+    }
+    if (binding.kind != PadBinding::Kind::Key)
+    {
+        text("?");
+        return label;
+    }
+    const auto scancode = static_cast<SDL_Scancode>(binding.code);
+    switch (scancode)
+    {
+    case SDL_SCANCODE_SPACE:
+        label.icon = KeyIcon::Space;
+        return label;
+    case SDL_SCANCODE_UP:
+        label.icon = KeyIcon::Up;
+        return label;
+    case SDL_SCANCODE_DOWN:
+        label.icon = KeyIcon::Down;
+        return label;
+    case SDL_SCANCODE_LEFT:
+        label.icon = KeyIcon::Left;
+        return label;
+    case SDL_SCANCODE_RIGHT:
+        label.icon = KeyIcon::Right;
+        return label;
+    case SDL_SCANCODE_TAB:
+        text("TAB");
+        return label;
+    case SDL_SCANCODE_ESCAPE:
+        text("ESC");
+        return label;
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER:
+        text("ENT");
+        return label;
+    case SDL_SCANCODE_BACKSPACE:
+        text("BSP");
+        return label;
+    case SDL_SCANCODE_LSHIFT:
+    case SDL_SCANCODE_RSHIFT:
+        text("SHF");
+        return label;
+    case SDL_SCANCODE_LCTRL:
+    case SDL_SCANCODE_RCTRL:
+        text("CTL");
+        return label;
+    case SDL_SCANCODE_LALT:
+    case SDL_SCANCODE_RALT:
+        text("ALT");
+        return label;
+    case SDL_SCANCODE_CAPSLOCK:
+        text("CAP");
+        return label;
+    default:
+        break;
+    }
+    // Otherwise the first letters and digits of what the player's keyboard
+    // prints on the key (an AZERTY's A where a QWERTY has Q), or of its US
+    // name when that has none (the AZERTY's &, whose key also says 1):
+    // "Keypad 7" is 7, F10 is F10, up to three.
+    const auto take = [&](std::string name) {
+        if (name.rfind("Keypad ", 0) == 0)
+            name = name.substr(7);
+        size_t length = 0;
+        for (const char c : name)
+        {
+            if (length < 3 && std::isalnum(static_cast<unsigned char>(c)))
+                label.text[length++] = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        label.text[length] = '\0';
+        return length > 0;
+    };
+    if (!take(SDL_GetKeyName(SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false))) &&
+        !take(SDL_GetScancodeName(scancode)))
+        text("?");
+    return label;
+}
+
 bool xboxLike(SDL_GamepadType type)
 {
     switch (type)
@@ -161,8 +293,10 @@ bool xboxLike(SDL_GamepadType type)
 }
 
 // Twice a second, the pictures for Cross, Circle, Square, Triangle, L1, R1,
-// L2 and R2: each one's first controller binding as the controller driving
-// the game names it, the PlayStation's with the keyboard alone.
+// L2 and R2: each one's first binding on what the player last pressed, the
+// keyboard and mouse or the controller driving the game, as that controller
+// names it (a PlayStation or Nintendo pad keeps the game's). Before any
+// press, the game's own: scripted runs with no controller keep their frames.
 void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
 {
     static auto last = std::chrono::steady_clock::time_point{};
@@ -171,8 +305,13 @@ void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
         return;
     last = now;
     rg::buttons::Glyphs glyphs{};
+    rg::buttons::KeyLabels labels{};
     if (g_controllerButtons.load(std::memory_order_relaxed))
     {
+        using dq8::gfx::PadInput;
+        constexpr PadInput kInputs[rg::buttons::kButtons] = {PadInput::Cross, PadInput::Circle, PadInput::Square,
+                                                             PadInput::Triangle, PadInput::L1, PadInput::R1,
+                                                             PadInput::L2, PadInput::R2};
         dq8::gfx::SdlPadInput &pad = backend.padInput();
         bool active = false;
         SDL_GamepadType type = SDL_GAMEPAD_TYPE_UNKNOWN;
@@ -185,12 +324,24 @@ void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
                 break;
             }
         }
-        if (active && xboxLike(type))
+        const bool keyboard = pad.config().keyboardEnabled && pad.keyboardMouseAt() > pad.controllerAt();
+        if (keyboard)
         {
-            using dq8::gfx::PadInput;
-            constexpr PadInput kInputs[rg::buttons::kButtons] = {PadInput::Cross, PadInput::Circle, PadInput::Square,
-                                                                 PadInput::Triangle, PadInput::L1, PadInput::R1,
-                                                                 PadInput::L2, PadInput::R2};
+            for (size_t i = 0; i < rg::buttons::kButtons; ++i)
+            {
+                for (const dq8::gfx::PadBinding &binding : pad.config().slots(kInputs[i], true))
+                {
+                    if (binding.bound())
+                    {
+                        glyphs[i] = rg::buttons::Glyph::Key;
+                        labels[i] = keyLabelFor(binding);
+                        break;
+                    }
+                }
+            }
+        }
+        else if (active && xboxLike(type))
+        {
             for (size_t i = 0; i < rg::buttons::kButtons; ++i)
             {
                 for (const dq8::gfx::PadBinding &binding : pad.config().slots(kInputs[i], false))
@@ -204,7 +355,7 @@ void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
             }
         }
     }
-    rg::buttons::setGlyphs(glyphs);
+    rg::buttons::setGlyphs(glyphs, labels);
 }
 
 // What the menu's game options switch, and the game's Settings screen's
@@ -226,8 +377,16 @@ void applyGameOption(const std::string &key, bool on)
         rg::loading::setInstantRecap(on);
     else if (key == "instant_text")
         rg::instanttext::setEnabled(on);
+    else if (key.rfind("texture_pack_", 0) == 0)
+        rg::texturePack::setPackEnabled(key.substr(13), on);
     else if (key == "japanese_voices")
         rg::voicelanguage::setEnabled(on);
+    else if (key == "director_cut_balance")
+        rg::dcbalance::setBalance(on);
+    else if (key == "director_cut_enemies")
+        rg::dcbalance::setEnemyBehavior(on);
+    else if (key == "director_cut_party_ai")
+        rg::dcbalance::setPartyAi(on);
     else if (key == "full_bag_to_storage")
         rg::inventory::setFullBagToStorage(on);
     else if (key == "stack_limit_99")
@@ -244,10 +403,12 @@ void applyGameOption(const std::string &key, bool on)
         rg::freecamera::setEnabled(on);
     else if (key == "faster_camera")
         rg::cameraview::setFasterTurn(on);
+    else if (key == "mouse_camera")
+        rg::mousecamera::setEnabled(on);
+    else if (key == "mouse_invert_vertical")
+        rg::mousecamera::setInvertVertical(on);
     else if (key == "fast_transporter")
-        rg::quickscenes::setEnabled(rg::quickscenes::Scene::Transporter, on);
-    else if (key == "fast_revelation")
-        rg::quickscenes::setEnabled(rg::quickscenes::Scene::Revelation, on);
+        rg::quickscenes::setFastTransporter(on);
 }
 
 void applyGameNumber(const std::string &key, int value)
@@ -257,6 +418,8 @@ void applyGameNumber(const std::string &key, int value)
         rg::cameraview::setFieldOfView(value);
     else if (key == "camera_distance")
         rg::cameraview::setDistance(value);
+    else if (key == "mouse_sensitivity")
+        rg::mousecamera::setSensitivity(value);
     else if (key == "draw_distance")
         rg::drawdistance::setPercent(value);
     else if (key == "minimap_size")
@@ -277,6 +440,85 @@ void applyGameNumber(const std::string &key, int value)
         rg::shopprices::setPercent(value);
     else if (key == "action_gauge")
         rg::battlerates::setActionGauge(value);
+    else if (key == "text_language")
+        rg::textlanguage::setPreferred(value);
+}
+
+// The text's languages, numbered as Language > Text's choices.
+constexpr int kTextLanguages = 5;
+
+// What the discs' install scripts left in the disc folder. Looked at again
+// when the menu asks after a second without asking (a page shown again),
+// not on each of its frames: a disc installed while the game runs counts
+// the next time its page is opened.
+struct Installed
+{
+    bool balance = false;                  // Director's Cut balance
+    bool files = false;                    // Director's Cut enemy behavior and party AI
+    bool japanese = false;                 // Undub
+    bool languages[kTextLanguages] = {};   // Text (English always)
+    bool european = false;                 // any of those but English
+};
+
+const Installed &installed()
+{
+    static Installed known;
+    static std::chrono::steady_clock::time_point asked;
+    static bool ever = false;
+    const auto now = std::chrono::steady_clock::now();
+    if (!ever || now - asked >= std::chrono::seconds(1))
+    {
+        known.balance = rg::dcbalance::balanceInstalled();
+        known.files = rg::dcbalance::filesInstalled();
+        known.japanese = rg::voicelanguage::installed();
+        known.european = false;
+        for (int language = 0; language < kTextLanguages; ++language)
+        {
+            known.languages[language] = rg::textlanguage::installed(language);
+            known.european = known.european || (language != 0 && known.languages[language]);
+        }
+        ever = true;
+    }
+    asked = now;
+    return known;
+}
+
+// A game option that does nothing now, as the line the menu shows under it
+// greyed out (HostServices::gameOptionBlocked): what would make it work.
+// `aspect` is Display > Aspect ratio as the presenter has it, the one
+// rg::widescreen::shownWide() comes from. The window's thread, the menu's.
+const char *gameOptionBlocked(const std::string &key, dq8::gfx::SdlGpuAspect aspect)
+{
+    if ((key == "mouse_sensitivity" || key == "mouse_invert_vertical") && !rg::mousecamera::enabled())
+        return "Turn on Mouse camera for this.";
+    if (key == "widescreen" && !rg::widescreen::shownWide())
+    {
+        // Under Auto or Stretch the window is no wider than 4:3 (a 4:3
+        // screen, or a tall window).
+        return aspect == dq8::gfx::SdlGpuAspect::Standard || aspect == dq8::gfx::SdlGpuAspect::Native
+                   ? "Set Display > Aspect ratio to Auto for this."
+                   : "Needs a window wider than 4:3, or Display > Aspect ratio on 16:9.";
+    }
+    const bool balance = key == "director_cut_balance";
+    if (balance || key == "director_cut_enemies" || key == "director_cut_party_ai" || key == "japanese_voices")
+    {
+        const Installed &have = installed();
+        const bool there = balance ? have.balance : key == "japanese_voices" ? have.japanese : have.files;
+        if (!there)
+            return have.japanese ? "Run Install-Undub.bat again for this: it adds these files."
+                                 : "Needs your Japanese disc: run Install-Undub.bat.";
+    }
+    if (key == "text_language" && !installed().european)
+        return "Needs your European disc: run Install-European.bat.";
+    return nullptr;
+}
+
+// A button of a game option that would do nothing
+// (HostServices::gameChoiceBlocked): a language Install-European.bat did not
+// make (its --languages can leave some out).
+bool gameChoiceBlocked(const std::string &key, int value)
+{
+    return key == "text_language" && value >= 0 && value < kTextLanguages && !installed().languages[value];
 }
 
 // F9 and F10 presses, counted as SDL queues their key-down events. pump()
@@ -328,6 +570,22 @@ bool SDLCALL countMarkKeys(void *, SDL_Event *event)
     return true;
 }
 
+// "Walk (hold)" (Controls): the left stick at 70% of its push each way, after
+// the squaring (src/stick_response.cpp). The game drops the first 50 of an
+// axis's 128 steps and runs from a length of 0.9, so a key's full push
+// walks, at 0.51 straight and 0.72 on a diagonal.
+uint32_t walkSticks(uint32_t sticks)
+{
+    constexpr float kWalkPush = 0.7f;
+    const auto scaled = [](uint32_t byte) {
+        const long value = std::lround(128.0f + (static_cast<float>(byte) - 128.0f) * kWalkPush);
+        return static_cast<uint32_t>(std::clamp(value, 0L, 255L));
+    };
+    const uint32_t lx = scaled((sticks >> 8u) & 0xFFu);
+    const uint32_t ly = scaled(sticks & 0xFFu);
+    return (sticks & 0xFFFF0000u) | (lx << 8u) | ly;
+}
+
 // Called once per frame by the runtime when the backend owns the window:
 // services SDL events (the menu takes its own first) and hands the host pad
 // to the runtime.
@@ -348,9 +606,20 @@ bool pump(void *userData)
         {
         }
     }
+    // In the game's menus the right click and Esc (on Triangle) go back and
+    // the wheel moves up and down; in play Esc opens the menu. Before the
+    // events are read.
+    backend->padInput().setInMenus(g_runtime != nullptr &&
+                                     rg::mousecamera::inGameMenu(g_runtime->memory().getRDRAM()));
     if (!backend->pumpEvents())
     {
         return false;
+    }
+    {
+        const dq8::gfx::SdlPadInput &pad = backend->padInput();
+        rg::mousecamera::pump(backend->window(),
+                              (g_menu && g_menu->capturesInput()) || g_hostPaused.load(std::memory_order_relaxed),
+                              {pad.keyboardMouseAt(), pad.mouseMotionAt(), pad.controllerAt()});
     }
     updateButtonGlyphs(*backend);
     // The shape the picture takes with Widescreen on, for the game's camera:
@@ -405,22 +674,10 @@ bool pump(void *userData)
     // the menu alone), kept as the menu's own.
     for (rg::settingspages::Change change; g_menu && rg::settingspages::takeChange(change);)
     {
-        if (change.key == "sides")
-            g_menu->setSides(static_cast<dq8::gfx::SdlGpuSides>(change.value));
-        else if (change.number)
+        if (change.number)
             g_menu->setGameNumberValue(change.key, change.value);
         else
             g_menu->setGameOptionValue(change.key, change.value != 0);
-    }
-    // Display > Borders, which the pages show too, as the menu has it.
-    if (g_menu)
-    {
-        static int sidesWas = -1;
-        if (const int sides = static_cast<int>(g_menu->settings().display.sides); sides != sidesWas)
-        {
-            sidesWas = sides;
-            rg::settingspages::noteNumber("sides", sides);
-        }
     }
     followQuickScenes();
     // The free camera turned on or off, by F6, either menu or Start: a toast.
@@ -457,7 +714,12 @@ bool pump(void *userData)
     }
     uint32_t held = 0u, pressed = 0u, sticks = 0u;
     backend->hostPadState(held, pressed, sticks);
-    ps2PadPublishHostState(held, pressed, rg::pad::shapeSticks(sticks));
+    sticks = rg::pad::shapeSticks(sticks);
+    if (backend->padInput().walking())
+    {
+        sticks = walkSticks(sticks);
+    }
+    ps2PadPublishHostState(held, pressed, sticks);
     return true;
 }
 
@@ -549,12 +811,15 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     dq8::ui::HostServices host;
     host.version = RG_APP_VERSION;
     host.revision = RG_REVISION;
+    // Steam sets SteamDeck=1 on the Deck, natively and under Proton.
+    host.steamDeck = env("SteamDeck", "0") == "1";
     // RG_MUTE=1 keeps the game silent whatever the menu's volume says.
     const bool mute = env("RG_MUTE", "0") != "0";
     host.setVolume = [mute](float volume) { ps2_native_iop::setVolume(mute ? 0.0f : volume); };
     // The sound driver runs in step with the audio device, so stopping the
     // device stops the IOP along with the EE's clock.
     host.setPaused = [&runtime](bool paused) {
+        g_hostPaused.store(paused, std::memory_order_relaxed);
         runtime.eeScheduler().setHostPaused(paused);
         ps2_native_iop::setPaused(paused);
     };
@@ -563,11 +828,44 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         g_menuSpeed = speed;
         applySpeed();
     };
+    // RG_SPEED=N[@READ]: the game's speed, as the menu's fast-forward (0
+    // unpaced), from the start or from that pad read on, for scripted runs
+    // whose window is hidden and so never runs the menu. A scripted walk
+    // keeps to its timing only at the speed it was written for: start it
+    // once the input is done. A value that does not parse is refused, not
+    // taken as unpaced.
+    if (const std::string speed = env("RG_SPEED", ""); !speed.empty())
+    {
+        const char *text = speed.c_str();
+        char *end = nullptr;
+        const double value = std::strtod(text, &end);
+        bool ok = end != text && value >= 0.0;
+        uint64_t from = 0u;
+        if (ok && *end == '@')
+        {
+            const char *digits = end + 1;
+            ok = *digits >= '0' && *digits <= '9';
+            from = std::strtoull(digits, &end, 10);
+        }
+        ok = ok && *end == '\0';
+        if (ok)
+        {
+            g_scriptedSpeed = value;
+            g_scriptedSpeedFrom = from;
+            g_scriptedSpeedPending = true;
+            std::fprintf(stderr, "[speed] RG_SPEED: %g%s from pad read %llu\n", value,
+                         value == 0.0 ? " (unpaced)" : "", (unsigned long long)from);
+        }
+        else
+            std::fprintf(stderr, "[speed] RG_SPEED=\"%s\" ignored: N or N@READ, N >= 0 (0 unpaced)\n", text);
+    }
     // The game's flips: frames it finished, not presents, which go on while
     // it is paused.
     host.completedRenders = [] { return guestFlips(); };
     host.guestFrame = [] { return ps2PadCurrentGuestFrame(); };
     // The game's own switches, on the menu's Game page, in its sections.
+    // Numbers against the game's own (100) show as multipliers, 1.0x.
+    constexpr const char *kTimes = dq8::ui::kMultiplierFormat;
     host.gameOptions = {
         {"sixty_fps", "60 frames per second",
          "The game runs at 60 frames a second instead of its own 30, its logic still at the PS2's pace; movies "
@@ -578,27 +876,37 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "ratio on Auto the picture fills the window, whatever its shape, once a game is loaded.",
          false},
         {"minimap_size", "Minimap size",
-         "The map in the field's corner, against the game's size (100%), smaller toward its corner. The "
+         "The map in the field's corner, against the game's size (1.0x), smaller toward its corner. The "
          "transporter menu's map stays as it is.",
-         false, 50, 100, 100, "%d%%", 5},
+         false, 50, 100, 100, kTimes, 5},
         {"compass_size", "Compass size",
-         "The compass in the field's corner, against the game's size (100%), smaller toward its corner.", false, 50,
-         100, 100, "%d%%", 5},
+         "The compass in the field's corner, against the game's size (1.0x), smaller toward its corner.", false, 50,
+         100, 100, kTimes, 5},
         {"field_of_view", "Field of view",
          "How wide the camera sees while exploring and in battle, in degrees across a 4:3 picture (the game's is "
          "52); a wide picture adds to it. Scenes keep their own camera.",
          false, 40, 90, 52, "%d degrees", 2},
         {"camera_distance", "Camera distance",
-         "How far the camera stays from the party, against the game's (100%).",
-         false, 70, 160, 100, "%d%%", 5},
+         "How far the camera stays from the party, against the game's (1.0x).",
+         false, 70, 160, 100, kTimes, 5},
         {"faster_camera", "Faster camera rotation",
          "The stick turns the camera twice as fast, exploring, in battle and in the first-person view. Otherwise "
          "it turns at the game's speed, at 60 frames a second as at 30.",
          false},
+        {"mouse_camera", "Mouse camera",
+         "The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right "
+         "looks right and up looks up, whatever the game's camera options. Locked on a target in battle it only "
+         "turns, as with the stick. Once you press a key or click, the mouse stays in the window with the cursor "
+         "hidden; F1, the pause (F2), Alt+Tab or a few seconds on the controller alone let it go.",
+         true},
+        {"mouse_sensitivity", "Mouse sensitivity", "How far the mouse turns the camera, against 1.0x.", false, 25,
+         400, 100, kTimes, 25},
+        {"mouse_invert_vertical", "Invert mouse vertical",
+         "Moving the mouse up tilts the camera the other way.", false},
         {"draw_distance", "Draw distance",
-         "How far away the scenery and the objects are still drawn, against the game's (100%), the fog thinned "
+         "How far away the scenery and the objects are still drawn, against the game's (1.0x), the fog thinned "
          "in step. Most of Salgin has no limit to raise; the open areas gain more. From the next map loaded.",
-         false, 100, 400, 100, "%d%%", 25},
+         false, 100, 400, 100, kTimes, 25},
         {"free_camera", "Free camera (F6)",
          "The camera leaves the party, which stands still, and the controller moves it: the left stick moves the "
          "point it looks at (Square held, faster; L2 held, up and down), the right stick turns it around that "
@@ -606,9 +914,9 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "start.",
          false, 0, 0, 0, "", 1, false},
         {"controller_buttons", "Controller's buttons",
-         "The buttons shown in the game's text follow the controller in use: an Xbox controller's A, B, X, Y, LB, "
-         "RB, LT and RT, as each button is bound in Controls. Off, or with a PlayStation or Nintendo controller "
-         "or the keyboard, the game's PlayStation buttons.",
+         "The buttons shown in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, "
+         "RB, LT and RT, or the keys and mouse buttons, as each button is bound in Controls. Off, or with a "
+         "PlayStation or Nintendo controller, the game's PlayStation buttons.",
          true},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},
@@ -645,44 +953,60 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "made with it still loads without it: the seventh page's items are kept, hidden, until it is on again. "
          "Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
-        {"fast_revelation", "Fast Revelation Flow",
-         "Items going into a Revelation Flow cell, the zoom, the glow and the ability won, play at up to twice "
-         "the speed.",
-         false},
         {"encounter_rate", "Encounter rate",
-         "How often random battles come, against the game's (100%); 0% turns them off. The story's battles stay.",
-         false, 0, 300, 100, "%d%%", 10},
+         "How often random battles come, against the game's (1.0x); 0.0x turns them off. The story's battles stay.",
+         false, 0, 300, 100, kTimes, 10},
         {"battle_experience", "Experience from battles",
-         "The experience a won battle gives, against the game's (100%), up to the game's 9999 a battle.",
-         false, 0, 500, 100, "%d%%", 25},
+         "The experience a won battle gives, against the game's (1.0x), up to the game's 9999 a battle.",
+         false, 0, 500, 100, kTimes, 25},
         {"battle_money", "Money from battles",
-         "The money defeated enemies leave, against the game's (100%). Selling, chests and rewards stay as they are.",
-         false, 0, 500, 100, "%d%%", 25},
+         "The money defeated enemies leave, against the game's (1.0x). Selling, chests and rewards stay as they are.",
+         false, 0, 500, 100, kTimes, 25},
         {"item_drops", "Item drops",
-         "How likely defeated enemies are to leave each of their items, against the game's (100%): most have a 2 "
-         "to 10% chance, which 1000% makes 20 to 100%; 0% for none. A battle still gives three kinds of items at "
-         "most, as the game does.",
-         false, 0, 1000, 100, "%d%%", 50},
+         "How likely defeated enemies are to leave each of their items, against the game's (1.0x): most have a 2 "
+         "to 10% chance, which 10.0x makes 20 to 100%; 0.0x for none. A battle still gives three kinds of items "
+         "at most, as the game does.",
+         false, 0, 1000, 100, kTimes, 50},
         {"weapon_growth", "Weapon growth",
-         "How fast weapons grow in won battles, against the game's (100%): each battle fills a weapon's gauge by "
-         "1 (15 to full), then raises one of its attributes by 1, which 300% makes 3.",
-         false, 100, 1000, 100, "%d%%", 100},
+         "How fast weapons grow in won battles, against the game's (1.0x): each battle fills a weapon's gauge by "
+         "1 (15 to full), then raises one of its attributes by 1, which 3.0x makes 3.",
+         false, 100, 1000, 100, kTimes, 100},
         {"shop_prices", "Shop prices",
-         "What shops ask for their items, against the game's (100%). Below 100% nothing sells for more than it "
+         "What shops ask for their items, against the game's (1.0x). Below 1.0x nothing sells for more than it "
          "costs, so buying and selling back makes no money.",
-         false, 10, 200, 100, "%d%%", 10},
+         false, 10, 200, 100, kTimes, 10},
         {"action_gauge", "Action gauge speed",
-         "How fast the party's action gauge fills again in battle, against the game's (100%).",
-         false, 25, 400, 100, "%d%%", 25},
+         "How fast the party's action gauge fills again in battle, against the game's (1.0x).",
+         false, 25, 400, 100, kTimes, 25},
+        {"director_cut_balance", "Director's Cut balance",
+         "Battles with the Japanese Director's Cut's numbers: smaller enemy groups, more money, some enemies "
+         "weaker and the Area Masters stronger, bosses never knocked down. Needs your Japanese disc "
+         "(Install-Undub.bat). Takes effect the next time the game starts.",
+         false, 0, 0, 0, "", 1, true, true},
+        {"director_cut_enemies", "Director's Cut enemy behavior",
+         "The Japanese Director's Cut's enemy attacks and AI: enemies face you before they attack, some attack "
+         "from farther away. Needs your Japanese disc (Install-Undub.bat). Takes effect the next time the game "
+         "starts.",
+         false, 0, 0, 0, "", 1, true, true},
+        {"director_cut_party_ai", "Director's Cut party AI",
+         "The Japanese Director's Cut's ally AI: an ally low on health sometimes falls back to the leader and "
+         "guards. Needs your Japanese disc (Install-Undub.bat). Takes effect the next time the game starts.",
+         false, 0, 0, 0, "", 1, true, true},
+        {"text_language", "Text",
+         "The game's text, menus and scenes, in one of the European release's languages, from your European disc "
+         "(SCES-54552): run Install-European.bat in the game's folder once and pick that disc's image. Without "
+         "it the text stays English. The voices stay as they are. Takes effect the next time the game starts.",
+         false, 0, 4, 0, "", 1, true, true, "language",
+         {"English", "Fran\xC3\xA7" "ais", "Deutsch", "Espa\xC3\xB1" "ol", "Italiano"}},
         {"japanese_voices", "Undub (Japanese voices)",
          "The voices in scenes and the movies come from your Japanese Director's Cut disc instead of the English "
          "ones; the text stays as it is. It needs that disc's files: run Install-Undub.bat in the game's folder "
          "once and pick your Japanese disc image. Without them the voices stay English. A few lines have no "
          "Japanese voice and play silent. Takes effect the next time the game starts.",
-         false, 0, 0, 0, "", 1, true, true, true},
+         false, 0, 0, 0, "", 1, true, true, "language"},
         {"native_renderer", "Native renderer",
          "Experimental, for development: the models and the post effects drawn by the PC's renderer instead of "
-         "through the emulation of the PS2's graphics chip, as that work lands; for now it changes nothing. Off, "
+         "through the emulation of the PS2's graphics chip, as that work lands; for now the models. Off, "
          "everything goes through the emulation. Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"dev_tools", "Developer tools",
@@ -693,6 +1017,22 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "not let you skip, which can leave the story out of order.",
          false},
     };
+    // One switch for each pack found, on a page of their own in the menu (F1 > Settings > Textures).
+    // A pack of 2D art alone does nothing at 1x.
+    std::unordered_set<std::string> flatPacks;
+    for (const rg::texturePack::PackInfo &pack : rg::texturePack::packs())
+    {
+        if (pack.wholes == 0u)
+            flatPacks.insert("texture_pack_" + pack.key);
+        dq8::ui::GameOption option{"texture_pack_" + pack.key, "Pack: " + pack.name,
+                                   "The game's art is drawn from this pack's " + std::to_string(pack.regions) +
+                                       " pictures, where it has them: 2D art above 1x, a PCSX2 pack's 3D at any "
+                                       "scale. Packs are read by name, a later one over an earlier one, textures\\hd "
+                                       "first.",
+                                   pack.enabled};
+        option.page = "textures";
+        host.gameOptions.push_back(std::move(option));
+    }
     host.gameSections = {
         {"sixty_fps", "Camera and view"},
         {"skip_opening", "Convenience"},
@@ -706,14 +1046,21 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         if (option.number())
         {
             rg::settingspages::setRange(option.key, option.minimum, option.maximum, option.step,
-                                        option.defaultNumber);
+                                        option.defaultNumber,
+                                        option.format == kTimes ? &dq8::ui::multiplierText : nullptr);
         }
     }
-    // And Display > Borders: Black, Blurred, Image.
-    rg::settingspages::setRange("sides", 0, 2, 1, 0);
     host.setGameOption = &applyGameOption;
     host.gameOptionState = [](const std::string &key) { return key == "free_camera" && rg::freecamera::enabled(); };
     host.setGameNumber = &applyGameNumber;
+    host.gameOptionBlocked = [&backend, flatPacks = std::move(flatPacks)](const std::string &key) -> const char * {
+        // The scale as Display shows it: one picked while paused counts.
+        const uint32_t scale = g_menu ? g_menu->shownResolutionScale() : backend.activeResolutionScale();
+        if (flatPacks.count(key) != 0u && scale <= 1u)
+            return "Its 2D art shows above 1x: raise Display > Internal resolution for this.";
+        return gameOptionBlocked(key, backend.displayOptions().aspect);
+    };
+    host.gameChoiceBlocked = &gameChoiceBlocked;
     host.newerRelease = [] {
         rg::updates::Release newer = rg::updates::newer();
         return std::make_pair(std::move(newer.version), std::move(newer.url));
@@ -779,6 +1126,12 @@ Setup::Setup(PS2Runtime &runtime)
         {
             settings.fullscreen = true;
         }
+        // Steam keeps the Deck's Steam button: View + Menu is the only way to
+        // the game's menu there, so it cannot be left off.
+        if (env("SteamDeck", "0") == "1")
+        {
+            settings.backStartOpensMenu = true;
+        }
         uint32_t runScale = settings.resolutionScale;
         if (const std::string scale = env("RG_GS_SCALE", ""); !scale.empty())
         {
@@ -807,6 +1160,7 @@ Setup::Setup(PS2Runtime &runtime)
         dq8::gfx::setPresentObserver(&debug::noteFrameTime);
         // Aspect ratio Auto follows the Widescreen option.
         sdl->setGameWidescreenQuery([] { return rg::widescreen::wide() ? 1 : 0; });
+        rg::texturePack::install(*sdl);
         sdl->setSideImageLoader(&loadBorderImage);
         if (noWindow)
         {
@@ -869,6 +1223,11 @@ Setup::~Setup()
 
 void Setup::install(PS2Runtime &runtime)
 {
+#if defined(RG_HAS_SDLGPU)
+    // RG_NATIVE_PIPELINE counts only under the native renderer flag; decided
+    // at its first use, after the menu's settings (docs/NATIVE-PIPELINE.md).
+    dq8::gfx::native::setOuterSwitch(&rg::nativerenderer::enabled);
+#endif
     std::unique_ptr<GSRasterBackend> backend = std::move(m_backend);
     if (!backend)
     {

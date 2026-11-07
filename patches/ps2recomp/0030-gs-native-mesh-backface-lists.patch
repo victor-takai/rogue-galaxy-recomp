@@ -1,0 +1,32 @@
+--- a/ps2xRuntime/include/runtime/gs/gs_types.h
++++ b/ps2xRuntime/include/runtime/gs/gs_types.h
+@@ -459,7 +459,8 @@
+         uint32_t backface = 0u;
+         uint32_t vertexCount = 0u;
+         // A triangle list (PRIM 3) rather than a strip: a triangle every
+-        // third vertex, tested by the same rule at that vertex.
++        // third vertex, tested by the same rule at that vertex (with
++        // backface, the sign -winding for every triangle).
+         uint32_t triangleList = 0u;
+         // The program clips the chunk (slot E, quad 81.x & 2) rather than
+         // leaving it whole: a renderer that transforms the strip itself
+@@ -617,13 +618,17 @@
+                 clipped[k] |= v.x * plane[0] + v.y * plane[1] + v.z * plane[2] + plane[3] < 0.0f ? 1u : 0u;
+         }
+     }
+-    float winding = mesh.header.winding;
++    // A program with a backface test judges a triangle list's triangles
++    // each with the sign of a strip's first triangle; a strip's alternate.
++    const bool lists = mesh.header.triangleList && mesh.header.backface;
++    float winding = lists ? -mesh.header.winding : mesh.header.winding;
+     for (uint32_t k = 1; k < count; ++k)
+     {
+         bool skip = gsNativeMeshSkips(mesh.header, points.data(), k, winding);
+         if (mesh.header.clips && k >= 2u)
+             skip = skip || clipped[k - 2u] || clipped[k - 1u] || clipped[k];
+-        winding = -winding;
++        if (!lists)
++            winding = -winding;
+         const bool kicks = mesh.header.triangleList ? k % 3u == 2u : k >= 2u;
+         if (kicks && !skip)
+         {

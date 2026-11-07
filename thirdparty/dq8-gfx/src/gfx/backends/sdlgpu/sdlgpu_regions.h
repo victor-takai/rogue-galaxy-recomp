@@ -27,6 +27,10 @@ struct RegionRequest {
     uint32_t y = 0u;
     // Its final RGBA, row by row, alpha as the GS's (0x80 opaque).
     const uint8_t *rgba = nullptr;
+    // The same, with every texel of the region as it is (`rgba` has the ones
+    // this draw never shows transparent): what a picture of the region
+    // should be made from, as another draw of it may show them.
+    const uint8_t *full = nullptr;
     // Host pixels per GS pixel of the target it is drawn into.
     uint32_t scale = 1u;
     // The border version: see SdlGpuBackend::setRegionReplacements.
@@ -38,6 +42,15 @@ struct RegionRequest {
     // opaque, and the glyph looks bolder than at 0x80 (Rogue Galaxy's menus
     // draw their letters at 0xFF, their black copies at 0x80).
     bool bold = false;
+    // A whole texture, not a region (3D art, a pack made for PCSX2): `texels`
+    // is the hash PCSX2 names it by (XXH3-64 of its GS blocks), `clut` the
+    // hash of its palette as PCSX2 makes it, `width` and `height` are the
+    // texture's size, and no pixels are given.
+    bool whole = false;
+    // For a whole texture, the block formats the GPU samples itself
+    // (kRegionBc1 and the others, or'd): the host may answer with its
+    // picture's blocks as they are, which keeps them compressed on the GPU.
+    int blockFormats = 0;
 };
 
 // The texels of margin a border or shadow version has past the region on
@@ -48,10 +61,23 @@ constexpr uint32_t kRegionBorderMargin = 2u;
 constexpr int kRegionNone = 0;
 constexpr int kRegionPending = 1;
 constexpr int kRegionReady = 2;
+// Or'd onto kRegionReady: draw the picture from its own texels, not filtered
+// across them (a pack of pixel art made at a whole multiple of the original).
+constexpr int kRegionNearest = 4;
+// Or'd onto kRegionReady for a whole texture whose request lists the format
+// in blockFormats: `rgba` holds the picture's 4x4 blocks of that format, a
+// row of them after another, its width and height multiples of 4.
+constexpr int kRegionBc1 = 8;
+constexpr int kRegionBc2 = 16;
+constexpr int kRegionBc3 = 32;
+constexpr int kRegionBc7 = 64;
+constexpr int kRegionBlocks = kRegionBc1 | kRegionBc2 | kRegionBc3 | kRegionBc7;
 
 // Fills `rgba` with the larger picture (alpha as the GS's), `width` by
 // `height`, a whole multiple of the region's size (with the border's margin
-// for a border or shadow version), 2 to 8, and answers kRegionReady; kRegionPending
+// for a border or shadow version), 2 to 8, and answers kRegionReady (with
+// kRegionNearest, if it is to be drawn unfiltered; with a kRegionBc* for
+// blocks); kRegionPending
 // while it is still making it (the region is drawn as it is meanwhile); or
 // kRegionNone, after which it is not asked about that content again.
 using RegionLookup = std::function<int(const RegionRequest &request, uint32_t &width, uint32_t &height,

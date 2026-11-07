@@ -9,6 +9,24 @@ Function addresses are for the US executable, named as in
 [RGDecomp](https://github.com/Dorgengoa/RGDecomp). Data addresses are
 guest addresses in the same executable.
 
+## What shipped
+
+The Japanese voices and movies, as the undub. `Install-Undub.bat` (through
+`tools/install/install-undub.ps1`) runs `python setup.py extract-japanese`.
+It checks that the image is the Japanese Director's Cut by its two voice
+indexes (`config/SCUS_974.90/japanese.json`), then copies the voice archives
+(`DATA0_1`, `DATA1_1`) and every movie whose bytes differ from the US one
+into `disc/JA`, about 3 GB. The menu's Settings > Language > "Undub
+(Japanese voices)" turns it on at the next start ([OPTIONS.md](OPTIONS.md)).
+`src/voice_language.cpp` then does what section 8 describes: the voice token
+reads `JA`, the voice archives are read from `JA/`, and a movie with a copy
+in `disc/JA/MOVIE` plays from there. The European text is done too, though
+not the way section 10 first planned: the PAL disc's files do not work in
+the US executable as they are, so `setup.py extract-european` builds US
+files with the PAL words in them ([DISC.md](DISC.md#the-european-disc-texts),
+`tools/disc/european.py`, `src/text_language.h`). The rest of this file is
+the study.
+
 ## 1. Two language tokens in every path
 
 Paths are resolved by `PathLocalize` (0x1C28C0), which `ArchiveGetFileByPath`
@@ -105,9 +123,10 @@ Text carries tags that the window turns into glyphs:
   (around 0x26E440 to 0x26E500) indexes this table by `code - 0x423` for the
   width and the plain width table (0x45C270) below that.
 
-Open: where the PAL draws those 64 glyphs from. The glyph tables (section 5)
-are byte-identical between the US and PAL fonts, so the picture lives either in
-the first texture page (which differs) or in PAL-only code.
+The PAL draws those 64 glyphs from the first texture page of each font (which
+differs from the US one; the glyph tables of section 5 are byte-identical): the
+nth accent is the cell of glyph code 107 + n, in place of the US page's kana and
+kanji.
 
 ## 5. Fonts
 
@@ -169,19 +188,25 @@ them: a movie carries its own sound.
 - **For the Japanese dub:** the same-size group needs only the Japanese file played
   in place of the US one (the picture is the same, and it has no baked-in
   subtitles to clash). For the other group, the Japanese file has the Japanese
-  picture too (titles, credits); the choice is the player's.
+  picture too (titles, credits); the choice is the player's. (Shipped: no
+  choice per movie. Every movie that differs is copied, and with the undub on
+  all of them play from the Japanese disc, titles and credits included.)
 
 ## 8. What the two requests need
 
 - **Voices from the Japanese disc:** make `!` read `JA`, and resolve the
   `wav/ja/...` files from the player's own Japanese `DATA*_1` archives (a
   second archive set, not merged into the US ones). The 63 names that exist
-  only in the US set need a fall back (to English, or to silence). Tested: with the voice token set to `JA` and the Japanese `DATA*_1`
+  only in the US set need a fall back (to English, or to silence); they play
+  silent. Tested: with the voice token set to `JA` and the Japanese `DATA*_1`
   archives in the disc folder, the Japanese voices play in a voiced scene, 44.1 kHz
-  included (`src/voice_language.cpp`, `RG_VOICE_LANG=JA`).
+  included (`src/voice_language.cpp`, `RG_VOICE_LANG=JA`). This is now the
+  menu's Undub switch; `RG_VOICE_LANG` stays as a developer's switch.
   Movies are separate (section 7): the loose `MOVIE\*.MVI` of the Japanese disc
   play in place of the US ones, file by file.
-- **Proposed way to mount the Japanese voices.** The runtime does not read an ISO: it
+- **How the Japanese voices are mounted** (proposed, then shipped this way;
+  `setup.py extract-japanese` writes the second folder, `disc/JA`, about 3 GB
+  with the movies). The runtime does not read an ISO: it
   serves `cdrom0:` from a folder and registers each file the game asks for under a
   pseudo sector number (`registerCdFile`, `sceCdSearchFile`). So the same model as
   the US disc works: setup extracts the player's Japanese `DATA0_1` and `DATA1_1`
@@ -190,8 +215,8 @@ them: a movie carries its own sound.
   Movies work the same way (`MOVIE\*.MVI` resolved to the second folder). The 63
   US-only lines then have no file; the first step is to leave them silent and check
   that the game tolerates a missing voice, the second is a retry on `en` if both
-  archive sets can be mounted.
-  Done as an experiment without touching the runtime: `CdDataSetNamesInit`
+  archive sets can be mounted. (They are left silent; the retry is not done.)
+  Done without touching the runtime: `CdDataSetNamesInit`
   (0x1C31A0) fills the two archive names of a layer (`DATA%d_0`, `DATA%d_1`, 32
   byte slots); renaming the second to `JA/DATA%d_1` makes the game look for
   `JA/DATA<layer>_1.HD6` and `.DAT`, and the disc folder serves `disc/JA/`.
@@ -201,13 +226,36 @@ them: a movie carries its own sound.
   per-language trio, from the PAL pack). Other `?` files (`menu`, `rc\param`)
   come the same way from the PAL archives. Needs the PAL font and the 64
   accent codes added to the US executable's tag lookup and layout code.
+  *As built (2026-11-04):* the PAL scripts are compiled for 236 script
+  commands against the US engine's 233, so the scenes keep the US script and
+  take only the PAL lines (their labels match in 242 of 248 scenes; a line the
+  PAL text lacks stays English). The other files are rebuilt the same way, the
+  US file as the frame: menu texts by label, the cfg tables (`.cfg.bin` game
+  tables, `.res.bin` layouts) string by string through PAL English, layouts'
+  sprite groups from PAL where they cut a PAL picture that differs from the US
+  one or give longer words more room, text boxes and text lines as wide as
+  PAL's (a menu-font line is a group of letter cells; a longer word overran it
+  onto the next lines). A group of an unchanged picture that PAL redrew stays
+  US: the load menu's slot buttons, narrowed in PAL for words it writes as text
+  where the US layout has a picture of "Slot 1"/"Slot 2". The pause screen's
+  pieces are a table in the executable (0x451CD0), given the PAL one's. The PAL
+  executable's larger menu and game data stacks (0x1900, 0x2F00, 0x12A00 blocks)
+  are given to the US one, and the menus' own font lists its accents as one byte
+  each. The accents are glyph codes 107 + n, the cells where PAL's first font
+  pages draw them; the US width table (0x44E851, four bytes a code) ends at code
+  106, right before the button tags' table (0x44EA00), so their widths are
+  answered by `FontGetCharWidth` and `FontGetGlyphWidth` hooks, not written
+  there (writing them broke `(X)` and the other button tags). The names' font
+  (floating names over people and enemies) has its letters on rows 22 pixels
+  apart in PAL against 18 in the US: `FontGetLineHeight` and `FontGetGlyphRect`
+  say 22 for it, as PAL's do.
 - Both need the player's own discs read at run time and a language setting; the
   chosen language and the disc paths have to reach the hook that fills the two
-  tokens.
+  tokens. (For the voices, the disc is read once, at install, into `disc/JA`,
+  and the setting is the Undub switch.)
 
 ## 9. Not yet studied
 
-- How PAL draws the 64 accent glyphs (texture cell source and layout).
 - Text overflow: how window width and line count are fixed per style, and how
   the longer European lines fit (the one scene text sampled was 11% longer in
   French than in English).
@@ -215,7 +263,9 @@ them: a movie carries its own sound.
   language (the labels in the sample did) and what else differs between the US
   and PAL scripts.
 - Which sound a movie plays: whether the game picks the file by name only, so a
-  Japanese `.MVI` can be handed over by the file layer (not tried).
+  Japanese `.MVI` can be handed over by the file layer (not tried). (Later:
+  done where the game queues the file, `SoundStreamQueueOpen` (0x1C0360), in
+  `src/voice_language.cpp`; the movie plays with its own sound.)
 - The `.mwv` codec itself (the stream player takes 44.1 kHz without trouble).
 - Menu and help text: which of the `?` files the US build opens at which
   moments.

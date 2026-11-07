@@ -1,14 +1,14 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 class PS2Runtime;
 
 // Three more pages in the game's own System > Settings, turned with L1 and
-// R1: the F1 menu's switches (On / Off), its numbers (Low takes a step off,
-// High adds one; Display > Borders among them, Low and High going through
-// Black, Blurred and Image) and its quick scenes (On / Off), each change
-// kept in settings.ini as the F1 menu's own are.
+// R1: the F1 menu's switches (On / Off), its numbers (- takes a step off,
+// + adds one) and its quick scenes (On / Off), each change kept in
+// settings.ini as the F1 menu's own are.
 //
 // The screen is the main menu's (its widgets in a list from the pointer at
 // 0x482360, found by id): ten row names, the text widget 0x1B4's ten strings;
@@ -23,9 +23,13 @@ class PS2Runtime;
 // read the cursor (MenuOptionsSelectState, 0x34FE70) and close it.
 //
 // Turning a page writes those fields: our strings (in memory of the
-// runtime's) for the names, the On and Off words (row 3's pieces) or the Low
-// and High ones (row 0's) for the choices, the rows past the page's hidden and
-// out of the cursor's reach. While a page of ours is up, the screen's own
+// runtime's) for the names, the On and Off words (row 3's pieces) for a
+// switch's choices, the rows past the page's hidden and out of the cursor's
+// reach. The picture has no words for a number (the game's Low and High
+// read badly there), so a number's choices draw their button alone (the
+// word's x set to -1, which ends a widget's sprite list) and a text list of
+// ours on it, "-" or "+" (UiDrawWidgets draws a widget's texts after every
+// sprite; flag 0x1000 centres them). While a page of ours is up, the screen's own
 // functions that would read or set the game's settings (MenuOptionsSetItem,
 // MenuOptionLoadValue, MenuOptionsRefresh) act on ours instead, and the
 // game's page comes back as it was when the screen opens or closes.
@@ -42,8 +46,11 @@ void setEnabled(bool on);
 // What the F1 menu set, for the pages to show (any thread).
 void noteOption(const std::string &key, bool on);
 void noteNumber(const std::string &key, int value);
-// A number's range, step and default, from the F1 menu's option.
-void setRange(const std::string &key, int minimum, int maximum, int step, int defaultValue);
+// A number's range, step and default, from the F1 menu's option, and how
+// its value reads when not as a plain number (the menu's multiplier: 1.0x).
+using NumberText = void (*)(int value, char *out, std::size_t size);
+void setRange(const std::string &key, int minimum, int maximum, int step, int defaultValue,
+              NumberText text = nullptr);
 
 // A change made on a page, for the main thread to hand the F1 menu, which
 // keeps and applies it; false when none is waiting.

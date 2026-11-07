@@ -12,6 +12,8 @@ if pgrep -x roguegalaxy > /dev/null; then echo "a game is running; not starting"
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-$(basename "$(ls "$XDG_RUNTIME_DIR"/wayland-? 2>/dev/null | head -1)")}
 export RG_VU1_HARVEST=${RG_VU1_HARVEST:-build/harvest} RG_VU1_NATIVE=${RG_VU1_NATIVE:-check}
+# The F1 menu's native renderer is off unless set: on for these runs (RG_VU1_NATIVE above still sets the VU1's mode).
+export RG_NATIVE_RENDERER=${RG_NATIVE_RENDERER:-1}
 export RG_VU1_NATIVE_CHECK_EVERY=${RG_VU1_NATIVE_CHECK_EVERY:-16}
 # The [gfx] stats every 600 frames, so a slow stretch shows in the log.
 export DQ8_GFX_STATS_EVERY=${DQ8_GFX_STATS_EVERY:-600}

@@ -59,8 +59,7 @@
 #   EXE=PATH     another build (a saved copy, for a before/after). A copy
 #                under a new file name ran with the driver's shader cache
 #                cold (the gate's first 29 pipelines in 495 ms, against 2 ms
-#                for the usual path). Not stopped by this script unless
-#                named roguegalaxy.exe: taskkill it afterwards.
+#                for the usual path).
 #   INPUT=FILE   another input script (default build/run/input_pad3.txt);
 #                PROFILE_START=, PROFILE_SECONDS= and AFTER_OVERRIDE= (the
 #                seconds kept running after the logged frame) go with it.
@@ -73,7 +72,14 @@
 cd "$(dirname "$0")/../.." || exit 1
 NAME=$1; SCALE=${2:-3}; FPS=${3:-60}
 if [ -z "$NAME" ]; then echo "usage: walk.sh NAME [SCALE] [FPS]"; exit 2; fi
-if tasklist | grep -qi "roguegalaxy.exe"; then echo "a game is running; not starting"; exit 2; fi
+# The game this script starts (this folder's build, or EXE): with it or any
+# other game running, a measurement would share the machine with it.
+GAME=${EXE:-build/game/src/roguegalaxy.exe}
+GAME_NAME=$(basename "$GAME")
+# tasklist cuts names at 25 characters. The name is matched as it is, in
+# lower case, by bash (Git Bash's grep 3.0 aborts on -iF with a bracket).
+RUNNING=$(tasklist); RUNNING=${RUNNING,,}; SHORT=${GAME_NAME:0:25}; SHORT=${SHORT,,}
+if [[ $RUNNING == *roguegalaxy.exe* || $RUNNING == *"$SHORT"* ]]; then echo "a game is running; not starting"; exit 2; fi
 mkdir -p build/run
 INPUT=${INPUT:-build/run/input_pad3.txt}
 if [ "$BATTLE" = "1" ]; then
@@ -190,22 +196,28 @@ AFTER=${AFTER_OVERRIDE:-$AFTER}
 # diverged until this).
 cat disc/*.DAT disc/*.HD6 > /dev/null 2>&1
 start=$(date +%s)
-# A forward-slash disc path marks this instance; the launchers pass a
-# backslash one, so the user's game is never the one stopped below.
-${EXE:-build/game/src/roguegalaxy.exe} disc/SCUS_974.90 > "build/run/$NAME.log" 2>&1 &
+# This instance, the one stopped below: its own executable, by its full
+# path, started with a forward-slash disc path (the launchers pass a
+# backslash one). The user's game, or another folder's, is never it. The
+# path goes in PowerShell's single quotes, where only an apostrophe (a
+# folder named after the Director's Cut) needs doubling.
+GAME_WIN=$(cygpath -w "$(realpath "$GAME")")
+GAME_WIN_PS=${GAME_WIN//\'/\'\'}
+THIS_GAME="Get-CimInstance Win32_Process | Where-Object { \$_.ExecutablePath -eq '$GAME_WIN_PS' -and \$_.CommandLine -like '*disc/SCUS*' }"
+"$GAME" disc/SCUS_974.90 > "build/run/$NAME.log" 2>&1 &
 # AFFINITY=HEX: the instance's processor mask (5555: one logical processor
 # per core of an 8-core SMT machine), to see whether two busy threads
 # sharing a core is what varies between runs.
 if [ -n "$AFFINITY" ]; then
     sleep 2
-    powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='roguegalaxy.exe'\" | Where-Object { \$_.CommandLine -like '*disc/SCUS*' } | ForEach-Object { (Get-Process -Id \$_.ProcessId).ProcessorAffinity = 0x$AFFINITY }"
+    powershell -NoProfile -Command "$THIS_GAME | ForEach-Object { (Get-Process -Id \$_.ProcessId).ProcessorAffinity = 0x$AFFINITY }"
 fi
 for i in $(seq 1 120); do
     sleep 3
     grep -q "frame logged\|\[crash\]\|fatal" "build/run/$NAME.log" && break
 done
 sleep $AFTER
-powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='roguegalaxy.exe'\" | Where-Object { \$_.CommandLine -like '*disc/SCUS*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }"
+powershell -NoProfile -Command "$THIS_GAME | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }"
 echo "--- $NAME: scale $SCALE fps-mode $FPS, $(( $(date +%s) - start )) s"
 grep -n "frame logged\|\[crash\]\|fatal\|VK_ERROR" "build/run/$NAME.log" | head -5
 grep -m1 "internal scale" "build/run/$NAME.log"

@@ -44,6 +44,14 @@ Bitmap plateLetter(Glyph glyph, bool second);
 int plateLetterX(Glyph glyph, bool second);
 constexpr int kPlateLetterY = 5;
 
+// A key's letter or digit (A to Z, 0 to 9, ?): `small` 3x5, else 5x7 (made
+// bold when drawn), dark on a keycap; null rows for any other character.
+Bitmap keyChar(char c, bool small);
+// A key's picture on its cap: the space bar 11x4, an arrow 7x7. Null rows
+// for any other (the mouse is drawn whole).
+Bitmap keyIcon(KeyIcon icon);
+constexpr int kKeyGap = 1;
+
 struct Rgb
 {
     int r, g, b;
@@ -53,6 +61,14 @@ struct Rgb
 Rgb faceColour(Glyph glyph);
 constexpr Rgb kLetterEdge{46, 46, 47};
 constexpr Rgb kPlateWhite{230, 230, 230};
+// The keys: a light cap, its front darker, a dark outline and letters; the
+// mouse light, its pressed button blue (the Xbox X's, kBlue in button_art.cpp).
+constexpr Rgb kKeyCap{228, 228, 226};
+constexpr Rgb kKeyFront{150, 150, 152};
+constexpr Rgb kKeyOutline{32, 32, 34};
+constexpr Rgb kKeyLetter{36, 36, 40};
+constexpr Rgb kMouseBody{232, 232, 230};
+constexpr Rgb kMousePressed{84, 148, 244};
 constexpr Rgb kPlateEdge{35, 35, 35};
 constexpr Rgb kPlateShade{51, 50, 48};
 // The plate's face, cleared of the PlayStation's letters (and the shade

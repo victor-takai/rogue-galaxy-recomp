@@ -15,6 +15,7 @@
 #include <xmmintrin.h>
 #endif
 
+#include "native_renderer.h"
 #include "gif_events.h"
 
 // The strip programs, piece by piece (byte addresses):
@@ -28,7 +29,9 @@
 //            mesh scales in quads 77, 78, 79 (the skinning B then sums the
 //            position over the vertex's bones);
 //   F 0x39d0 nothing unless quad 88.xy is set (scrolling UVs), or a
-//            sphere map from the normals;
+//            sphere map from the normals, or the wave (9df36d6a): the
+//            positions turned in x and y about (0, quad 84.x), by an angle
+//            growing with y, or a reflection map (ad209cd3);
 //   C 0x10e0 the vertex colors: the int16 color / 32768 * 256 times
 //            quad 82 * quad 42 + quad 83 * 128 (82.w scaled by 81.w), or
 //            that color alone, or lights on the normal;
@@ -92,8 +95,17 @@ constexpr Piece kCommon[] = {
 };
 constexpr const char *kCommonNames[] = {"A"};
 
+// The transporter beam's strips: its own A (c8143ab4: B, F, E, C and D in
+// that order, and no guard band setup for clipping), E a stub that returns
+// (2aa11602: nothing is clipped), F b1d29245 (the UV is a projection of the
+// position) and D 1bd1b5c0 (below).
+constexpr Piece kBeamA = {0x0320u, 0x0530u, 0xc8143ab4bcadef13ull};
+constexpr Piece kBeamE = {0x2620u, 0x2630u, 0x2aa116029d0c7d60ull};
+
 // The F pieces (A calls F after B, before C): d3f6f631 scrolls the UVs by
-// quad 88.xy (declined when set), 150031ee replaces them by a sphere map.
+// quad 88.xy (declined when set), 150031ee replaces them by a sphere map,
+// 9df36d6a bends the positions (below, the wave), ad209cd3 replaces the UVs
+// by a reflection map.
 struct UvPiece
 {
     Piece f;
@@ -102,25 +114,41 @@ struct UvPiece
 constexpr UvPiece kUvs[] = {
     {{0x39d0u, 0x3a68u, 0xd3f6f6312a13ff1cull}, Uv::Plain},
     {{0x39d0u, 0x3b70u, 0x150031ee1534d185ull}, Uv::SphereMap},
+    {{0x39d0u, 0x3b98u, 0x9df36d6a55fdb496ull}, Uv::Wave},
+    {{0x39d0u, 0x3d10u, 0xad209cd3feea3c5dull}, Uv::Reflect},
+    // UNVERIFIED: no recording holds this piece; read from the executable's code only.
+    {{0x39d0u, 0x3ab0u, 0x0594a06392e0fbb3ull}, Uv::Ramp},
+    // The beam's: recorded (a780f947d3b7787a, 31 vertices).
+    {{0x39d0u, 0x3c08u, 0xb1d2924548c74d41ull}, Uv::Beam},
+    // UNVERIFIED (nothing in the game was seen to run it): the positions pushed out along the normals.
+    {{0x39d0u, 0x3c48u, 0xa04c11ce76242bb6ull}, Uv::Swell},
 };
 
 // The B pieces. A calls B at 0x960, or with quad 76.z set at 0x960 plus
 // the chunk's TOP+1.w pairs: af62ff64 has the one entry; 26a933a5 has four,
 // 0 one bone, 2 two bones, 4 and 6 four (skin()).
-// 542b235c (the outlines') has the first two, its one-bone path positions
-// only.
+// 542b235c (the outlines' and the shadow volumes') has the same four, its
+// one-bone path positions only; its four-bone path (0x9b0, the skinned
+// shadow volumes' 4 and 6) skins as 26a933a5's and only scales the normals.
 struct DecodePiece
 {
     Piece b;
     Decode decode;
     uint8_t maxBones;
+    bool raw = false;         // the positions, normals and UVs arrive as floats and are only skinned
+    bool skinNormals = true;  // false: the normals are left as they are
 };
 constexpr DecodePiece kDecodes[] = {
     {{0x0960u, 0x0a38u, 0xaf62ff64ac67b45full}, Decode::Plain, 0},
     {{0x0960u, 0x1020u, 0x26a933a58f99a9daull}, Decode::Skinned, 4},
-    {{0x0960u, 0x0f30u, 0x542b235c4775a710ull}, Decode::Skinned, 2},
+    {{0x0960u, 0x0f30u, 0x542b235c4775a710ull}, Decode::Skinned, 4},
     // Positions only, one entry (a shadow volume B).
     {{0x0960u, 0x09e0u, 0xa293001f25f94532ull}, Decode::Plain, 0},
+    // UNVERIFIED (nothing was seen to run them): skinning of positions (and
+    // for 36d686cd the normals) the EE uploaded as floats, in place; the
+    // entries as 26a933a5's (1, 2, 4 bones).
+    {{0x0960u, 0x0e58u, 0x8912329060d1df1eull}, Decode::Skinned, 4, true, false},
+    {{0x0960u, 0x0f98u, 0x36d686cd420c9469ull}, Decode::Skinned, 4, true, true},
 };
 
 // The outline program's A (header with PRIM 1, lines; calls B, then C) and
@@ -167,6 +195,13 @@ constexpr ColorPiece kColors[] = {
     // 91f542d0's lighting times the vertex colors (87.y & 0x100: a loop of
     // its own, not read).
     {{0x10e0u, 0x14a0u, 0x2460e5281034f152ull}, Color::LitVertex},
+    // UNVERIFIED (no recording holds it; the oracle's synthetic check agrees
+    // with the interpreter): 91f542d0 and four point lights.
+    {{0x10e0u, 0x1720u, 0x127ca0b4834b2363ull}, Color::LitPoint},
+    // UNVERIFIED likewise: that, with each vertex's int16 color c (/ 32768 *
+    // 256): max(lit * c, -(lit + c * 128)), or with 87.y & 0x100 the signs
+    // swapped: max(-(lit * c), lit + c * 128).
+    {{0x10e0u, 0x1848u, 0xe3bca52a27b10195ull}, Color::LitPointVertex},
 };
 
 // The D pieces. (a786efabfa469ada is also the name of its compiled routine,
@@ -176,6 +211,10 @@ struct Finish
     Piece d;
     Cull cull;
     bool depthBounds;
+    bool bounds = true; // false: the depth is scaled but 98 and 99 are left alone
+    bool affine = false; // ST kept as it is, Q written as 1
+    bool rawColor = false; // the colors are floats read from the C section, no ST written
+    bool white = false;  // the color is (128, 128, 128) and the vertex's alpha
 };
 constexpr Finish kFinishes[] = {
     {{0x1900u, 0x20c8u, 0xa786efabfa469adaull}, Cull::GuardBandAndBackface, false},
@@ -188,6 +227,17 @@ constexpr Finish kFinishes[] = {
     // The guard band and backfaces, and that depth and bounds; triangle
     // lists have a path of their own (declined).
     {{0x1900u, 0x21e0u, 0x93cfd2f5a1056991ull}, Cull::GuardBandAndBackface, true},
+    // UNVERIFIED (no recording holds it; read from the code only): the guard
+    // band and the scaled depth as 634107b0, without the bounds, and ST not
+    // multiplied by Q (the GS sees Q = 1: the texture is not perspective-correct).
+    {{0x1900u, 0x1be0u, 0x2feaa9a15b81d8baull}, Cull::GuardBand, true, false, true},
+    // UNVERIFIED: a786efab's guard band and backfaces, but the colors are floats
+    // read from the colors section (103.w) and no ST is written (an untextured
+    // draw); strips (lists are declined as they are there).
+    {{0x1900u, 0x2250u, 0x312d076bfbf37fb2ull}, Cull::GuardBandAndBackface, false, true, false, true},
+    // The beam's D, recorded: that, with the color (128, 128, 128) and the
+    // vertex's alpha, clamped to quad 39.
+    {{0x1900u, 0x1be0u, 0x1bd1b5c0cd88b246ull}, Cull::GuardBand, true, false, true, false, true},
 };
 
 // The program of these pieces, made once and kept: its name says what each
@@ -200,7 +250,8 @@ const Program *intern(const Program &shape)
     const std::lock_guard<std::mutex> lock(mutex);
     for (const Program &program : programs)
     {
-        if (program.cull == shape.cull && program.color == shape.color && program.depthBounds == shape.depthBounds &&
+        if (program.cull == shape.cull && program.color == shape.color && program.depthBounds == shape.depthBounds && program.bounds == shape.bounds && program.affine == shape.affine && program.rawColor == shape.rawColor && program.white == shape.white && program.rawFloats == shape.rawFloats &&
+            program.skinNormals == shape.skinNormals &&
             program.decode == shape.decode && program.maxBones == shape.maxBones && program.kind == shape.kind &&
             program.uv == shape.uv)
         {
@@ -218,13 +269,17 @@ const Program *intern(const Program &shape)
             : shape.cull == Cull::GuardBandAndBackface ? ", guard band and backfaces"
             : shape.cull == Cull::GuardBand            ? ", guard band"
                                                        : "";
-    name += shape.depthBounds ? ", depth and bounds" : "";
+    name += shape.depthBounds ? (shape.bounds ? ", depth and bounds" : shape.white ? ", depth, affine texture, white" : ", depth, affine texture (unverified)") : "";
     name += shape.color == Color::Material && shape.kind == Kind::Strip ? ", one color"
             : shape.color == Color::Lit                                  ? ", lit"
             : shape.color == Color::LitVertex                            ? ", lit vertex colors"
+            : shape.color == Color::LitPoint                             ? ", lit with point lights (unverified)"
+            : shape.color == Color::LitPointVertex                       ? ", lit with point lights, vertex colors (unverified)"
                                                                          : "";
-    name += shape.uv == Uv::SphereMap ? ", sphere map" : "";
+    name += shape.uv == Uv::SphereMap ? ", sphere map" : shape.uv == Uv::Wave ? ", wave" : shape.uv == Uv::Reflect ? ", reflection map" : shape.uv == Uv::Ramp ? ", ramp (unverified)" : shape.uv == Uv::Beam ? ", projected UVs (beam)" : shape.uv == Uv::Swell ? ", swell (unverified)" : "";
     name += shape.decode == Decode::Skinned ? ", skinned" : "";
+    name += shape.rawColor ? ", float colors, untextured (unverified)" : "";
+    name += shape.rawFloats ? " floats (unverified)" : "";
     Program &program = programs.emplace_back(shape);
     program.name = name.c_str();
     return &program;
@@ -360,13 +415,21 @@ void putFloats(std::vector<uint8_t> &packet, float x, float y, float z, float w)
 
 // Vertex k's position as B leaves it: the int16 / 32768 times quad 77, then
 // skinned over `bones` bones (0: not skinned).
-void decodePosition(const VuData &vu, uint32_t top, uint32_t k, uint32_t bones, float position[3])
+void decodePosition(const VuData &vu, uint32_t top, uint32_t k, uint32_t bones, float position[3], bool raw = false)
 {
     const uint32_t positions = top + 2u;
     const Vec4 scale = vu.quad(77);
-    position[0] = itof15(vu.word(positions + k, 0)) * scale.x;
-    position[1] = itof15(vu.word(positions + k, 1)) * scale.y;
-    position[2] = itof15(vu.word(positions + k, 2)) * scale.z;
+    if (raw)
+    {
+        for (uint32_t i = 0; i < 3u; ++i)
+            position[i] = fromBits(static_cast<uint32_t>(vu.word(positions + k, i)));
+    }
+    else
+    {
+        position[0] = itof15(vu.word(positions + k, 0)) * scale.x;
+        position[1] = itof15(vu.word(positions + k, 1)) * scale.y;
+        position[2] = itof15(vu.word(positions + k, 2)) * scale.z;
+    }
     if (bones != 0u)
     {
         skin(vu, positions + vu.half(top + 1u, 2) + k * 2u, bones, position);
@@ -402,13 +465,21 @@ void skinNormal(const VuData &vu, uint32_t weights, uint32_t bones, float normal
 
 // Vertex k's normal as B leaves it: the int16 (at TOP+2 plus TOP.w) / 32768
 // times quad 78, then skinned.
-void decodeNormal(const VuData &vu, uint32_t top, uint32_t k, uint32_t bones, float normal[3])
+void decodeNormal(const VuData &vu, uint32_t top, uint32_t k, uint32_t bones, float normal[3], bool raw = false)
 {
     const uint32_t normals = top + 2u + vu.half(top, 3);
     const Vec4 scale = vu.quad(78);
-    normal[0] = itof15(vu.word(normals + k, 0)) * scale.x;
-    normal[1] = itof15(vu.word(normals + k, 1)) * scale.y;
-    normal[2] = itof15(vu.word(normals + k, 2)) * scale.z;
+    if (raw)
+    {
+        for (uint32_t i = 0; i < 3u; ++i)
+            normal[i] = fromBits(static_cast<uint32_t>(vu.word(normals + k, i)));
+    }
+    else
+    {
+        normal[0] = itof15(vu.word(normals + k, 0)) * scale.x;
+        normal[1] = itof15(vu.word(normals + k, 1)) * scale.y;
+        normal[2] = itof15(vu.word(normals + k, 2)) * scale.z;
+    }
     if (bones != 0u)
     {
         skinNormal(vu, top + 2u + vu.half(top + 1u, 2) + k * 2u, bones, normal);
@@ -485,9 +556,240 @@ struct SphereMap
     }
 };
 
+// The VU's ESIN: a polynomial in x^2, as the interpreter has it.
+float vuSin(float x)
+{
+    constexpr float c[] = {1.0f, -0.166666567325592f, 0.008333025500178f, -0.000198074136279f,
+                           0.000002601886990f};
+    const float squared = x * x;
+    float polynomial = c[4];
+    for (int i = 3; i >= 0; --i)
+        polynomial = c[i] + squared * polynomial;
+    return x * polynomial;
+}
+
+// The ramp F (0594a063, UNVERIFIED: no recording holds it): u = (n . c + 1) /
+// 2 with c = (quad 100.x, 101.x, 102.x), v = 0; the sum in the VU's order.
+struct Ramp
+{
+    float c[3];
+
+    explicit Ramp(const VuData &vu)
+    {
+        c[0] = vu.quad(100).x;
+        c[1] = vu.quad(101).x;
+        c[2] = vu.quad(102).x;
+    }
+
+    void uv(const float n[3], float &u, float &v) const
+    {
+        u = ((c[0] * n[0] + c[1] * n[1]) + c[2] * n[2] + 1.0f) * 0.5f;
+        v = 0.0f;
+    }
+};
+
+// The beam's F (b1d29245; recorded): each position through quads 72-75 (the x,
+// y and w lanes, a column each), divided by w, y negated, taken from the
+// point quad 75 projects (pc, y negated) and scaled by quad 82.z, then moved
+// by pc + (quad 82.xy - 1) * 0.05; the UV is (that + 1) / 2.
+struct Beam
+{
+    Vec4 col[4];
+    float centerX, centerY, shiftX, shiftY, scale;
+
+    explicit Beam(const VuData &vu)
+    {
+        for (uint32_t i = 0; i < 4u; ++i)
+            col[i] = vu.quad(72u + i);
+        const float inverse = gsNativeReciprocal(col[3].w);
+        centerX = col[3].x * inverse;
+        centerY = 0.0f - col[3].y * inverse;
+        const Vec4 material = vu.quad(82);
+        shiftX = centerX + (material.x - 1.0f) * 0.05f;
+        shiftY = centerY + (material.y - 1.0f) * 0.05f;
+        scale = material.z;
+    }
+
+    void uv(const float p[3], float &u, float &v) const
+    {
+        const float x = ((col[0].x * p[0] + col[1].x * p[1]) + col[2].x * p[2]) + col[3].x * 1.0f;
+        const float y = ((col[0].y * p[0] + col[1].y * p[1]) + col[2].y * p[2]) + col[3].y * 1.0f;
+        const float w = ((col[0].w * p[0] + col[1].w * p[1]) + col[2].w * p[2]) + col[3].w * 1.0f;
+        const float inverse = gsNativeReciprocal(w);
+        const float dx = x * inverse - centerX;
+        const float dy = (0.0f - y * inverse) - centerY;
+        u = ((dx * scale + shiftX) + 1.0f) * 0.5f;
+        v = ((dy * scale + shiftY) + 1.0f) * 0.5f;
+    }
+};
+
+// The swell F (a04c11ce, UNVERIFIED: nothing was seen to run it): each position
+// pushed out along its normal, by (normal * q1) * w * s, w the vertex's clip
+// w (quads 68-71, w lanes), q1 = quad 84.x / D, D the sum of quad 12-15's x
+// lanes times quad 8, and s = clamp((quad 84.y - w) / quad 84.y, 0.2, 1). It
+// also writes colors (max(82.rgb * 128, 1), 82.w * 81.w * 128 * s); the C that
+// follows (one color) writes over them.
+struct Swell
+{
+    float q, far;
+    float lane[4];
+
+    explicit Swell(const VuData &vu)
+    {
+        for (uint32_t i = 0; i < 4u; ++i)
+            lane[i] = vu.quad(68u + i).w;
+        const Vec4 r8 = vu.quad(8);
+        const float d = ((vu.quad(12).x * r8.x + vu.quad(13).x * r8.y) + vu.quad(14).x * r8.z) + vu.quad(15).x * r8.w;
+        const Vec4 range = vu.quad(84);
+        q = divide(range.x, d);
+        far = range.y;
+        inverseFar = divide(1.0f, range.y);
+    }
+    float inverseFar;
+
+    static float divide(float a, float b)
+    {
+        if (b != 0.0f)
+            return a / b;
+        return std::signbit(a) != std::signbit(b) ? -std::numeric_limits<float>::max()
+                                                  : std::numeric_limits<float>::max();
+    }
+
+    void push(float p[3], const float n[3]) const
+    {
+        const float depth = ((lane[0] * p[0] + lane[1] * p[1]) + lane[2] * p[2]) + lane[3] * 1.0f;
+        const float scale = std::fmin(std::fmax((far - depth) * inverseFar, 0.2f), 1.0f);
+        for (int i = 0; i < 3; ++i)
+            p[i] = p[i] + ((n[i] * q) * depth) * scale;
+    }
+};
+
+// The wave F (9df36d6a): B's decoded positions (quad 103.x, a vertex each,
+// in place) turned in x and y about (0, a), a = quad 84.x, by t = q *
+// max(y - a, 0), q = quad 900.z / (quad 84.y - a): with c = 1 - t * t / 2 and
+// s = sin t (ESIN), x' = c x - s (y - a) and y' = c (y - a) + s x + a. The
+// normals stay. The products and sums keep the VU's order.
+struct Wave
+{
+    float a, q;
+
+    explicit Wave(const VuData &vu)
+    {
+        const Vec4 range = vu.quad(84);
+        a = range.x;
+        q = vu.quad(900).z / (range.y - range.x);
+    }
+
+    void xy(float &x, float &y) const
+    {
+        const float d = y - a;
+        const float t = (0.0f + q) * (d > 0.0f ? d : 0.0f);
+        const float s = vuSin(t);
+        const float c = 1.0f - (t * t) * 0.5f;
+        const float nx = (0.0f - s) * d + c * x;
+        const float ny = ((0.0f + c) * d + s * x) + a;
+        x = nx;
+        y = ny;
+    }
+};
+
+// The reflection F (ad209cd3): per vertex, W = the position through the
+// object matrix (quads 60-63, a column each), V = (W - quad 28) times ERLENG
+// (1 / its length), N = the normal through quads 64-66 (rotation only), r =
+// V - N * 2 (V.N); the UV is ((r.x + 1) / 2, (r.z + 1) / 2). Sums run in the
+// VU's order (the accumulator adds one product at a time).
+struct Reflection
+{
+    Vec4 col[4], rot[3], eye;
+
+    explicit Reflection(const VuData &vu)
+    {
+        for (uint32_t i = 0; i < 4u; ++i)
+            col[i] = vu.quad(60u + i);
+        for (uint32_t i = 0; i < 3u; ++i)
+            rot[i] = vu.quad(64u + i);
+        eye = vu.quad(28);
+    }
+
+    void uv(const float p[3], const float n[3], float &u, float &v) const
+    {
+        const float w[3] = {((col[0].x * p[0] + col[1].x * p[1]) + col[2].x * p[2]) + col[3].x * 1.0f,
+                            ((col[0].y * p[0] + col[1].y * p[1]) + col[2].y * p[2]) + col[3].y * 1.0f,
+                            ((col[0].z * p[0] + col[1].z * p[1]) + col[2].z * p[2]) + col[3].z * 1.0f};
+        const float d[3] = {w[0] - eye.x, w[1] - eye.y, w[2] - eye.z};
+        const float length = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        const float inverse = length != 0.0f ? 1.0f / length : length;
+        const float vx = d[0] * inverse, vy = d[1] * inverse, vz = d[2] * inverse;
+        const float nx = (rot[0].x * n[0] + rot[1].x * n[1]) + rot[2].x * n[2];
+        const float ny = (rot[0].y * n[0] + rot[1].y * n[1]) + rot[2].y * n[2];
+        const float nz = (rot[0].z * n[0] + rot[1].z * n[1]) + rot[2].z * n[2];
+        const float dot = (vx * nx + vy * ny) + vz * nz;
+        const float twice = dot + dot;
+        u = ((vx - nx * twice) + 1.0f) * 0.5f;
+        v = ((vz - nz * twice) + 1.0f) * 0.5f;
+    }
+};
+
 // A chunk read out of VU1 data memory: the FOGCOL packet, the first quads of
 // the program's output (GIF header, PRIM, PRMODE, the vertex tag) and the
 // strip as a mesh.
+// The point lights of the lit-with-points C (127ca0b4), added to the
+// directional sum: four lights, their positions quads 44, 46, 48, 50 (w: the
+// falloff), their colors quads 45, 47, 49, 51 times the material (quad 82).
+// For each: d = light - W, W the vertex through quads 60-63; the normal
+// through quads 64-66; f = max(max(d.N, 0) / |d| - max(d.N, 0) * w, 0), the
+// colors summed in light order, then added to the directional sum. (The code
+// reads each light's 1 / |d| from Q or P as it completes, so the light's own;
+// the interpreter gives the first two vertices of a chunk, whose code runs
+// ahead of the loop, the next light's in two lanes: a difference of a few
+// levels on those two vertices, not reproduced here. Checked against the
+// interpreter with the oracle's synthetic mode, all other vertices.)
+struct PointLights
+{
+    Vec4 col[4], rot[3], position[4];
+    float color[4][3];
+
+    explicit PointLights(const VuData &vu)
+    {
+        for (uint32_t i = 0; i < 4u; ++i)
+            col[i] = vu.quad(60u + i);
+        for (uint32_t i = 0; i < 3u; ++i)
+            rot[i] = vu.quad(64u + i);
+        const Vec4 material = vu.quad(82);
+        for (uint32_t i = 0; i < 4u; ++i)
+        {
+            position[i] = vu.quad(44u + i * 2u);
+            const Vec4 c = vu.quad(45u + i * 2u);
+            color[i][0] = c.x * material.x;
+            color[i][1] = c.y * material.y;
+            color[i][2] = c.z * material.z;
+        }
+    }
+
+    void add(const float p[3], const float n[3], float rgb[3]) const
+    {
+        const float w[3] = {((col[0].x * p[0] + col[1].x * p[1]) + col[2].x * p[2]) + col[3].x * 1.0f,
+                            ((col[0].y * p[0] + col[1].y * p[1]) + col[2].y * p[2]) + col[3].y * 1.0f,
+                            ((col[0].z * p[0] + col[1].z * p[1]) + col[2].z * p[2]) + col[3].z * 1.0f};
+        const float nx = (rot[0].x * n[0] + rot[1].x * n[1]) + rot[2].x * n[2];
+        const float ny = (rot[0].y * n[0] + rot[1].y * n[1]) + rot[2].y * n[2];
+        const float nz = (rot[0].z * n[0] + rot[1].z * n[1]) + rot[2].z * n[2];
+        float sum[3] = {};
+        for (uint32_t i = 0; i < 4u; ++i)
+        {
+            const float dx = position[i].x - w[0], dy = position[i].y - w[1], dz = position[i].z - w[2];
+            const float dot = std::fmax((dx * nx + dy * ny) + dz * nz, 0.0f);
+            const float root = std::sqrt(std::fabs((dx * dx + dy * dy) + (dz * dz) * 1.0f));
+            const float inverse = root != 0.0f ? 1.0f / root : std::numeric_limits<float>::max();
+            const float f = std::fmax(dot * inverse - dot * position[i].w, 0.0f);
+            for (int k = 0; k < 3; ++k)
+                sum[k] = i == 0u ? color[i][k] * f : sum[k] + color[i][k] * f;
+        }
+        for (int k = 0; k < 3; ++k)
+            rgb[k] = rgb[k] + sum[k];
+    }
+};
+
 struct Chunk
 {
     std::vector<uint8_t> fog;
@@ -551,6 +853,19 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
         h.depthMax = vu.quad(1).y;
     }
     h.triangleList = (prim & 7u) == 3u ? 1u : 0u;
+    // A chunk slot E clips (the beam's E is a stub): E's clip space is
+    // quads 72-75 (the base program's view times its clip matrix, rows as
+    // 68-71's), and the renderer clips the strip at its z = -w and z = w.
+    if ((vu.half(81, 0) & 2u) && program.uv != Uv::Beam)
+    {
+        h.clips = 1u;
+        for (uint32_t row = 0; row < 4u; ++row)
+        {
+            const Vec4 m = vu.quad(72u + row);
+            h.clipPlanes[0][row] = m.z + m.w;
+            h.clipPlanes[1][row] = m.w - m.z;
+        }
+    }
 
     const Vec4 uvScale = vu.quad(79);
     Vec4 material = vu.quad(82);
@@ -567,29 +882,58 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
     }
     const bool perVertex = program.color == Color::PerVertex;
     const uint32_t bones = program.decode == Decode::Skinned ? bonesOf(program, vu, top) : 0u;
-    const bool lit = program.color == Color::Lit || program.color == Color::LitVertex;
-    const bool normals = lit || program.uv == Uv::SphereMap;
+    const bool lit = program.color == Color::Lit || program.color == Color::LitVertex || program.color == Color::LitPoint ||
+                      program.color == Color::LitPointVertex;
+    const bool normals = lit || program.uv == Uv::SphereMap || program.uv == Uv::Reflect || program.uv == Uv::Ramp ||
+                         program.uv == Uv::Swell;
     const Lights lights(vu);
+    const PointLights points(vu);
     const SphereMap sphere(vu);
+    const Wave wave(vu);
+    const Reflection reflection(vu);
+    const Ramp ramp(vu);
+    const Beam beam(vu);
+    const Swell swell(vu);
     chunk.mesh.vertices.resize(count);
     for (uint32_t k = 0; k < count; ++k)
     {
         GSNativeMesh::Vertex &v = chunk.mesh.vertices[k];
         float position[3];
-        decodePosition(vu, top, k, bones, position);
+        decodePosition(vu, top, k, bones, position, program.rawFloats);
+        if (program.uv == Uv::Wave)
+        {
+            wave.xy(position[0], position[1]);
+        }
+        if (program.uv == Uv::Swell)
+        {
+            float normal[3];
+            decodeNormal(vu, top, k, program.skinNormals ? bones : 0u, normal, program.rawFloats);
+            swell.push(position, normal);
+        }
         v.x = position[0];
         v.y = position[1];
         v.z = position[2];
-        v.u = itof15(vu.word(uvs + k, 0)) * uvScale.x;
-        v.v = itof15(vu.word(uvs + k, 1)) * uvScale.y;
+        v.u = program.rawFloats ? fromBits(static_cast<uint32_t>(vu.word(uvs + k, 0))) : itof15(vu.word(uvs + k, 0)) * uvScale.x;
+        v.v = program.rawFloats ? fromBits(static_cast<uint32_t>(vu.word(uvs + k, 1))) : itof15(vu.word(uvs + k, 1)) * uvScale.y;
         v.r = perVertex ? colorBase.x * itof15(vu.word(colors + k, 0)) * 256.0f : colorBase.x;
         v.g = perVertex ? colorBase.y * itof15(vu.word(colors + k, 1)) * 256.0f : colorBase.y;
         v.b = perVertex ? colorBase.z * itof15(vu.word(colors + k, 2)) * 256.0f : colorBase.z;
         v.a = perVertex ? colorBase.w * itof15(vu.word(colors + k, 3)) * 256.0f : colorBase.w;
+        if (program.rawColor)
+        {
+            v.r = fromBits(static_cast<uint32_t>(vu.word(colors + k, 0)));
+            v.g = fromBits(static_cast<uint32_t>(vu.word(colors + k, 1)));
+            v.b = fromBits(static_cast<uint32_t>(vu.word(colors + k, 2)));
+            v.a = fromBits(static_cast<uint32_t>(vu.word(colors + k, 3)));
+        }
+        if (program.uv == Uv::Beam)
+            beam.uv(position, v.u, v.v);
+        if (program.white)
+            v.r = v.g = v.b = 128.0f;
         if (normals)
         {
             float normal[3];
-            decodeNormal(vu, top, k, bones, normal);
+            decodeNormal(vu, top, k, program.skinNormals ? bones : 0u, normal, program.rawFloats);
             if (lit)
             {
                 const Vec4 c = lights.shade(normal);
@@ -597,6 +941,29 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
                 v.g = c.y;
                 v.b = c.z;
                 v.a = c.w;
+                if (program.color == Color::LitPoint || program.color == Color::LitPointVertex)
+                {
+                    float rgb[3] = {c.x, c.y, c.z};
+                    points.add(position, normal, rgb);
+                    v.r = rgb[0];
+                    v.g = rgb[1];
+                    v.b = rgb[2];
+                }
+                if (program.color == Color::LitPointVertex)
+                {
+                    const float sign = (vu.half(87, 1) & 0x100u) ? -1.0f : 1.0f;
+                    const float lit[3] = {v.r, v.g, v.b};
+                    float out[3];
+                    for (uint32_t i = 0; i < 3u; ++i)
+                    {
+                        const float cv = itof15(vu.word(colors + k, i)) * 256.0f;
+                        out[i] = std::fmax((lit[i] * cv) * sign, (lit[i] + cv * 128.0f) * -sign);
+                    }
+                    v.r = out[0];
+                    v.g = out[1];
+                    v.b = out[2];
+                    v.a = c.w * (itof15(vu.word(colors + k, 3)) * 256.0f);
+                }
                 if (program.color == Color::LitVertex)
                 {
                     v.r = c.x * (itof15(vu.word(colors + k, 0)) * 256.0f);
@@ -608,6 +975,14 @@ void readChunk(const Program &program, const VuData &vu, uint32_t top, Chunk &ch
             if (program.uv == Uv::SphereMap)
             {
                 sphere.uv(normal, v.u, v.v);
+            }
+            if (program.uv == Uv::Reflect)
+            {
+                reflection.uv(position, normal, v.u, v.v);
+            }
+            if (program.uv == Uv::Ramp)
+            {
+                ramp.uv(normal, v.u, v.v);
             }
         }
     }
@@ -1175,6 +1550,12 @@ void buildProjector(const Program &program, const VuData &vu, uint32_t top,
     // The two vertices before (scaled z), and whether each is outside.
     float before[2][3] = {};
     bool outBefore[2] = {outside(before[0]), outside(before[1])};
+    // A triangle list goes through C's own path: each triangle judged once,
+    // at its last vertex, from its three vertices' guard band (each with its
+    // z unscaled) and its facing with the first triangle's sign throughout;
+    // only that vertex's XYZF2 word w is cut to its low half and ADC.
+    const bool list = (vu.half(top, 0) & 7u) == 3u;
+    bool rawBefore[2] = {false, false};
     for (uint32_t j = 0; j < count; ++j)
     {
         float position[3];
@@ -1190,25 +1571,88 @@ void buildProjector(const Program &program, const VuData &vu, uint32_t top,
         const float f = std::fmax(std::fmin(fog.x * 1.0f + fog.w * c.w, fog.y), fog.z);
         const float ax = before[1][0] - before[0][0], ay = before[1][1] - before[0][1];
         const float bx = scaled[0] - before[1][0], by = scaled[1] - before[1][1];
-        if (j != 0u)
+        if (j != 0u && !list)
         {
             winding = 0.0f - winding;
         }
         const float facing = (ax * by - bx * ay) * winding;
-        const bool hidden = outside(raw) || outBefore[0] || outBefore[1] || facing > 0.0f;
+        const bool rawOut = outside(raw);
         const uint32_t fogWord = static_cast<uint32_t>(gsNativeFtoi(f, 16.0f));
-        const uint32_t low = j == 0u ? static_cast<uint32_t>(vu.word(output + 2u, 3)) : fogWord;
-        const uint32_t w = (low & 0xFFFFu) | (hidden ? 0x8000u : 0u);
+        uint32_t w;
+        if (list)
+        {
+            const bool hidden = j % 3u == 2u && (rawOut || rawBefore[0] || rawBefore[1] || facing > 0.0f);
+            w = j % 3u != 2u ? fogWord : (fogWord & 0xFFFFu) | (hidden ? 0x8000u : 0u);
+        }
+        else
+        {
+            const bool hidden = rawOut || outBefore[0] || outBefore[1] || facing > 0.0f;
+            const uint32_t low = j == 0u ? static_cast<uint32_t>(vu.word(output + 2u, 3)) : fogWord;
+            w = (low & 0xFFFFu) | (hidden ? 0x8000u : 0u);
+        }
         const float stq[4] = {u * q, v * q, 1.0f * q, 0.0f};
         putQuad(packet, stq);
         putQuad(packet, rgba);
         putWords(packet, static_cast<uint32_t>(gsNativeFtoi(scaled[0], 16.0f)),
                  static_cast<uint32_t>(gsNativeFtoi(scaled[1], 16.0f)),
                  static_cast<uint32_t>(gsNativeFtoi(scaled[2], 16.0f)), w);
+        rawBefore[0] = rawBefore[1];
+        rawBefore[1] = rawOut;
         std::memcpy(before[0], before[1], sizeof(before[0]));
         std::memcpy(before[1], scaled, sizeof(scaled));
         outBefore[0] = outBefore[1];
         outBefore[1] = outside(scaled);
+    }
+}
+
+// The projected texture's chunk as a mesh (buildProjector's arithmetic, for
+// the GPU): the UV the position through the projector, divided by its w,
+// per vertex (the shader then interpolates it as ST / Q, as the GS does the
+// program's ST), the color (128, 128, 128, 82.w * 81.w * 128), the guard
+// band and the facing as C tests them. C flips its sign before judging each
+// vertex and gsNativeMeshSkips after, so at every triangle the mesh's sign is
+// the opposite of C's: the header holds C's starting sign negated, as
+// readChunk's does for D (a triangle list, which C judges with the starting
+// sign throughout, takes -winding there, so it agrees too).
+void projectorMesh(const Program &program, const VuData &vu, uint32_t top, GSNativeMesh &mesh)
+{
+    Vec4 projector[4], texture[4];
+    for (uint32_t i = 0; i < 4u; ++i)
+    {
+        projector[i] = vu.quad(30u + i);
+    }
+    for (uint32_t i = 0; i < 4u; ++i)
+    {
+        texture[i] = transform(projector, vu.quad(60u + i));
+    }
+    GSNativeMesh::Header &h = mesh.header;
+    h.guardBand = 1u;
+    h.backface = 1u;
+    h.winding = vu.quad(111).z * ((vu.half(87, 1) & 0x1000u) ? 1.0f : -1.0f);
+    h.depthScale = vu.quad(87).z;
+    h.depthMax = vu.quad(1).y;
+    for (float &c : h.colorMax)
+    {
+        c = 255.0f;
+    }
+    const float alpha = static_cast<float>(gsNativeFtoi(vu.quad(82).w * vu.quad(81).w * 128.0f, 1.0f));
+    const uint32_t count = vu.half(top, 1);
+    const uint32_t bones = program.decode == Decode::Skinned ? bonesOf(program, vu, top) : 0u;
+    mesh.vertices.resize(count);
+    for (uint32_t j = 0; j < count; ++j)
+    {
+        float position[3];
+        decodePosition(vu, top, j, bones, position);
+        const Vec4 t = transform(texture, Vec4{position[0], position[1], position[2], 1.0f});
+        const float tq = vuReciprocal(t.w);
+        GSNativeMesh::Vertex &v = mesh.vertices[j];
+        v.x = position[0];
+        v.y = position[1];
+        v.z = position[2];
+        v.u = t.x * tq;
+        v.v = t.y * tq;
+        v.r = v.g = v.b = 128.0f;
+        v.a = alpha;
     }
 }
 
@@ -1321,7 +1765,7 @@ const Program *identify(const uint8_t *code, uint32_t startPC)
         if (matches(code, own.a))
         {
             const DecodePiece *decode = present(code, kDecodes, &DecodePiece::b);
-            if (!decode || !matches(code, own.c))
+            if (!decode || decode->raw || !matches(code, own.c))
             {
                 return nullptr;
             }
@@ -1329,11 +1773,22 @@ const Program *identify(const uint8_t *code, uint32_t startPC)
             return intern(shape);
         }
     }
-    for (const Piece &piece : kCommon)
+    const bool beam = matches(code, kBeamA);
+    if (beam)
     {
-        if (!matches(code, piece))
+        if (!matches(code, kBeamE))
         {
             return nullptr;
+        }
+    }
+    else
+    {
+        for (const Piece &piece : kCommon)
+        {
+            if (!matches(code, piece))
+            {
+                return nullptr;
+            }
         }
     }
     const DecodePiece *decode = present(code, kDecodes, &DecodePiece::b);
@@ -1344,8 +1799,17 @@ const Program *identify(const uint8_t *code, uint32_t startPC)
     {
         return nullptr;
     }
+    if (uv->uv == Uv::Swell && color->color != Color::Material)
+        return nullptr;
+    // The beam's pieces go together (its F and D read and write what the
+    // others do not).
+    if (beam != (uv->uv == Uv::Beam) || beam != finish->white)
+    {
+        return nullptr;
+    }
     Program shape{nullptr,          finish->cull,     color->color, finish->depthBounds,
-                  decode->decode,   decode->maxBones, Kind::Strip,  uv->uv};
+                  decode->decode,   decode->maxBones, Kind::Strip,  uv->uv, finish->bounds, finish->affine, finish->white, decode->raw, decode->skinNormals,
+                  finish->rawColor};
     return intern(shape);
 }
 
@@ -1362,7 +1826,7 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
     std::string out;
     for (size_t i = 0; i < std::size(kCommon); ++i)
     {
-        out += matches(code, kCommon[i]) ? kCommonNames[i] : "-";
+        out += matches(code, kCommon[i]) ? kCommonNames[i] : matches(code, kBeamA) ? "A:beam" : "-";
         out += ' ';
     }
     const DecodePiece *decode = present(code, kDecodes, &DecodePiece::b);
@@ -1370,7 +1834,7 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
            : decode->decode == Decode::Skinned ? "B:skinned "
                                                : "B:plain ";
     const UvPiece *uv = present(code, kUvs, &UvPiece::f);
-    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : "F:scroll ";
+    out += !uv ? "F:? " : uv->uv == Uv::SphereMap ? "F:sphere map " : uv->uv == Uv::Wave ? "F:wave " : uv->uv == Uv::Reflect ? "F:reflection " : uv->uv == Uv::Ramp ? "F:ramp " : uv->uv == Uv::Beam ? "F:beam " : uv->uv == Uv::Swell ? "F:swell " : "F:scroll ";
     const char *color = "C:?";
     for (const ColorPiece &candidate : kColors)
     {
@@ -1379,6 +1843,8 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
             color = candidate.color == Color::PerVertex   ? "C:vertex colors"
                     : candidate.color == Color::Lit       ? "C:lit"
                     : candidate.color == Color::LitVertex ? "C:lit vertex colors"
+                    : candidate.color == Color::LitPoint ? "C:lit, point lights"
+                    : candidate.color == Color::LitPointVertex ? "C:lit, point lights, vertex colors"
                                                           : "C:one color";
         }
     }
@@ -1387,7 +1853,10 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
     {
         if (matches(code, candidate.d))
         {
-            finish = candidate.depthBounds && candidate.cull == Cull::GuardBandAndBackface
+            finish = candidate.rawColor ? "D:guard band and backfaces, float colors"
+                     : candidate.white ? "D:guard band, depth, white"
+                     : !candidate.bounds ? "D:guard band, depth"
+                     : candidate.depthBounds && candidate.cull == Cull::GuardBandAndBackface
                          ? "D:guard band and backfaces, depth and bounds"
                      : candidate.depthBounds && candidate.cull == Cull::GuardBand ? "D:guard band, depth and bounds"
                      : candidate.depthBounds                        ? "D:depth and bounds"
@@ -1402,6 +1871,9 @@ std::string describePieces(const uint8_t *code, uint32_t startPC)
 const char *declineChunk(const Program &program, const uint8_t *data, uint32_t top, bool clips)
 {
     const VuData vu(data);
+    // Only a mesh carries the planes: a program buildMesh sends as packets
+    // (the affine D, the float-colour D) would go out unclipped.
+    clips = clips && hasMesh(program);
     if (program.kind == Kind::Overlay || program.kind == Kind::Base)
         return nullptr;
     if (program.decode == Decode::Plain && vu.half(76, 2) != 0u)
@@ -1426,26 +1898,39 @@ const char *declineChunk(const Program &program, const uint8_t *data, uint32_t t
         return vu.half(top, 1) == 0u ? "no particles" : nullptr;
     if (program.kind == Kind::Projector)
     {
-        if (vu.half(81, 0) & 2u)
+        if ((vu.half(81, 0) & 2u) && !clips)
             return "clipping (slot E)";
-        if ((vu.half(top, 0) & 7u) == 3u)
-            return "triangle list (C's own path)";
+        // C's list path loops until it has written exactly the count's
+        // vertices.
+        if ((vu.half(top, 0) & 7u) == 3u && vu.half(top, 1) % 3u != 0u)
+            return "triangle list not of whole triangles (C's own path)";
         return vu.half(top, 1) == 0u ? "no vertices" : nullptr;
     }
-    if ((vu.half(81, 0) & 2u) && !clips)
+    if ((vu.half(81, 0) & 2u) && !clips && program.uv != Uv::Beam)
         return "clipping (slot E)";
-    // PRIM from the chunk header. Only the backface piece reads it, with a
-    // path of its own for triangle lists; the others run lists through
-    // their strip code, whose ADC window of three vertices lands on each
-    // triangle.
+    // PRIM from the chunk header. Only the backface pieces read it, with a
+    // path of their own for triangle lists (a triangle at a time, its ADC on
+    // its last vertex, the facing sign not alternating), which loops until
+    // it has written exactly the count's vertices: another count would run
+    // past the end. The others run lists through their strip code, whose
+    // ADC window of three vertices lands on each triangle.
     const uint32_t primType = vu.half(top, 0) & 7u;
-    if (primType == 3u && program.cull == Cull::GuardBandAndBackface)
-        return "triangle list (D's own path)";
+    if (primType == 3u && program.cull == Cull::GuardBandAndBackface &&
+        (vu.half(top, 1) == 0u || vu.half(top, 1) % 3u != 0u))
+        return "triangle list not of whole triangles (D's own path)";
     if (primType != 3u && primType != 4u)
         return "neither strip nor triangle list";
     const uint32_t flags = vu.half(87, 1);
     if ((flags & 0x100u) && (program.color == Color::PerVertex || program.color == Color::LitVertex))
         return "quad 87.y & 0x100 (C's other loop)";
+    // The reflection's loop reads three vertices before it first looks at the
+    // count.
+    if (program.uv == Uv::Reflect && vu.half(top, 1) < 3u)
+        return "reflection over fewer than three vertices (slot F)";
+    if (program.uv == Uv::Swell && vu.half(top, 1) < 2u)
+        return "swell over fewer than two vertices (slot F)";
+    if (program.uv == Uv::Beam && vu.half(top, 1) < 4u)
+        return "beam over fewer than four vertices (slot F)";
     if (program.uv == Uv::Plain && (vu.quad(88).x != 0.0f || vu.quad(88).y != 0.0f))
         return "scrolling UVs (slot F)";
     return nullptr;
@@ -1499,7 +1984,7 @@ void applyMemoryEffects(const Program &program, uint8_t *data, uint32_t top)
         std::memcpy(data + 1023u * 16u, &word, sizeof(word));
         return;
     }
-    if (!program.depthBounds)
+    if (!program.depthBounds || !program.bounds)
     {
         return;
     }
@@ -1535,7 +2020,7 @@ bool memoryEffectsMatch(const Program &program, const uint8_t *before, uint32_t 
         const VuRounding rounding;
         return outlineLoopWord(VuData(before), top) == static_cast<uint32_t>(VuData(after).word(1023, 0));
     }
-    if (!program.depthBounds)
+    if (!program.depthBounds || !program.bounds)
     {
         return true;
     }
@@ -1613,7 +2098,12 @@ void buildChunk(const Program &program, const uint8_t *data, uint32_t top,
     for (uint32_t k = 0; k < count; ++k)
     {
         const GSNativeMeshPoint &p = points[k] = gsNativeMeshPoint(mesh.header, mesh.vertices[k]);
-        putFloats(packet, p.s, p.t, p.q, 0.0f);
+        if (program.rawColor)
+            putFloats(packet, 0.0f, 0.0f, 1.0f, 0.0f);
+        else if (program.affine)
+            putFloats(packet, mesh.vertices[k].u, mesh.vertices[k].v, 1.0f, 0.0f);
+        else
+            putFloats(packet, p.s, p.t, p.q, 0.0f);
         putWords(packet, static_cast<uint32_t>(p.rgba[0]), static_cast<uint32_t>(p.rgba[1]),
                  static_cast<uint32_t>(p.rgba[2]), static_cast<uint32_t>(p.rgba[3]));
         putWords(packet, static_cast<uint32_t>(p.x16), static_cast<uint32_t>(p.y16), static_cast<uint32_t>(p.z16),
@@ -1624,16 +2114,20 @@ void buildChunk(const Program &program, const uint8_t *data, uint32_t top,
         // The culling pieces clear the clip flags, then set each vertex's
         // ADC from the last three judgments: the first vertex's from its
         // own. (It never draws; it is in the packet.)
-        if (count != 0u && points[0].outside)
+        // The backface pieces' list path judges each triangle once, at its
+        // last vertex, with the sign the strips' first triangle has.
+        const bool lists = mesh.header.triangleList && mesh.header.backface;
+        if (count != 0u && points[0].outside && !lists)
         {
             const uint32_t w = (static_cast<uint32_t>(points[0].f16) & 0xFFFFu) | 0x8000u;
             std::memcpy(packet.data() + 64u + 2u * 16u + 12u, &w, 4u);
         }
-        float winding = mesh.header.winding;
+        float winding = lists ? -mesh.header.winding : mesh.header.winding;
         for (uint32_t k = 1; k < count; ++k)
         {
-            const bool skip = gsNativeMeshSkips(mesh.header, points.data(), k, winding);
-            winding = -winding;
+            const bool skip = (!lists || k % 3u == 2u) && gsNativeMeshSkips(mesh.header, points.data(), k, winding);
+            if (!lists)
+                winding = -winding;
             const uint32_t w = (static_cast<uint32_t>(points[k].f16) & 0xFFFFu) | (skip ? 0x8000u : 0u);
             std::memcpy(packet.data() + 64u + (k * 3u + 2u) * 16u + 12u, &w, 4u);
         }
@@ -1653,6 +2147,10 @@ void buildMesh(const Program &program, const uint8_t *data, uint32_t top,
     const VuRounding rounding;
     Chunk chunk;
     readChunk(program, VuData(data), top, chunk);
+    if (program.kind == Kind::Projector)
+    {
+        projectorMesh(program, VuData(data), top, chunk.mesh);
+    }
     packets.clear();
     packets.push_back(std::move(chunk.fog));
     // PRIM and PRMODE behind the program's GIF tag, made the packet's end.
@@ -1674,7 +2172,9 @@ void buildMesh(const Program &program, const uint8_t *data, uint32_t top,
 Mode modeFromEnvironment()
 {
     const char *value = std::getenv("RG_VU1_NATIVE");
-    if (!value || std::strcmp(value, "0") == 0)
+    if (!value || !*value)
+        return rg::nativerenderer::enabled() ? Mode::Gpu : Mode::Off;
+    if (std::strcmp(value, "0") == 0)
         return Mode::Off;
     if (std::strcmp(value, "check") == 0)
         return Mode::Check;

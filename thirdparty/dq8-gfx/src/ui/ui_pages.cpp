@@ -12,6 +12,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <string>
 
 namespace dq8::ui {
@@ -19,8 +20,9 @@ namespace {
 using gfx::PadInput;
 
 constexpr const char *kTimes = "\xC3\x97"; // U+00D7, spelled out for compilers without /utf-8
-constexpr const char *kPageNames[] = {"Display", "Sound", "Controls", "Game", "Language", "Interface"};
-constexpr Icon kPageIcons[] = {Icon::Display, Icon::Sound, Icon::Controls, Icon::Disc, Icon::Info, Icon::Interface};
+constexpr const char *kPageNames[] = {"Display", "Sound", "Controls", "Game", "Language", "Textures", "Interface"};
+constexpr Icon kPageIcons[] = {Icon::Display, Icon::Sound, Icon::Controls, Icon::Disc, Icon::Info, Icon::Folder,
+                               Icon::Interface};
 constexpr const char *kProjectUrl = "https://github.com/victor-takai/rogue-galaxy-recomp";
 constexpr const char *kIssuesUrl = "https://github.com/victor-takai/rogue-galaxy-recomp/issues";
 
@@ -30,11 +32,33 @@ constexpr ImGuiWindowFlags kDialogFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWin
 
 ImVec4 color(ImU32 packed) { return ImGui::ColorConvertU32ToFloat4(packed); }
 
-// A round "x" in a window's corner.
+// A setting that does nothing now, given the line that says what would make
+// it work (null while it works): what is drawn while this lives is greyed
+// out, and the line goes under it (Rogue Galaxy: added).
+class Blocked {
+public:
+    explicit Blocked(const char *reason) : m_reason(reason) { ImGui::BeginDisabled(reason != nullptr); }
+    ~Blocked() {
+        ImGui::EndDisabled();
+        if (m_reason) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(color(palette::kWarn), "%s", m_reason);
+            ImGui::PopTextWrapPos();
+        }
+    }
+    Blocked(const Blocked &) = delete;
+    Blocked &operator=(const Blocked &) = delete;
+
+private:
+    const char *m_reason;
+};
+
+// A round "x" in a window's corner, for the mouse: keyboard and controller
+// close with Back, and the cursor would otherwise start on it.
 bool closeButton(const char *id) {
     const float size = ImGui::GetFrameHeight();
     const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const bool pressed = ImGui::InvisibleButton(id, ImVec2(size, size), ImGuiButtonFlags_EnableNav);
+    const bool pressed = ImGui::InvisibleButton(id, ImVec2(size, size));
     const ImVec2 center(pos.x + size * 0.5f, pos.y + size * 0.5f);
     ImDrawList *list = ImGui::GetWindowDrawList();
     if (ImGui::IsItemHovered())
@@ -106,6 +130,7 @@ std::string conflictWith(const gfx::PadConfig &config, PadInput input, bool keyb
 } // namespace
 
 void Overlay::drawSettingsWindow() {
+    ImGuiContext &g = *ImGui::GetCurrentContext();
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     const ImVec2 area = viewport->WorkSize;
     const ImVec2 size(std::min(area.x - em(2.0f), em(54.0f)), std::min(area.y - em(2.0f), em(37.0f)));
@@ -122,12 +147,46 @@ void Overlay::drawSettingsWindow() {
                                    ImGuiWindowFlags_NoScrollWithMouse;
     if (beginWindow("Settings##dq8", nullptr, flags)) {
         dialogHeader(Icon::Gear, "Settings", &m_settingsOpen);
+        // The controller's buttons along the bottom edge while one is in use.
+        const float hints = padInUse() ? ImGui::GetFrameHeight() + em(1.2f) : 0.0f;
+        const int count = static_cast<int>(SettingsPage::Count);
 
+        // The page list and the page are apart for keyboard and controller:
+        // the cursor stays in one until Right or A takes it into the page, and
+        // Left at the page's edge or Back brings it out. Moving along the
+        // list shows each page.
         const float navWidth = em(12.5f);
-        ImGui::BeginChild("##nav", ImVec2(navWidth, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-        for (int page = 0; page < static_cast<int>(SettingsPage::Count); ++page)
-            if (navItem(kPageNames[page], kPageIcons[page], m_page == static_cast<SettingsPage>(page)))
-                m_page = static_cast<SettingsPage>(page);
+        ImGui::BeginChild("##nav", ImVec2(navWidth, -hints), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+        m_listPane = ImGui::GetCurrentWindow();
+        const bool inList = g.NavWindow == m_listPane;
+        const bool follow = inList && g.NavCursorVisible && !m_focusList;
+        for (int page = 0; page < count; ++page) {
+            const auto which = static_cast<SettingsPage>(page);
+            if (navItem(kPageNames[page], kPageIcons[page], m_page == which)) {
+                m_page = which;
+                // Chosen with A or Enter rather than a click: on into it.
+                if (g.NavCursorVisible)
+                    m_focusPage = true;
+            } else if (follow && m_page != which && ImGui::IsItemFocused()) {
+                m_page = which;
+            }
+            if (m_focusList && m_page == which) {
+                ImGui::FocusItem();
+                if (padInUse())
+                    ImGui::SetNavCursorVisible(true);
+                m_focusList = false;
+            }
+        }
+        // A way out for a player with only a controller, asked first.
+        if (navItem("Quit game", Icon::Close, false))
+            m_quitAsk = true;
+        if (inList && !m_focusPage &&
+            (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, false))) {
+            // Nothing lies right of the list in it; the request would only
+            // find the page's items once the page has the focus.
+            ImGui::NavMoveRequestCancel();
+            m_focusPage = true;
+        }
         const float footer = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
         if (ImGui::GetContentRegionAvail().y > footer) {
             ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footer);
@@ -140,12 +199,23 @@ void Overlay::drawSettingsWindow() {
 
         ImGui::SameLine(0.0f, em(0.8f));
         const ImVec2 rule = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddLine(ImVec2(rule.x, rule.y), ImVec2(rule.x, rule.y + ImGui::GetContentRegionAvail().y),
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(rule.x, rule.y),
+                                            ImVec2(rule.x, rule.y + ImGui::GetContentRegionAvail().y - hints),
                                             IM_COL32(255, 255, 255, 34), 1.0f);
         ImGui::SetCursorScreenPos(ImVec2(rule.x + em(0.9f), rule.y));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        ImGui::BeginChild("##page", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+        // One window a page, so each keeps its own scroll and cursor.
+        ImGui::PushID(static_cast<int>(m_page));
+        ImGui::BeginChild("##page", ImVec2(0.0f, -hints), ImGuiChildFlags_None);
         ImGui::PopStyleVar();
+        m_pagePane = ImGui::GetCurrentWindow();
+        if (m_focusPage) {
+            // Back where it was in this page, or on its first item.
+            ImGui::FocusWindow(m_pagePane);
+            ImGui::NavInitWindow(m_pagePane, false);
+            ImGui::SetNavCursorVisible(true);
+            m_focusPage = false;
+        }
         // Leaves room for the scrollbar without the page touching it.
         ImGui::PushItemWidth(-em(0.6f));
         ImGui::Indent(em(0.1f));
@@ -153,8 +223,9 @@ void Overlay::drawSettingsWindow() {
         case SettingsPage::Display: drawDisplayPage(); break;
         case SettingsPage::Sound: drawSoundPage(); break;
         case SettingsPage::Controls: drawControlsPage(); break;
-        case SettingsPage::Game: drawGamePage(false); break;
-        case SettingsPage::Language: drawGamePage(true); break;
+        case SettingsPage::Game: drawGamePage(); break;
+        case SettingsPage::Language: drawLanguagePage(); break;
+        case SettingsPage::Textures: drawTexturesPage(); break;
         case SettingsPage::Interface: drawInterfacePage(); break;
         case SettingsPage::Count: break;
         }
@@ -162,18 +233,95 @@ void Overlay::drawSettingsWindow() {
         ImGui::PopItemWidth();
         ImGui::Dummy(ImVec2(0.0f, em(0.5f)));
         ImGui::EndChild();
-
-        // L1 and R1 turn the pages, as in the game's own menus.
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-            const int count = static_cast<int>(SettingsPage::Count);
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false))
-                m_page = static_cast<SettingsPage>((static_cast<int>(m_page) + count - 1) % count);
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false))
-                m_page = static_cast<SettingsPage>((static_cast<int>(m_page) + 1) % count);
+        ImGui::PopID(); // the ID stack is the settings window's again
+        const bool inPage = g.NavWindow == m_pagePane;
+        // Left with nothing further left in the page: back to the list.
+        if (inPage && g.NavMoveDir == ImGuiDir_Left && ImGui::NavMoveRequestButNoResultYet()) {
+            ImGui::NavMoveRequestCancel();
+            m_focusList = true;
         }
+
+        // L1 and R1 turn the pages, as in the game's own menus; not while a
+        // slider is held (they speed it up and slow it down) or a list is open.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() &&
+            !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+            const int turn = ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)   ? count - 1
+                             : ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1
+                                                                              : 0;
+            if (turn != 0) {
+                m_page = static_cast<SettingsPage>((static_cast<int>(m_page) + turn) % count);
+                // The cursor stays on its side: in the new page, or on its entry.
+                if (inPage)
+                    m_focusPage = true;
+                else
+                    m_focusList = true;
+            }
+        }
+        if (hints > 0.0f)
+            drawPadHints(hints);
     }
     ImGui::End();
     ImGui::PopStyleVar();
+}
+
+void Overlay::drawPadHints(float height) {
+    const ImGuiContext &g = *ImGui::GetCurrentContext();
+    const SDL_GamepadType type = displayedControllerType();
+    struct Hint {
+        SDL_GamepadButton first;
+        SDL_GamepadButton second; // SDL_GAMEPAD_BUTTON_INVALID for none
+        const char *text;
+    };
+    constexpr SDL_GamepadButton kNone = SDL_GAMEPAD_BUTTON_INVALID;
+    std::vector<Hint> hints;
+    const bool inPage = g.NavWindow && m_pagePane && g.NavWindow->RootWindowForNav == m_pagePane;
+    if (ImGui::IsAnyItemActive()) {
+        hints = {{SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, "Adjust"},
+                 {SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Done"}};
+    } else if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+        hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Choose"}, {SDL_GAMEPAD_BUTTON_EAST, kNone, "Close"}};
+    } else if (g.NavLayer == ImGuiNavLayer_Menu) {
+        hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Open"}, {SDL_GAMEPAD_BUTTON_EAST, kNone, "Back"}};
+    } else if (inPage) {
+        hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Select"}, {SDL_GAMEPAD_BUTTON_EAST, kNone, "Back"}};
+        if (m_page == SettingsPage::Controls)
+            hints.push_back({SDL_GAMEPAD_BUTTON_WEST, kNone, "Clear a binding"});
+        hints.push_back({SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, "Page"});
+        hints.push_back({SDL_GAMEPAD_BUTTON_NORTH, kNone, "Top bar"});
+    } else {
+        hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Open"},
+                 {SDL_GAMEPAD_BUTTON_EAST, kNone, "Back to the game"},
+                 {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, "Page"},
+                 {SDL_GAMEPAD_BUTTON_NORTH, kNone, "Top bar"}};
+    }
+
+    ImDrawList *list = ImGui::GetWindowDrawList();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float right = at.x + ImGui::GetContentRegionAvail().x;
+    list->AddLine(ImVec2(at.x, at.y), ImVec2(right, at.y), IM_COL32(255, 255, 255, 34), 1.0f);
+    const float chip = std::floor(ImGui::GetFrameHeight() * 0.8f);
+    // A clear gap under the rule; what is left goes below the buttons.
+    const float y = std::floor(at.y + em(0.8f));
+    float x = at.x;
+    for (const Hint &hint : hints) {
+        float width = 0.0f;
+        for (const SDL_GamepadButton button : {hint.first, hint.second})
+            if (button != kNone)
+                width += bindingChipWidth(gfx::PadBinding::button(button), type, chip) + em(0.25f);
+        const ImVec2 text = ImGui::CalcTextSize(hint.text);
+        if (x + width + text.x > right)
+            break;
+        for (const SDL_GamepadButton button : {hint.first, hint.second}) {
+            if (button == kNone)
+                continue;
+            const gfx::PadBinding binding = gfx::PadBinding::button(button);
+            drawBindingChip(list, binding, type, ImVec2(x, y), chip);
+            x += bindingChipWidth(binding, type, chip) + em(0.25f);
+        }
+        list->AddText(ImVec2(x + em(0.15f), std::floor(y + (chip - text.y) * 0.5f)), palette::kTextMuted, hint.text);
+        x += em(0.15f) + text.x + em(1.3f);
+    }
+    ImGui::Dummy(ImVec2(0.0f, height - ImGui::GetStyle().ItemSpacing.y));
 }
 
 void Overlay::drawDisplayPage() {
@@ -268,13 +416,31 @@ void Overlay::drawDisplayPage() {
             "What fills the window beside a 4:3 picture: the picture itself, softly blurred and a little darker.",
             "What fills the window beside a 4:3 picture: your image, the first PNG or JPG in the game's "
             "\"borders\" folder (the blurred picture without one)."};
-        settingRow("Borders", kSidesHelp[static_cast<int>(m_settings.display.sides)]);
-        static constexpr const char *kSides[] = {"Black", "Blurred", "Image"};
-        int sides = static_cast<int>(m_settings.display.sides);
-        if (segmented("sides", &sides, kSides, 3)) {
-            m_settings.display.sides = static_cast<gfx::SdlGpuSides>(sides);
-            m_backend.setDisplayOptions(m_settings.display);
-            markDirty();
+        // Greyed out while the picture covers the whole window at both of
+        // the game's shapes (under Auto the loading screens and the title
+        // stay 4:3 with Widescreen on), as well as in the last frame shown:
+        // there is never anything beside it.
+        const gfx::SdlGpuRect picture = m_backend.displayRect();
+        bool bars = picture.width == 0u || picture.width < m_targetWidth || picture.height < m_targetHeight;
+        for (const int wide : {0, 1}) {
+            const gfx::SdlGpuRect rect =
+                gfx::sdlGpuDisplayRect(m_settings.display, 512u, 448u, m_targetWidth, m_targetHeight, wide);
+            bars = bars || rect.width < m_targetWidth || rect.height < m_targetHeight;
+        }
+        {
+            const Blocked blocked(bars ? nullptr
+                                  : m_settings.display.aspect == gfx::SdlGpuAspect::Stretch
+                                      ? "Stretch fills the window: pick another Aspect ratio for this."
+                                      : "The picture fills the window: change Aspect ratio or turn on Integer "
+                                        "scaling for this.");
+            settingRow("Borders", kSidesHelp[static_cast<int>(m_settings.display.sides)]);
+            static constexpr const char *kSides[] = {"Black", "Blurred", "Image"};
+            int sides = static_cast<int>(m_settings.display.sides);
+            if (segmented("sides", &sides, kSides, 3)) {
+                m_settings.display.sides = static_cast<gfx::SdlGpuSides>(sides);
+                m_backend.setDisplayOptions(m_settings.display);
+                markDirty();
+            }
         }
 
         settingRow("Integer scaling", "Whole multiples of the picture's height: even lines, with borders.");
@@ -295,20 +461,29 @@ void Overlay::drawDisplayPage() {
 void Overlay::drawSoundPage() {
     sectionHeader("Volume");
     if (beginSettings("sound")) {
-        settingRow("Master volume");
-        if (ImGui::SliderInt("##volume", &m_settings.volume, 0, 100, "%d%%")) {
-            applyVolume();
-            markDirty();
+        // The volume and the background's mute greyed out while Mute
+        // silences the game anyway (Rogue Galaxy: added).
+        const char *unmute = m_settings.muted ? "Turn off Mute for this." : nullptr;
+        {
+            const Blocked blocked(unmute);
+            settingRow("Master volume");
+            if (ImGui::SliderInt("##volume", &m_settings.volume, 0, 100, "%d%%")) {
+                applyVolume();
+                markDirty();
+            }
         }
         settingRow("Mute");
         if (toggle("mute", &m_settings.muted)) {
             applyVolume();
             markDirty();
         }
-        settingRow("Mute in the background", "Silences the game while its window is not in front.");
-        if (toggle("background", &m_settings.muteInBackground)) {
-            applyVolume();
-            markDirty();
+        {
+            const Blocked blocked(unmute);
+            settingRow("Mute in the background", "Silences the game while its window is not in front.");
+            if (toggle("background", &m_settings.muteInBackground)) {
+                applyVolume();
+                markDirty();
+            }
         }
         endSettings();
     }
@@ -335,9 +510,13 @@ void Overlay::drawInterfacePage() {
         settingRow("Hide the idle mouse cursor");
         if (toggle("cursor", &m_settings.hideIdleCursor))
             markDirty();
-        settingRow("Back + Start opens the menu", "The Guide button (Xbox, PS, Home) always does.");
-        if (toggle("backstart", &m_settings.backStartOpensMenu))
-            markDirty();
+        // Not on a Steam Deck: Steam keeps its own button, so View + Menu is
+        // the only way to the menu there.
+        if (!m_host.steamDeck) {
+            settingRow("Back + Start opens the menu", "The Guide button (Xbox, PS, Home) always does.");
+            if (toggle("backstart", &m_settings.backStartOpensMenu))
+                markDirty();
+        }
         endSettings();
     }
 
@@ -357,7 +536,9 @@ void Overlay::drawInterfacePage() {
                 }
             }
             if (canChangeSpeed()) {
-                settingRow("Fast-forward speed", "F4 switches between it and normal speed. Music keeps its tempo.",
+                settingRow("Fast-forward speed",
+                           "F4, or Game > Fast-forward in the top bar, switches between it and normal speed. "
+                           "Music keeps its tempo.",
                            "Experimental");
                 static constexpr float kSpeeds[] = {2.0f, 3.0f, 4.0f, 0.0f};
                 static constexpr const char *kSpeedNames[] = {"2\xC3\x97", "3\xC3\x97", "4\xC3\x97", "Unlimited"};
@@ -381,92 +562,158 @@ void Overlay::drawInterfacePage() {
         settingRow("Show the frame rate", "Frames the game draws each second. F3 toggles it.");
         if (toggle("fps", &m_settings.showFps))
             markDirty();
-        settingRow("Position");
-        static constexpr const char *kCorners[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
-        int corner = static_cast<int>(m_settings.fpsCorner);
-        if (segmented("corner", &corner, kCorners, 4)) {
-            m_settings.fpsCorner = static_cast<Corner>(corner);
-            markDirty();
+        {
+            // Greyed out while there is no counter to place (Rogue Galaxy: added).
+            const Blocked blocked(m_settings.showFps ? nullptr : "Turn on Show the frame rate for this.");
+            settingRow("Position");
+            static constexpr const char *kCorners[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
+            int corner = static_cast<int>(m_settings.fpsCorner);
+            if (segmented("corner", &corner, kCorners, 4)) {
+                m_settings.fpsCorner = static_cast<Corner>(corner);
+                markDirty();
+            }
         }
         endSettings();
     }
 }
 
 // The game's own switches, in the host's sections (Rogue Galaxy: added).
-void Overlay::drawGamePage(bool language) {
+void Overlay::drawGamePage() {
+    drawGameOptions(std::string(), "The game has no options of its own.", "Game");
+}
+
+void Overlay::drawLanguagePage() {
+    drawGameOptions("language", "There are no language options.", "Language");
+}
+
+// The host's switches for packs of art (Rogue Galaxy: added).
+void Overlay::drawTexturesPage() {
+    drawGameOptions("textures",
+                    "No texture packs found: put one (a folder or a .zip) in textures\\packs.\n"
+                    "They are drawn above 1x. The game ships none (docs\\TEXTURE_PACKS.md).",
+                    "Texture packs");
+}
+
+void Overlay::drawGameOptions(const std::string &page, const char *emptyText, const char *firstTitle) {
     if (std::none_of(m_host.gameOptions.begin(), m_host.gameOptions.end(),
-                     [&](const GameOption &option) { return option.language == language; })) {
-        mutedText(language ? "There are no language options." : "The game has no options of its own.");
+                     [&](const GameOption &option) { return option.page == page; })) {
+        mutedText("%s", emptyText);
         return;
     }
     bool started = false, table = false;
     for (const GameOption &option : m_host.gameOptions) {
-        if (option.language != language)
+        if (option.page != page)
             continue;
         const auto section = std::find_if(m_host.gameSections.begin(), m_host.gameSections.end(),
                                           [&](const auto &entry) { return entry.first == option.key; });
         if (!started || section != m_host.gameSections.end()) {
             if (table)
                 endSettings();
-            sectionHeader(section != m_host.gameSections.end() ? section->second.c_str() : language ? "Language" : "Game");
+            sectionHeader(section != m_host.gameSections.end() ? section->second.c_str() : firstTitle);
             table = beginSettings(("game." + option.key).c_str());
             started = true;
         }
         if (!table)
             continue;
-        settingRow(option.label.c_str(), option.help.empty() ? nullptr : option.help.c_str());
-        if (option.number()) {
-            const int value = gameNumber(option);
-            int next = value;
-            const ImGuiStyle &style = ImGui::GetStyle();
-            const float button = ImGui::GetFrameHeight();
-            const float reset = ImGui::CalcTextSize("Default").x + style.FramePadding.x * 2.0f;
-            ImGui::PushID(option.key.c_str());
-            if (ImGui::Button("-", ImVec2(button, 0.0f)))
-                next = value - option.step;
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(std::max(button * 3.0f, ImGui::GetContentRegionAvail().x - button -
-                                                                reset - style.ItemSpacing.x * 2.0f));
-            ImGui::SliderInt("##value", &next, option.minimum, option.maximum,
-                             option.format.empty() ? "%d" : option.format.c_str());
-            ImGui::SameLine();
-            if (ImGui::Button("+", ImVec2(button, 0.0f)))
-                next = value + option.step;
-            ImGui::SameLine();
-            ImGui::BeginDisabled(value == option.defaultNumber);
-            if (ImGui::Button("Default"))
-                next = option.defaultNumber;
-            ImGui::EndDisabled();
-            ImGui::PopID();
-            next = std::clamp(next, option.minimum, option.maximum);
+        // Greyed out, with the line that says what would make it work, while
+        // it does nothing (Rogue Galaxy: added).
+        const char *reason = m_host.gameOptionBlocked ? m_host.gameOptionBlocked(option.key) : nullptr;
+        {
+            const Blocked blocked(reason);
+            settingRow(option.label.c_str(), option.help.empty() ? nullptr : option.help.c_str());
+            drawGameControl(option);
+        }
+        if (!reason && waitsForRestart(option))
+            ImGui::TextColored(color(palette::kBad), "Restart the game for this to take effect.");
+    }
+    if (table)
+        endSettings();
+}
+
+void Overlay::drawGameControl(const GameOption &option) {
+    if (option.number() && !option.choices.empty()) {
+        // Rogue Galaxy: added, a value a button (the text's language).
+        const int value = gameNumber(option);
+        int index = value - option.minimum;
+        std::vector<const char *> labels;
+        for (const std::string &choice : option.choices)
+            labels.push_back(choice.c_str());
+        // The values that would do nothing greyed out (Rogue Galaxy: added).
+        std::unique_ptr<bool[]> usable;
+        if (m_host.gameChoiceBlocked) {
+            usable = std::make_unique<bool[]>(labels.size());
+            for (size_t choice = 0; choice < labels.size(); ++choice)
+                usable[choice] = !m_host.gameChoiceBlocked(option.key, option.minimum + static_cast<int>(choice));
+        }
+        if (segmented(option.key.c_str(), &index, labels.data(), static_cast<int>(labels.size()), usable.get())) {
+            const int next = std::clamp(option.minimum + index, option.minimum, option.maximum);
             if (next != value) {
                 m_settings.gameNumbers[option.key] = next;
-                // A "0" or "1" in the file reads as a switch too.
                 m_settings.gameOptions.erase(option.key);
                 if (m_host.setGameNumber)
                     m_host.setGameNumber(option.key, next);
                 markDirty();
             }
-            continue;
         }
-        bool on = gameOption(option);
-        if (!option.remembered) {
-            if (toggle(option.key.c_str(), &on) && m_host.setGameOption)
-                m_host.setGameOption(option.key, on);
-            continue;
+        return;
+    }
+    if (option.number()) {
+        const int value = gameNumber(option);
+        int next = value;
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float button = ImGui::GetFrameHeight();
+        const float reset = ImGui::CalcTextSize("Default").x + style.FramePadding.x * 2.0f;
+        ImGui::PushID(option.key.c_str());
+        if (ImGui::Button("-", ImVec2(button, 0.0f)))
+            next = value - option.step;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(std::max(button * 3.0f, ImGui::GetContentRegionAvail().x - button -
+                                                            reset - style.ItemSpacing.x * 2.0f));
+        // A multiplier's text has its value written in already: the
+        // slider prints it as it is (no % in it), and typing a value in
+        // is off, as what it would read is hundredths.
+        const bool multiplier = option.format == kMultiplierFormat;
+        char text[16];
+        const char *format = option.format.empty() ? "%d" : option.format.c_str();
+        if (multiplier) {
+            multiplierText(value, text, sizeof(text));
+            format = text;
         }
-        if (toggle(option.key.c_str(), &on)) {
-            m_settings.gameOptions[option.key] = on;
-            m_settings.gameNumbers.erase(option.key);
-            if (m_host.setGameOption)
-                m_host.setGameOption(option.key, on);
+        ImGui::SliderInt("##value", &next, option.minimum, option.maximum, format,
+                         multiplier ? ImGuiSliderFlags_NoInput : ImGuiSliderFlags_None);
+        ImGui::SameLine();
+        if (ImGui::Button("+", ImVec2(button, 0.0f)))
+            next = value + option.step;
+        ImGui::SameLine();
+        ImGui::BeginDisabled(value == option.defaultNumber);
+        if (ImGui::Button("Default"))
+            next = option.defaultNumber;
+        ImGui::EndDisabled();
+        ImGui::PopID();
+        next = std::clamp(next, option.minimum, option.maximum);
+        if (next != value) {
+            m_settings.gameNumbers[option.key] = next;
+            // A "0" or "1" in the file reads as a switch too.
+            m_settings.gameOptions.erase(option.key);
+            if (m_host.setGameNumber)
+                m_host.setGameNumber(option.key, next);
             markDirty();
         }
-        if (waitsForRestart(option))
-            ImGui::TextColored(color(palette::kBad), "Restart the game for this to take effect.");
+        return;
     }
-    if (table)
-        endSettings();
+    bool on = gameOption(option);
+    if (!option.remembered) {
+        if (toggle(option.key.c_str(), &on) && m_host.setGameOption)
+            m_host.setGameOption(option.key, on);
+        return;
+    }
+    if (toggle(option.key.c_str(), &on)) {
+        m_settings.gameOptions[option.key] = on;
+        m_settings.gameNumbers.erase(option.key);
+        if (m_host.setGameOption)
+            m_host.setGameOption(option.key, on);
+        markDirty();
+    }
 }
 
 void Overlay::drawControlsPage() {
@@ -556,7 +803,11 @@ void Overlay::drawControlsPage() {
         ImGui::TextUnformatted("Test your bindings");
         ImGui::PushTextWrapPos(0.0f);
         mutedText("%s", "Press anything: the pad lights up with what the game would read.");
-        mutedText("%s", "Click a binding to change it; right-click to clear it.");
+        if (padInUse())
+            mutedText("%s on a binding changes it; %s clears it.", padButtonName(SDL_GAMEPAD_BUTTON_SOUTH).c_str(),
+                      padButtonName(SDL_GAMEPAD_BUTTON_WEST).c_str());
+        else
+            mutedText("%s", "Click a binding to change it; right-click to clear it.");
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
     }
@@ -638,7 +889,11 @@ void Overlay::drawBindingTable(bool keyboard) {
                 if (ImGui::InvisibleButton("##bind", ImVec2(cellWidth, chip), ImGuiButtonFlags_EnableNav))
                     beginBindingCapture(input, keyboard, slot);
                 const bool over = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                // Cleared by a right-click, or X (Square) or Delete on the cursor.
+                const bool clear = ImGui::IsItemFocused() && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) ||
+                                                             ImGui::IsKeyPressed(ImGuiKey_Delete, false) ||
+                                                             ImGui::IsKeyPressed(ImGuiKey_Backspace, false));
+                if (clear || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                     gfx::PadConfig config = m_settings.pad;
                     config.slots(input, keyboard)[slot] = {};
                     setPadConfig(config);
@@ -775,12 +1030,19 @@ void Overlay::drawShortcuts() {
             ImGui::TableSetupColumn("keys", ImGuiTableColumnFlags_WidthFixed, em(7.5f));
             ImGui::TableSetupColumn("what", ImGuiTableColumnFlags_WidthFixed, em(15.0f));
             static constexpr const char *kGuide[] = {"Guide"}, *kBackStart[] = {"Back", "Start"},
-                                        *kShoulders[] = {"L1", "R1"}, *kBack[] = {"B / Circle"};
-            shortcutRow(kGuide, 1, "Open or close the menu");
-            if (m_settings.backStartOpensMenu)
+                                        *kViewMenu[] = {"View", "Menu"}, *kShoulders[] = {"L1", "R1"},
+                                        *kBack[] = {"B / Circle"}, *kTop[] = {"Y / Triangle"},
+                                        *kClear[] = {"X / Square"};
+            if (m_host.steamDeck)
+                shortcutRow(kViewMenu, 2, "Open or close the menu");
+            else if (m_settings.backStartOpensMenu)
                 shortcutRow(kBackStart, 2, "Open or close the menu");
+            if (!m_host.steamDeck)
+                shortcutRow(kGuide, 1, "Open or close the menu");
             shortcutRow(kShoulders, 2, "Previous and next settings page", "/");
             shortcutRow(kBack, 1, "Back, in the menu");
+            shortcutRow(kTop, 1, "To the top bar and back");
+            shortcutRow(kClear, 1, "Clear a binding (Controls)");
             ImGui::EndTable();
         }
     }

@@ -2,159 +2,106 @@
 
 **Rogue Galaxy** (Level-5 / SCE, PlayStation 2) as a native Windows game: a
 static recompilation of the USA release (SCUS-97490), built on
-[PS2Recomp](https://github.com/ran-j/PS2Recomp). You build it from your own
-disc image; nothing of the game is distributed.
+[PS2Recomp](https://github.com/ran-j/PS2Recomp)
+([how it works](docs/HOW-IT-WORKS.md)). You build it from your own disc
+image; nothing of the game is distributed.
 
 <p align="center">
   <img src="docs/images/salgin-plaza.jpg" width="49%" alt="Salgin in widescreen">
   <img src="docs/images/battle.jpg" width="49%" alt="A battle in Salgin">
 </p>
 
-- 60 fps, or the original 30
-- Widescreen, up to 32:9
+- 60 fps
+- Widescreen
 - Up to 8x internal resolution
-- An in-game menu (F1) for graphics, sound and controls
-- Game options: camera, field of view, draw distance, instant text,
-  encounter rate, experience, money, item drops, shop prices and more
-  ([all of them](docs/OPTIONS.md))
+- In-game menu (F1)
+- [New game settings](docs/OPTIONS.md)
+- Japanese voices and movies (undub)
+- The Japanese Director's Cut's battle balance, enemy behavior and party
+  AI, as options
+- Text in French, German, Spanish or Italian (experimental)
+- [Texture packs](docs/TEXTURE_PACKS.md), PCSX2's included
 
 ## What to expect
 
-This is an early pre-release (0.1.0). The whole game is recompiled and
-plays, but:
+This is an early pre-release (0.2.0). The whole game plays, but:
 
-- **It has not been played from start to finish.** Most of the testing
-  covers the early game; later chapters, the Factory and Insectron have not
-  been checked, and something may break further in.
-- **It has been tested on one PC** (Windows 11, an NVIDIA RTX 4070 Ti, an
-  Intel i7-10700K). Other graphics cards, AMD and Intel ones above all, and
-  slower PCs may behave differently.
+- **It has not been played from start to finish.** Most testing covers the
+  early game; later chapters, the Factory and Insectron are unchecked.
 - **Expect bugs**: graphics glitches, slowdowns, maybe a freeze. Save often,
-  in more than one slot, and copy your memory card (`disc\mc0`) now and
-  then.
+  in more than one slot, and back up `disc\mc0` now and then.
 - **Only the USA disc** (SCUS-97490) works.
 
-Found a problem? Open an [issue](../../issues) with what you were doing and
-the game's log, `build\last-run.log` (for the install, `install.log`). Each
-start replaces the log; the one before is `build\last-run.prev.log`. Each
-release's known issues are in the [CHANGELOG](CHANGELOG.md).
+Known issues are in the [CHANGELOG](CHANGELOG.md); what is being worked on
+is in [docs/STATUS.md](docs/STATUS.md).
+
+**Found a problem?** Open an [issue](../../issues), say what you were doing
+and attach `build\last-run.log` (`install.log` for the install). The log of
+the run before is `build\last-run.prev.log`.
 
 ## Install (Windows)
 
-You need Windows 10 or 11 (64-bit), about 16 GB free, an internet connection
-and your own image of the disc: Rogue Galaxy, USA, SCUS-97490
-([`docs/DISC.md`](docs/DISC.md)).
+You need Windows 10 or 11 (64-bit), about 16 GB free, an internet
+connection and your own uncompressed `.iso` of Rogue Galaxy USA
+(SCUS-97490).
 
 1. Download `RogueGalaxy-<version>.zip` from the [releases](../../releases)
    page (not "Source code").
-2. Extract it to a short folder, such as `C:\RogueGalaxy`.
+2. Extract it to a short path, such as `C:\`.
 3. Double-click `Install.bat` and choose your disc image.
-4. Wait about 20 minutes on a fast PC, up to an hour on a slower one: it
-   downloads the build tools (about 300 MB) into the folder, extracts your
-   disc and builds the game. Nothing is installed in Windows.
+4. Wait about 20 minutes on a fast PC, up to an hour on a slower one.
 5. Play with `Rogue Galaxy.exe`.
 
-If it stops, `install.log` says why; running `Install.bat` again continues
-where it stopped. If an antivirus removes the compiler, restore it and run
-it again. To uninstall, delete the folder (your saves are in `disc\mc0`).
+To update later, double-click `Update.bat`.
 
-### Undub (optional)
-
-To play with the Japanese voices and movies, you also need your own image of
-the Japanese Director's Cut (SCPS-17013). After `Install.bat`, double-click
-`Install-Undub.bat` and choose that image (or drop it onto the file). It copies
-the voices and movies, about 3 GB, into the folder. Then turn the undub on in
-the game: F1 > Settings > Language.
-
-### Update
-
-The game says at start when a newer version is out, and F1 > Rogue Galaxy >
-About links to it. Nothing changes by itself: to update, double-click
-`Update.bat`. It downloads the newest release, replaces only the files that
-changed and rebuilds what depends on them: a few minutes when little
-changed, about as long as the first install when the new version changes
-how the game's code is translated. The build tools stay unless the new
-version needs newer ones. Your disc, saves (`disc\mc0`), settings
-(`%APPDATA%\RogueGalaxy\Recompiled`), textures and the undub's files
-(`disc\JA`) are not touched. `update.log` and `install.log` say what
-happened. A zip downloaded by hand from the [releases](../../releases) page
-can be dropped onto `Update.bat` instead.
-
-Version 0.1.0 has no `Update.bat`, so the first update from it is by hand:
-download the new `RogueGalaxy-<version>.zip`, extract it where your game
-folder is (for `C:\RogueGalaxy`, into `C:\`, so that the zip's `RogueGalaxy`
-folder merges into yours; let Windows replace the files it asks about), then
-double-click `Install.bat` again. It does not ask for the disc image. From
-then on `Update.bat` is in the folder.
-
-Updating into a fresh folder works too, but then the tools are downloaded,
-the disc extracted and everything built again, as the first time; copy
-`disc\mc0` (and `disc\mc1`) from the old folder to keep your saves.
+The full guide, with the undub, the European texts, updating, saves from
+PCSX2 and uninstalling, is in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Controls
 
-The game window takes a keyboard or a gamepad (PlayStation layout).
+A gamepad, or the keyboard and mouse: the sword on the left click, the
+guard on E or the right click, jump on Space, the gun on F, the menus on
+Tab or Esc. In the game's menus the right click and Esc go back and the
+wheel moves up and down. All of it can be changed in F1 > Settings > Controls.
 
-| Pad | Keyboard |
+| Pad | Keyboard and mouse |
 |---|---|
-| Left stick | W A S D |
-| D-pad | Arrow keys |
-| ✕ / ○ / ▢ / △ | X or Space / C or Esc / Z / V |
-| L1 / R1 / L2 / R2 | Q / E / Left Shift / Right Shift |
-| Start / Select | Enter / Tab |
-| Right stick | I J K L |
+| Left stick | W A S D (hold Left Ctrl to walk) |
+| Right stick | The mouse, or I J K L |
+| D-pad | Arrow keys; the wheel is left and right |
+| ✕ / ○ / ▢ / △ | Left click / Space / F / Tab or Esc |
+| L1 / R1 / L2 / R2 | Q / E or right click / 1 / 2 |
+| L3 / R3 | C / V |
+| Start / Select | Enter / M |
+
+F11 or Alt+Enter toggles fullscreen. F12 takes a screenshot.
+
+### The F1 menu
 
 **F1** (or the Guide button, or Back+Start) opens the menu: display, sound,
-controls, and the Game page with the options above. F11 or Alt+Enter
-toggles fullscreen, F12 takes a screenshot. The options are also on the
-game's own Settings screen (System > Settings, L1 and R1 to turn the page).
-See [docs/OPTIONS.md](docs/OPTIONS.md) for each one.
+controls, the game options, Language (the text's language, the undub) and
+Textures. Most game options are also on the game's own Settings screen
+(System > Settings). Every option and where it is:
+[docs/OPTIONS.md](docs/OPTIONS.md).
+
+With a controller: ✕ opens a page, ○ goes back, △ reaches the menu bar,
+L1 and R1 turn the pages.
 
 <p align="center"><img src="docs/images/menu-game.jpg" width="70%" alt="The F1 menu's Game page"></p>
 
-## Roadmap
-
-**Done, in 0.1.0**
-
-- The whole game recompiled into native Windows code, built on your PC by
-  the installer from your own disc image
-- 60 fps, with the parts of the game that count frames (jumps, enemies,
-  cutscenes, menus, the clock) fixed to keep their speed
-- Widescreen up to 32:9, following the window's shape
-- Internal resolution up to 8x
-- The F1 menu: display, sound, keyboard and controller remapping, and the
-  game options, also on the game's own Settings screen
-- Fixes for the freezes, falls through the floor and graphics errors found
-  so far
-
-**In progress**
-
-- Xbox buttons in the game's text
-- New options (weapon growth, minimap and compass size) and a notice when a
-  new version is out
-- Fixes: the free camera getting the game stuck, a choppy walk in the later
-  parts of Salgin
-- Improving performance: the heaviest battles and some bosses still drop
-  below 60 fps
-- A native Linux build, for Linux PCs and the Steam Deck (the Windows build
-  through Proton is prepared but untested:
-  [BUILDING.md](docs/BUILDING.md#steam-deck-untested))
-- The European release's languages and the Japanese voices, read from your
-  own disc of that version (being studied)
-
-**Planned**
-
-- Turning the camera with the mouse
-- Faster Factory scenes, as with the transporters
-
 ## More
 
-- [CHANGELOG.md](CHANGELOG.md): what each release brings, and its known issues
-- [docs/OPTIONS.md](docs/OPTIONS.md): the menu and every game option
-- [docs/BUILDING.md](docs/BUILDING.md): building by hand, and the project's layout
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): the debug launchers, profiling and
-  the environment variables
-- [docs/STATUS.md](docs/STATUS.md): how the work went, and what the game needs
+Every page, by who it is for: [docs/README.md](docs/README.md). The main
+ones:
+
+- [docs/INSTALL.md](docs/INSTALL.md): installing, the undub, the European
+  texts, updating
+- [CHANGELOG.md](CHANGELOG.md): each release, and its known issues
+- [docs/OPTIONS.md](docs/OPTIONS.md): every option
+- [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md): the project in plain words
+- [docs/STATUS.md](docs/STATUS.md): where things stand, and the work log
+- [docs/BUILDING.md](docs/BUILDING.md): building by hand
+- [docs/HOOKS.md](docs/HOOKS.md): changing the game's behaviour
 
 ## Legal
 

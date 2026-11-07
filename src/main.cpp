@@ -33,10 +33,13 @@
 #include "battle_rates.h"
 #include "button_glyphs.h"
 #include "camera_view.h"
+#include "mouse_camera.h"
+#include "dc_balance.h"
 #include "dev_tools.h"
 #include "draw_distance.h"
 #include "free_camera.h"
 #include "instant_text.h"
+#include "text_language.h"
 #include "voice_language.h"
 #include "map_chests.h"
 #include "native_renderer.h"
@@ -50,8 +53,10 @@
 #include "settings_pages.h"
 #include "shop_prices.h"
 #include "step_fixes.h"
+#include "native_capture.h"
 #include "vif1_thread.h"
 #include "vu0_flags.h"
+#include "vu0_native.h"
 #include "ps2_runtime.h"
 #include "runtime/ps2_native_iop.h"
 
@@ -163,6 +168,7 @@ int run(int argc, char **argv)
     rg::steps::install(runtime);
     rg::libc::install(runtime);
     rg::vu0::install(runtime);
+    rg::vu0native::install(runtime);
     rg::movie::install(runtime);
     rg::loading::install(runtime);
     rg::widescreen::install(runtime);
@@ -173,19 +179,24 @@ int run(int argc, char **argv)
     rg::opening::install(runtime);
     rg::devtools::install(runtime);
     rg::cameraview::install(runtime);
+    rg::mousecamera::install();
     rg::drawdistance::install(runtime);
     rg::battlerates::install(runtime);
+    rg::dcbalance::install(runtime);
     rg::shopprices::install(runtime);
     rg::instanttext::install(runtime);
     rg::voicelanguage::install(runtime);
+    rg::textlanguage::install(runtime);
     rg::mapchests::install(runtime);
     rg::freecamera::install(runtime);
     rg::settingspages::install(runtime);
-    rg::quickscenes::install(runtime);
+    rg::quickscenes::install();
     // Read here, after the menu's settings and before anything native sets
     // itself up, so the whole run sees one answer.
     if (rg::nativerenderer::enabled())
         std::fprintf(stderr, "[rg] native renderer on\n");
+    // The native pipeline's game hooks, with it on (RG_NATIVE_PIPELINE=1).
+    rg::nativecapture::install(runtime);
     rg::debug::installCallTrace(runtime);
     rg::debug::installHardwareWatch(runtime);
     rg::debug::installPosTrace(runtime);

@@ -5,6 +5,7 @@
 
 #include "gfx/backends/sdlgpu/sdlgpu_backend.h"
 #include "ui/ui_glyphs.h"
+#include "ui/ui_multiplier.h"
 #include "ui/ui_settings.h"
 
 #include <array>
@@ -19,6 +20,7 @@
 #include <vector>
 
 struct ImGuiContext;
+struct ImGuiWindow;
 
 namespace dq8::ui {
 
@@ -43,8 +45,8 @@ struct GameOption {
     bool defaultValue = false;
     // A number from minimum to maximum instead of a switch, when maximum is
     // the larger, shown as a slider labelled by `format` (printf, its %d the
-    // value), between - and + buttons that move it by `step`, and a Default
-    // button.
+    // value, or kMultiplierFormat), between - and + buttons that move it by
+    // `step`, and a Default button.
     int minimum = 0;
     int maximum = 0;
     int defaultNumber = 0;
@@ -57,8 +59,12 @@ struct GameOption {
     // Takes effect at the next start: once it differs from what this run
     // started with, the menu says so in red.
     bool restart = false;
-    // Shown on the Language page instead of the Game page (Rogue Galaxy: added).
-    bool language = false;
+    // The page it is on: empty for Game's, "language" for Language's,
+    // "textures" for Textures' (Rogue Galaxy: added).
+    std::string page;
+    // A number shown as one button a value, minimum first, instead of a
+    // slider: the names of the values (Rogue Galaxy: added).
+    std::vector<std::string> choices;
     bool number() const { return maximum > minimum; }
 };
 
@@ -85,13 +91,28 @@ struct HostServices {
     std::function<void(const std::string &key, bool on)> setGameOption;
     std::function<void(const std::string &key, int value)> setGameNumber;
     std::function<bool(const std::string &key)> gameOptionState;
+    // Why a game option does nothing now, as the one line that says what
+    // would make it work (text that outlives the call), or null when it
+    // works: the menu shows the option greyed out with that line under it
+    // (Rogue Galaxy: added).
+    std::function<const char *(const std::string &key)> gameOptionBlocked;
+    // A value of a game option's buttons (GameOption::choices) that would do
+    // nothing, such as a language whose files are missing: that button is
+    // greyed out (Rogue Galaxy: added).
+    std::function<bool(const std::string &key, int value)> gameChoiceBlocked;
     // A newer release than this build, its version and page, empty while
     // none is known: the About window says so (Rogue Galaxy: added).
     std::function<std::pair<std::string, std::string>()> newerRelease;
+    // A Steam Deck, whose Steam button belongs to Steam: Back + Start is the
+    // only way to the menu there, so it cannot be turned off, and the menu
+    // names the Deck's buttons (Rogue Galaxy: added).
+    bool steamDeck = false;
 };
 
 // Game: Rogue Galaxy's own switches (added).
-enum class SettingsPage : uint8_t { Display, Sound, Controls, Game, Language, Interface, Count };
+// Language and Textures: the options a host puts there (GameOption::page),
+// apart from Game's (Rogue Galaxy: added).
+enum class SettingsPage : uint8_t { Display, Sound, Controls, Game, Language, Textures, Interface, Count };
 
 class Overlay final : public gfx::SdlGpuOverlay {
 public:
@@ -114,13 +135,17 @@ public:
     bool capturesInput() const override;
 
     const Settings &settings() const { return m_settings; }
+    // The internal resolution as Display shows it: the one asked for until
+    // it applies (a paused game applies it when it resumes), then the one
+    // in use (Rogue Galaxy: added).
+    uint32_t shownResolutionScale() const {
+        return m_pendingScale != 0u ? m_pendingScale : m_backend.activeResolutionScale();
+    }
     // A game option changed elsewhere, such as the game's own settings
     // screen (Rogue Galaxy: added): passed to the host and kept as the
     // menu's own changes are.
     void setGameOptionValue(const std::string &key, bool on);
     void setGameNumberValue(const std::string &key, int value);
-    // Display > Borders, changed there too (Rogue Galaxy: added).
-    void setSides(gfx::SdlGpuSides sides);
     void setMenuOpen(bool open);
     void openSettings(SettingsPage page);
     // Opens one of the menu bar's menus at the next frame, by its label.
@@ -153,6 +178,19 @@ private:
         bool keyboard = false;
         int slot = 0;
         double startedAt = 0.0;
+        // B on a controller binds B when tapped and cancels when held: the
+        // pad has no Esc.
+        double backDownAt = -1.0;
+    };
+    // Where keyboard and controller navigation stood before this frame's
+    // input, which Back (B, Esc) is judged by: ImGui's own handling of it
+    // has already moved things by the time the frame is drawn.
+    struct NavBefore {
+        ImGuiWindow *window = nullptr;
+        bool menuLayer = false;
+        bool itemActive = false;
+        bool popupOpen = false;
+        bool modalOpen = false;
     };
     struct ScriptStep {
         uint64_t frame = 0u;
@@ -172,8 +210,21 @@ private:
     bool hotkey(const SDL_KeyboardEvent &key);
     bool gamepadShortcut(const SDL_GamepadButtonEvent &button);
     bool captureEvent(const SDL_Event &event);
-    bool backOut();
+    // Back, one level at a time; `pad` when it came from the controller's B.
+    void backOut(bool pad);
     void toggleMenu(bool fromController);
+    void toggleBarFocus();
+    // The controllers' state for ImGui, read here instead of by its SDL
+    // backend: the left stick moves the cursor as the D-pad does, and the
+    // right stick scrolls.
+    void feedGamepad();
+    void rememberNavigation();
+    bool padInUse() const { return m_lastInputPad; }
+    // A controller button as the controller in use labels it ("B", "Circle").
+    std::string padButtonName(SDL_GamepadButton button) const;
+    // The row of button hints along the settings window's bottom edge.
+    void drawPadHints(float height);
+    void drawQuitPrompt();
 
     // Frame side.
     void updateScale();
@@ -186,13 +237,19 @@ private:
     void drawSoundPage();
     void drawControlsPage();
     void drawBindingTable(bool keyboard);
-    void drawGamePage(bool language);
+    void drawGamePage();
+    void drawLanguagePage();
+    void drawTexturesPage();
+    // The host's switches whose page is `page`, in its sections.
+    void drawGameOptions(const std::string &page, const char *emptyText, const char *firstTitle);
+    // One option's switch, slider or choices.
+    void drawGameControl(const GameOption &option);
     void drawInterfacePage();
     void drawCapturePrompt();
     void drawAbout();
     void drawShortcuts();
     void drawStats();
-    void pictureBounds(ImVec2 &min, ImVec2 &max) const;
+    void windowBounds(ImVec2 &min, ImVec2 &max) const;
     void drawFps();
     void drawSpeedBadge();
     void drawPauseBanner();
@@ -233,8 +290,14 @@ private:
     // The switches as this run started with them, for those that wait for a
     // restart (Rogue Galaxy: added).
     std::map<std::string, bool> m_startOptions;
+    std::map<std::string, int> m_startNumbers;
     bool m_startCaptured = false;
     SDL_Window *m_window = nullptr;
+    // The size render() last drew into, the window's in pixels: beside
+    // the backend's displayRect, whether the picture leaves bars (Rogue
+    // Galaxy: added).
+    uint32_t m_targetWidth = 0u;
+    uint32_t m_targetHeight = 0u;
     ImGuiContext *m_context = nullptr;
     bool m_platformReady = false;
     bool m_rendererReady = false;
@@ -253,10 +316,29 @@ private:
     bool m_hostPaused = false;
     bool m_fastForward = false;
     bool m_gamepadNavHeld = false;
+    // The settings window's two halves, the page list and the page, which
+    // the cursor moves between by Right / A and Left / B (the windows
+    // themselves; ImGui keeps them for the life of the context).
+    ImGuiWindow *m_listPane = nullptr;
+    ImGuiWindow *m_pagePane = nullptr;
+    bool m_focusList = false;
+    bool m_focusPage = false;
+    bool m_quitAsk = false;
+    bool m_cancelQuit = false;
+    NavBefore m_navBefore;
+    // The last input was a controller's, so the hints show its buttons.
+    bool m_lastInputPad = false;
+    // The left stick's directions as D-pad presses: left, right, up, down.
+    std::array<bool, 4> m_stickHeld{};
     bool m_keyboardBindings = false;
     int m_selectBindings = -1;
     gfx::PadInput m_hoveredInput = gfx::PadInput::Count;
     Capture m_capture;
+    // Whether the pointer is over the capture prompt (its buttons are not a
+    // binding), and the mouse button a capture took, whose release the menu
+    // must not see.
+    bool m_capturePromptHovered = false;
+    uint8_t m_captureMouseDown = 0u;
     uint32_t m_pendingScale = 0u;
     double m_pendingScaleSince = 0.0;
 

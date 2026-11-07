@@ -345,6 +345,32 @@ struct Options
     const char *coverage = nullptr;
     bool time = false;
     bool inventory = false;
+    // Synthetic checks for pieces no recording holds (--synth): the code
+    // patched with pieces from raw images, data quads set, and the reference
+    // the interpreter's run of the result instead of the recorded kicks.
+    bool synth = false;
+    // --synth-floats: each chunk's int16 positions, normals and UVs turned into the floats B would have made.
+    bool floats = false;
+    bool floatColors = false; // --synth-float-colors: the colors section as floats (int16 / 32768 * 256)
+    // --synth-bones ENTRY: each chunk enters the skinning B at ENTRY pairs
+    // (76.z set, TOP+1.w), its weights section widened to four bones (the
+    // bones it had, repeated, weighted 100, 70, 55, 30 / 255).
+    int32_t bonesEntry = -1;
+    // --synth-list: each chunk drawn as a triangle list (TOP.x's PRIM type
+    // 3), its count (TOP.y, and NLOOP in TOP.z) cut to whole triangles.
+    bool list = false;
+    struct CodePatch
+    {
+        std::string file;
+        uint32_t start, end;
+    };
+    std::vector<CodePatch> patches;
+    struct QuadPoke
+    {
+        uint32_t quad;
+        float value[4];
+    };
+    std::vector<QuadPoke> pokes;
     Tolerance tolerance;
 };
 
@@ -379,6 +405,57 @@ bool parse(int argc, char **argv, Options &options)
         {
             const std::string value = argv[++i];
             options.show = value == "diff" ? kShowFirstDifferences : std::strtoll(value.c_str(), nullptr, 0);
+        }
+        else if (arg == "--synth")
+            options.synth = true;
+        else if (arg == "--synth-code" && hasValue)
+        {
+            // FILE:START:END, bytes in hex, FILE a 16 KiB image (tools/vu1/piece.py).
+            const std::string value = argv[++i];
+            const size_t b = value.rfind(':'), a = b == std::string::npos ? b : value.rfind(':', b - 1);
+            if (a == std::string::npos || b == std::string::npos)
+                return false;
+            options.patches.push_back({value.substr(0, a),
+                                       static_cast<uint32_t>(std::strtoul(value.c_str() + a + 1, nullptr, 16)),
+                                       static_cast<uint32_t>(std::strtoul(value.c_str() + b + 1, nullptr, 16))});
+            options.synth = true;
+        }
+        else if (arg == "--synth-float-colors")
+        {
+            options.floatColors = true;
+            options.floats = true;
+            options.synth = true;
+        }
+        else if (arg == "--synth-bones" && hasValue)
+        {
+            options.bonesEntry = static_cast<int32_t>(std::strtol(argv[++i], nullptr, 0));
+            options.synth = true;
+        }
+        else if (arg == "--synth-list")
+        {
+            options.list = true;
+            options.synth = true;
+        }
+        else if (arg == "--synth-floats")
+        {
+            options.floats = true;
+            options.synth = true;
+        }
+        else if (arg == "--synth-quad" && hasValue)
+        {
+            // N:x,y,z,w (floats): quad N of every run's data memory.
+            const std::string value = argv[++i];
+            Options::QuadPoke poke{static_cast<uint32_t>(std::strtoul(value.c_str(), nullptr, 0)), {0, 0, 0, 0}};
+            const char *at = std::strchr(value.c_str(), ':');
+            for (int k = 0; at && k < 4; ++k)
+            {
+                poke.value[k] = std::strtof(at + 1, nullptr);
+                at = std::strchr(at + 1, ',');
+                if (!at && k < 3)
+                    break;
+            }
+            options.pokes.push_back(poke);
+            options.synth = true;
         }
         else if (arg == "--time")
             options.time = true;
@@ -485,6 +562,122 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+    for (const Options::CodePatch &patch : options.patches)
+    {
+        std::vector<uint8_t> image(PS2_VU1_CODE_SIZE);
+        std::FILE *f = std::fopen(patch.file.c_str(), "rb");
+        if (!f || std::fread(image.data(), 1, image.size(), f) != image.size())
+        {
+            std::fprintf(stderr, "cannot read the image %s\n", patch.file.c_str());
+            return 2;
+        }
+        std::fclose(f);
+        for (auto &[hash, code] : recording.codes)
+            if (!options.filtered || hash == options.programHash)
+                std::memcpy(code.data() + patch.start, image.data() + patch.start, patch.end - patch.start);
+    }
+    for (Run &run : recording.runs)
+        for (const Options::QuadPoke &poke : options.pokes)
+            if (!options.filtered || run.programHash == options.programHash)
+                std::memcpy(run.data.data() + poke.quad * 16u, poke.value, 16u);
+    if (options.bonesEntry >= 0)
+    {
+        for (Run &run : recording.runs)
+        {
+            if (options.filtered && run.programHash != options.programHash)
+                continue;
+            auto word = [&](uint32_t q, uint32_t lane) -> uint32_t {
+                uint32_t v;
+                std::memcpy(&v, run.data.data() + (q & 1023u) * 16u + lane * 4u, 4u);
+                return v;
+            };
+            auto set = [&](uint32_t q, uint32_t lane, uint32_t v) {
+                std::memcpy(run.data.data() + (q & 1023u) * 16u + lane * 4u, &v, 4u);
+            };
+            const uint32_t top = run.header.top;
+            const uint32_t had = (word(76u, 2) & 0xFFFFu) != 0u ? word(top + 1u, 3) & 0xFFFFu : 0u;
+            set(76u, 2, 1u);
+            if (!(run.header.flags & replay::kRunResume))
+                continue;
+            set(top + 1u, 3, static_cast<uint32_t>(options.bonesEntry));
+            const uint32_t count = word(top, 1) & 0xFFFFu;
+            const uint32_t weights = top + 2u + (word(top + 1u, 2) & 0xFFFFu);
+            static constexpr uint32_t kWeights[4] = {100u, 70u, 55u, 30u};
+            for (uint32_t k = 0; k < count; ++k)
+            {
+                const uint32_t q = weights + 2u * k;
+                const uint32_t a = word(q, 0) & 0xFFFFu, b = had != 0u ? word(q, 1) & 0xFFFFu : a;
+                const uint32_t index[4] = {a, b, b, a};
+                for (uint32_t i = 0; i < 4u; ++i)
+                {
+                    set(q, i, (word(q, i) & 0xFFFF0000u) | index[i]);
+                    set(q + 1u, i, kWeights[i]);
+                }
+            }
+        }
+    }
+    if (options.list)
+    {
+        for (Run &run : recording.runs)
+        {
+            if (!(run.header.flags & replay::kRunResume) || (options.filtered && run.programHash != options.programHash))
+                continue;
+            uint8_t *top = run.data.data() + (run.header.top & 1023u) * 16u;
+            uint32_t prim, count;
+            std::memcpy(&prim, top, 4u);
+            std::memcpy(&count, top + 4u, 4u);
+            prim = (prim & ~7u) | 3u;
+            count = (count & 0xFFFF0000u) | ((count & 0xFFFFu) / 3u * 3u);
+            // TOP.z is the GIF tag's word: NLOOP the count, EOP above it.
+            uint32_t tag;
+            std::memcpy(&tag, top + 8u, 4u);
+            tag = (tag & ~0x7FFFu) | (count & 0xFFFFu);
+            std::memcpy(top, &prim, 4u);
+            std::memcpy(top + 4u, &count, 4u);
+            std::memcpy(top + 8u, &tag, 4u);
+        }
+    }
+    if (options.floats)
+    {
+        for (Run &run : recording.runs)
+        {
+            if (!(run.header.flags & replay::kRunResume) || (options.filtered && run.programHash != options.programHash))
+                continue;
+            auto word = [&](uint32_t q, uint32_t lane) -> int32_t {
+                int32_t v;
+                std::memcpy(&v, run.data.data() + (q & 1023u) * 16u + lane * 4u, 4u);
+                return v;
+            };
+            auto put = [&](uint32_t q, uint32_t lane, float f) {
+                std::memcpy(run.data.data() + (q & 1023u) * 16u + lane * 4u, &f, 4u);
+            };
+            const uint32_t top = run.header.top;
+            const uint32_t count = static_cast<uint32_t>(word(top, 1)) & 0xFFFFu;
+            const uint32_t positions = top + 2u;
+            const uint32_t normals = positions + (static_cast<uint32_t>(word(top, 3)) & 0xFFFFu);
+            const uint32_t uvs = positions + (static_cast<uint32_t>(word(top + 1u, 0)) & 0xFFFFu);
+            const uint32_t colors = positions + (static_cast<uint32_t>(word(top + 1u, 1)) & 0xFFFFu);
+            float scale[3][4];
+            for (int q = 0; q < 3; ++q)
+                std::memcpy(scale[q], run.data.data() + (77u + q) * 16u, 16u);
+            for (uint32_t k = 0; k < count; ++k)
+            {
+                for (uint32_t i = 0; i < 3u; ++i)
+                {
+                    put(positions + k, i, static_cast<float>(word(positions + k, i)) / 32768.0f * scale[0][i]);
+                    put(normals + k, i, static_cast<float>(word(normals + k, i)) / 32768.0f * scale[1][i]);
+                }
+                if (options.floatColors)
+                    for (uint32_t i = 0; i < 4u; ++i)
+                        put(colors + k, i, static_cast<float>(word(colors + k, i)) / 32768.0f * 256.0f);
+                for (uint32_t i = 0; i < 2u; ++i)
+                    put(uvs + k, i, static_cast<float>(word(uvs + k, i)) / 32768.0f * scale[2][i]);
+            }
+        }
+    }
+    std::unique_ptr<Vu1Engine> synthReference;
+    if (options.synth)
+        synthReference = std::make_unique<Vu1Engine>(false);
     uint32_t resumes = 0u;
     uint64_t kicks = 0u;
     for (const Run &run : recording.runs)
@@ -544,12 +737,15 @@ int main(int argc, char **argv)
                 }
                 stepper->setCoverage(wanted ? &hits : nullptr, &path);
             }
+            std::vector<GifEvent> synthEvents;
+            if (synthReference)
+                synthReference->run(recording, run, synthEvents);
             candidate->run(recording, run, events);
             if (!wanted || !candidate->accepts(run))
             {
                 continue;
             }
-            const std::vector<GifEvent> reference = eventsOf(run.kicks);
+            const std::vector<GifEvent> reference = synthReference ? synthEvents : eventsOf(run.kicks);
             const Comparison comparison = compare(reference, events, options.tolerance);
             ProgramResult &result = programs[{run.programHash, run.programPC}];
             ++result.runs;

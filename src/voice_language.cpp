@@ -9,7 +9,9 @@
 #include <string>
 
 #include "ps2_runtime.h"
+#include "return_hook.h"
 #include "scene_timing.h"
+#include "text_language.h"
 
 namespace rg::voicelanguage
 {
@@ -64,6 +66,7 @@ uint32_t readWord(const uint8_t *rdram, uint32_t address)
 void staticInitLangCodeTables(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     g_original(rdram, ctx, runtime);
+    rg::textlanguage::chooseAtBoot(rdram, *runtime);
 
     // RG_VOICE_LANG names any language of the game's table (a developer's
     // switch); the menu's switch means Japanese.
@@ -78,8 +81,7 @@ void staticInitLangCodeTables(uint8_t *rdram, R5900Context *ctx, PS2Runtime *run
     }
     if (std::strcmp(wanted, "JA") == 0)
     {
-        std::error_code ec;
-        if (!std::filesystem::exists(PS2Runtime::getIoPaths().cdRoot / kJapaneseFolder / "DATA0_1.HD6", ec))
+        if (!installed())
         {
             std::fprintf(stderr,
                          "[rg] Japanese voices need the Japanese disc's files in disc/JA: "
@@ -200,22 +202,36 @@ void streamMgrStartChan(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     g_originalStartChan(rdram, ctx, runtime);
 }
 
-// A scene's voice path is built here; with Japanese voices it is logged.
-void eventVoiceMakePath(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+// A scene's voice path is built here; with Japanese voices it is logged once
+// the path is complete. The original calls Sprintf and PathLocalize, so a safe
+// point can unwind it halfway: code placed after it would read a stale path.
+void afterEventVoiceMakePath(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t bufferAddress)
 {
-    const uint32_t bufferAddress = getRegU32(ctx, 6);
-    g_originalMakePath(rdram, ctx, runtime);
-    if (g_japaneseVoices && bufferAddress != 0)
+    const char *path = reinterpret_cast<const char *>(rdram + (bufferAddress & 0x1FFFFFFFu));
+    if (std::strncmp(path, "wav/", 4) == 0)
     {
-        const char *path = reinterpret_cast<const char *>(rdram + (bufferAddress & 0x1FFFFFFFu));
-        if (std::strncmp(path, "wav/", 4) == 0)
-        {
-            std::fprintf(stderr, "[rg] voice %s\n", path);
-        }
+        std::fprintf(stderr, "[rg] voice %s\n", path);
     }
 }
 
+void eventVoiceMakePath(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t bufferAddress = getRegU32(ctx, 6);
+    if (!g_japaneseVoices || bufferAddress == 0)
+    {
+        g_originalMakePath(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalMakePath, rdram, ctx, runtime, &afterEventVoiceMakePath, bufferAddress);
+}
+
 } // namespace
+
+bool installed()
+{
+    std::error_code ec;
+    return std::filesystem::exists(PS2Runtime::getIoPaths().cdRoot / kJapaneseFolder / "DATA0_1.HD6", ec);
+}
 
 void setEnabled(bool on)
 {

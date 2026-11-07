@@ -1,0 +1,42 @@
+--- a/ps2xRuntime/include/runtime/gs/gs_types.h
++++ b/ps2xRuntime/include/runtime/gs/gs_types.h
+@@ -461,6 +461,13 @@
+         // A triangle list (PRIM 3) rather than a strip: a triangle every
+         // third vertex, tested by the same rule at that vertex.
+         uint32_t triangleList = 0u;
++        // The program clips the chunk (slot E, quad 81.x & 2) rather than
++        // leaving it whole: a renderer that transforms the strip itself
++        // clips it at E's near and far planes, the two plane rows below
++        // (x, y, z, 1) . plane >= 0, which is -w <= z <= w in E's clip space.
++        // A renderer that only draws whole triangles drops one crossing them.
++        uint32_t clips = 0u;
++        float clipPlanes[2][4] = {{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f}};
+     };
+     Header header{};
+     std::vector<Vertex> vertices;
+@@ -595,12 +602,24 @@
+ {
+     const uint32_t count = static_cast<uint32_t>(mesh.vertices.size());
+     std::vector<GSNativeMeshPoint> points(count);
++    // A clipping chunk's vertices past E's near or far plane.
++    std::vector<uint8_t> clipped(mesh.header.clips ? count : 0u);
+     for (uint32_t k = 0; k < count; ++k)
++    {
+         points[k] = gsNativeMeshPoint(mesh.header, mesh.vertices[k]);
++        if (mesh.header.clips)
++        {
++            const GSNativeMesh::Vertex &v = mesh.vertices[k];
++            for (const auto &plane : mesh.header.clipPlanes)
++                clipped[k] |= v.x * plane[0] + v.y * plane[1] + v.z * plane[2] + plane[3] < 0.0f ? 1u : 0u;
++        }
++    }
+     float winding = mesh.header.winding;
+     for (uint32_t k = 1; k < count; ++k)
+     {
+-        const bool skip = gsNativeMeshSkips(mesh.header, points.data(), k, winding);
++        bool skip = gsNativeMeshSkips(mesh.header, points.data(), k, winding);
++        if (mesh.header.clips && k >= 2u)
++            skip = skip || clipped[k - 2u] || clipped[k - 1u] || clipped[k];
+         winding = -winding;
+         const bool kicks = mesh.header.triangleList ? k % 3u == 2u : k >= 2u;
+         if (kicks && !skip)

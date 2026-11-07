@@ -9,10 +9,37 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_set>
+
+// Rogue Galaxy: added. xxHash's XXH3, the hash PCSX2 names its textures by.
+#define XXH_INLINE_ALL
+#include "gfx/backends/sdlgpu/xxhash.h"
 
 namespace dq8::gfx {
 
 namespace {
+
+// Rogue Galaxy: added. RG_TEXTURE_DUMP_WHOLE=DIR writes each new indexed texture
+// the game builds (8-bit or 4-bit), whole and in colour, named as a PCSX2 pack
+// names it ("TEX0HASH-CLUTHASH-BITS.pam", the hashes in hex without leading
+// zeros: its texels' and its palette's, then the format and log2 of its size),
+// so a pack can be made for the textures the game really uses. A PAM is RGBA
+// with the GS's alpha (0x80 opaque).
+struct WholeDump {
+    const char *directory = nullptr;
+    std::unordered_set<uint64_t> done;
+};
+
+WholeDump &wholeDump() {
+    static WholeDump dump = [] {
+        WholeDump d;
+        const char *directory = std::getenv("RG_TEXTURE_DUMP_WHOLE");
+        if (directory && *directory != '\0')
+            d.directory = directory;
+        return d;
+    }();
+    return dump;
+}
 
 // Beyond this the cache is cleared wholesale rather than evicting cleverly.
 // A GS scene addresses far fewer distinct textures than this; the cap exists
@@ -211,6 +238,7 @@ void GsTextureCache::releaseLarger() {
         }
     m_larger.clear();
     m_largerBytes = 0u;
+    m_stats.largerBytes = 0u;
 }
 
 void GsTextureCache::reset() {
@@ -304,9 +332,10 @@ GsTextureIdentity GsTextureCache::regionIdentity(const GSDrawState &state, const
 
 SDL_GPUTexture *GsTextureCache::replacement(const GSDrawState &state, const GsRegion &region, const GsRegion &sampled,
                                             uint32_t wantedScale, bool border, bool shadow, bool bold,
-                                            uint32_t &scale, std::string &error) {
+                                            uint32_t &scale, bool &nearest, std::string &error) {
     if (!m_regionLookup || region.empty())
         return nullptr;
+    syncRegionGeneration();
     const GsTextureKey key = keyFor(state);
     if (!gsIsIndexedPsm(key.psm))
         return nullptr;
@@ -333,16 +362,21 @@ SDL_GPUTexture *GsTextureCache::replacement(const GSDrawState &state, const GsRe
     if (const auto larger = m_larger.find(id); larger != m_larger.end()) {
         larger->second.used = ++m_largerClock;
         scale = larger->second.scale;
+        nearest = larger->second.nearest;
         return larger->second.texture;
     }
     if (m_largerMissing.count(id))
         return nullptr;
     expand(key, region);
+    // The region whole, for a host that keeps pictures of it (a pack's art
+    // must hold the texels another draw of the same content shows).
+    m_regionFull = m_staging;
     for (uint32_t y = region.y0; y < region.y1; ++y)
         for (uint32_t x = region.x0; x < region.x1; ++x)
             if (x < sampled.x0 || x >= sampled.x1 || y < sampled.y0 || y >= sampled.y1)
                 m_staging[(size_t(y - region.y0) * region.width() + (x - region.x0)) * 4u + 3u] = 0u;
     RegionRequest request;
+    request.full = m_regionFull.data();
     request.texels = texels;
     request.clut = clut;
     request.width = region.width();
@@ -355,7 +389,8 @@ SDL_GPUTexture *GsTextureCache::replacement(const GSDrawState &state, const GsRe
     request.shadow = shadow;
     request.bold = bold;
     uint32_t width = 0u, height = 0u;
-    const int answer = m_regionLookup(request, width, height, m_regionPixels);
+    const int reply = m_regionLookup(request, width, height, m_regionPixels);
+    const int answer = reply & ~kRegionNearest;
     if (answer == kRegionPending)
         return nullptr;
     const uint32_t margin = border || shadow ? 2u * kRegionBorderMargin : 0u;
@@ -367,9 +402,44 @@ SDL_GPUTexture *GsTextureCache::replacement(const GSDrawState &state, const GsRe
         m_largerMissing.insert(id);
         return nullptr;
     }
+    // The texels this draw never shows go transparent in the host's picture
+    // as they did in what it was shown (a pack's picture is of the whole
+    // region): no tap past the shown ones brings in the next piece of art.
+    if (!border && !shadow) {
+        for (uint32_t y = 0u; y < height; ++y)
+            for (uint32_t x = 0u; x < width; ++x) {
+                const uint32_t tx = region.x0 + x / factor, ty = region.y0 + y / factor;
+                if (tx < sampled.x0 || tx >= sampled.x1 || ty < sampled.y0 || ty >= sampled.y1)
+                    m_regionPixels[(size_t(y) * width + x) * 4u + 3u] = 0u;
+            }
+    }
+    nearest = (reply & kRegionNearest) != 0;
+    SDL_GPUTexture *texture = storeLarger(id, factor, nearest, width, height, error);
+    if (texture)
+        scale = factor;
+    return texture;
+}
+
+void GsTextureCache::syncRegionGeneration() {
+    const uint64_t generation = m_regionGeneration.load(std::memory_order_relaxed);
+    if (generation == m_regionGenerationSeen)
+        return;
+    m_regionGenerationSeen = generation;
+    m_largerMissing.clear();
+    // A queued draw of one lands first.
+    for (auto &[id, larger] : m_larger) {
+        (void)id;
+        beforeRewrite(larger.texture);
+    }
+    releaseLarger();
+    m_lastPaletteValid = false;
+}
+
+SDL_GPUTexture *GsTextureCache::storeLarger(uint64_t id, uint32_t factor, bool nearest, uint32_t width,
+                                            uint32_t height, std::string &error, SDL_GPUTextureFormat format) {
     SDL_GPUTextureCreateInfo info{};
     info.type = SDL_GPU_TEXTURETYPE_2D;
-    info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    info.format = format;
     info.width = width;
     info.height = height;
     info.layer_count_or_depth = 1u;
@@ -381,15 +451,16 @@ SDL_GPUTexture *GsTextureCache::replacement(const GSDrawState &state, const GsRe
         error = std::string("SDL_CreateGPUTexture(larger): ") + SDL_GetError();
         return nullptr;
     }
+    const uint64_t bytes = SDL_CalculateGPUTextureFormatSize(format, width, height, 1u);
     m_staging.swap(m_regionPixels);
-    if (!uploadRegion(texture, {0u, 0u, width, height}, error)) {
+    if (!uploadRegion(texture, {0u, 0u, width, height}, error, bytes)) {
         SDL_ReleaseGPUTexture(m_device.handle(), texture);
         return nullptr;
     }
     // Past the budget the least recently drawn go; a queued draw of one
     // lands first.
     constexpr uint64_t kLargerBudget = 512ull << 20u;
-    m_largerBytes += uint64_t(width) * height * 4u;
+    m_largerBytes += bytes;
     while (m_largerBytes > kLargerBudget && !m_larger.empty()) {
         auto oldest = m_larger.begin();
         for (auto it = m_larger.begin(); it != m_larger.end(); ++it)
@@ -399,10 +470,154 @@ SDL_GPUTexture *GsTextureCache::replacement(const GSDrawState &state, const GsRe
         SDL_ReleaseGPUTexture(m_device.handle(), oldest->second.texture);
         m_largerBytes -= oldest->second.bytes;
         m_larger.erase(oldest);
+        ++m_stats.largerLetGo;
     }
-    m_larger[id] = {texture, factor, uint64_t(width) * height * 4u, ++m_largerClock};
-    scale = factor;
+    m_larger[id] = {texture, factor, bytes, ++m_largerClock, nearest};
+    ++m_stats.largerStored;
+    m_stats.largerBytes = m_largerBytes;
     return texture;
+}
+
+bool GsTextureCache::pcsx2Hashable(const GsTextureKey &key) {
+    switch (key.psm & 0x3fu) {
+    case GS_PSM_T8:
+    case GS_PSM_T4:
+    case GS_PSM_T8H:
+    case GS_PSM_T4HL:
+    case GS_PSM_T4HH:
+        return (key.width & (key.width - 1u)) == 0u && (key.height & (key.height - 1u)) == 0u;
+    default:
+        return false;
+    }
+}
+
+uint64_t GsTextureCache::pcsx2TexelHash(const GsTextureKey &key) {
+    const uint32_t psm = key.psm & 0x3fu;
+    const uint32_t width = key.width, height = key.height;
+    const bool four = psm == GS_PSM_T4;
+    m_wholeBlocks.clear();
+    if ((psm == GS_PSM_T8 && width >= 16u && height >= 16u) || (four && width >= 32u && height >= 16u)) {
+        // T8 and T4 fill every bit of their words: PCSX2 hashes the GS blocks
+        // they cover as they sit in memory.
+        m_vram.appendBlocks(four, key.tbp0, key.tbw, width, height, m_wholeBlocks);
+        return XXH3_64bits(m_wholeBlocks.data(), m_wholeBlocks.size());
+    }
+    // A texture smaller than one block, and the formats whose indices share
+    // their words with something else (T8H, T4HL, T4HH), PCSX2 expands to an
+    // index a byte, row by row, and hashes that.
+    m_wholeBlocks.resize(size_t(width) * height);
+    m_rawRow.resize(size_t(width) * 4u);
+    const uint32_t shift = psm == GS_PSM_T4HH ? 28u : 24u;
+    const uint32_t mask = psm == GS_PSM_T8H ? 0xffu : 0x0fu;
+    for (uint32_t y = 0u; y < height; ++y) {
+        uint8_t *row = m_wholeBlocks.data() + size_t(y) * width;
+        if (psm == GS_PSM_T8) {
+            GSMem::ReadRowP8(m_vram.data(), key.tbp0, key.tbw, 0u, y, width, row);
+        } else if (four) {
+            m_vram.readRowT4(key.tbp0, key.tbw, 0u, y, width, row);
+        } else {
+            GSMem::ReadRowCT32(m_vram.data(), key.tbp0, key.tbw, 0u, y, width, m_rawRow.data());
+            for (uint32_t x = 0u; x < width; ++x) {
+                uint32_t word;
+                std::memcpy(&word, m_rawRow.data() + size_t(x) * 4u, sizeof(word));
+                row[x] = static_cast<uint8_t>((word >> shift) & mask);
+            }
+        }
+    }
+    return XXH3_64bits(m_wholeBlocks.data(), m_wholeBlocks.size());
+}
+
+SDL_GPUTexture *GsTextureCache::wholeReplacement(const GSDrawState &state, uint32_t &scale, bool &nearest,
+                                                 std::string &error) {
+    if (!m_regionLookup)
+        return nullptr;
+    syncRegionGeneration();
+    const GsTextureKey key = keyFor(state);
+    if (!pcsx2Hashable(key))
+        return nullptr;
+    const auto found = m_entries.find(key);
+    if (found == m_entries.end())
+        return nullptr;
+    Entry &entry = found->second;
+    if (entry.identity.texels == 0u || entry.pcsx2For != entry.identity.texels) {
+        entry.pcsx2 = pcsx2TexelHash(key);
+        entry.pcsx2For = entry.identity.texels;
+    }
+    if (!entry.pcsx2ClutValid || entry.pcsx2ClutFor != entry.identity.clut) {
+        // The palette as PCSX2 hashes it: its 16 or 256 entries as 32-bit words.
+        buildPalette(key);
+        entry.pcsx2Clut = XXH3_64bits(m_clutRgba.data(), m_clutRgba.size() * sizeof(uint32_t));
+        entry.pcsx2ClutFor = entry.identity.clut;
+        entry.pcsx2ClutValid = true;
+    }
+    uint64_t id = kHashSeed;
+    for (const uint64_t value : {entry.pcsx2, entry.pcsx2Clut, uint64_t(0x57484f4c45ull),
+                                 uint64_t(key.width) << 32u | key.height}) {
+        id ^= value;
+        id *= 1099511628211ull;
+    }
+    if (const auto larger = m_larger.find(id); larger != m_larger.end()) {
+        larger->second.used = ++m_largerClock;
+        scale = larger->second.scale;
+        nearest = larger->second.nearest;
+        return larger->second.texture;
+    }
+    if (m_largerMissing.count(id))
+        return nullptr;
+    RegionRequest request;
+    request.whole = true;
+    request.texels = entry.pcsx2;
+    request.clut = entry.pcsx2Clut;
+    request.width = key.width;
+    request.height = key.height;
+    request.blockFormats = blockFormats();
+    uint32_t width = 0u, height = 0u;
+    const int reply = m_regionLookup(request, width, height, m_regionPixels);
+    const int answer = reply & ~(kRegionNearest | kRegionBlocks);
+    if (answer == kRegionPending)
+        return nullptr;
+    // RGBA8, or the blocks of the one format the answer names.
+    SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    bool known = true;
+    switch (reply & kRegionBlocks) {
+    case 0: break;
+    case kRegionBc1: format = SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM; break;
+    case kRegionBc2: format = SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM; break;
+    case kRegionBc3: format = SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM; break;
+    case kRegionBc7: format = SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM; break;
+    default: known = false; break;
+    }
+    const bool blocks = (reply & kRegionBlocks) != 0;
+    const uint32_t factor = width / key.width;
+    if (answer != kRegionReady || !known || (blocks && ((reply & request.blockFormats) == 0 || width % 4u ||
+                                                        height % 4u)) ||
+        factor < 2u || factor > 8u || width != key.width * factor || height != key.height * factor ||
+        m_regionPixels.size() != SDL_CalculateGPUTextureFormatSize(format, width, height, 1u)) {
+        m_largerMissing.insert(id);
+        return nullptr;
+    }
+    nearest = (reply & kRegionNearest) != 0;
+    SDL_GPUTexture *texture = storeLarger(id, factor, nearest, width, height, error, format);
+    if (texture)
+        scale = factor;
+    return texture;
+}
+
+int GsTextureCache::blockFormats() {
+    if (m_blockFormats >= 0)
+        return m_blockFormats;
+    m_blockFormats = 0;
+    const std::pair<SDL_GPUTextureFormat, int> formats[] = {
+        {SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM, kRegionBc1},
+        {SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM, kRegionBc2},
+        {SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM, kRegionBc3},
+        {SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM, kRegionBc7},
+    };
+    for (const auto &[format, flag] : formats)
+        if (SDL_GPUTextureSupportsFormat(m_device.handle(), format, SDL_GPU_TEXTURETYPE_2D,
+                                         SDL_GPU_TEXTUREUSAGE_SAMPLER))
+            m_blockFormats |= flag;
+    return m_blockFormats;
 }
 
 GsTextureKey GsTextureCache::keyFor(const GSDrawState &state) {
@@ -715,11 +930,12 @@ void GsTextureCache::releaseUploadPool() {
 }
 
 bool GsTextureCache::uploadRegion(SDL_GPUTexture *texture, const GsRegion &region,
-                                  std::string &error) {
+                                  std::string &error, size_t bytes) {
     SDL_GPUDevice *device = m_device.handle();
     const uint32_t width = region.width();
     const uint32_t height = region.height();
-    const size_t bytes = static_cast<size_t>(width) * height * 4u;
+    if (bytes == 0u)
+        bytes = static_cast<size_t>(width) * height * 4u;
 
     SDL_GPUTransferBuffer *upload = takeUploadBuffer(bytes);
     if (!upload) {
@@ -1096,6 +1312,32 @@ bool GsTextureCache::build(const GsTextureKey &key, Entry &entry, std::string &e
 
     entry.identity.texels = expand(key, {0u, 0u, width, height});
     dumpTexture(key, entry.identity, m_staging, m_stats.builds);
+
+    if (WholeDump &dump = wholeDump(); dump.directory && pcsx2Hashable(key)) {
+        const uint64_t hash = pcsx2TexelHash(key);
+        if (dump.done.insert(hash * 1099511628211ull ^ entry.identity.clut).second) {
+            const auto log2 = [](uint32_t v) {
+                uint32_t n = 0u;
+                while ((1u << n) < v)
+                    ++n;
+                return n;
+            };
+            // The palette as PCSX2 hashes it: its 16 or 256 entries as 32-bit words.
+            buildPalette(key);
+            const uint64_t clutHash = XXH3_64bits(m_clutRgba.data(), m_clutRgba.size() * sizeof(uint32_t));
+            char name[512];
+            std::snprintf(name, sizeof name, "%s/%llx-%llx-%08x.pam", dump.directory,
+                          static_cast<unsigned long long>(hash),
+                          static_cast<unsigned long long>(clutHash),
+                          key.psm | (log2(width) << 6u) | (log2(height) << 10u));
+            if (std::FILE *file = std::fopen(name, "wb")) {
+                std::fprintf(file, "P7\nWIDTH %u\nHEIGHT %u\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n",
+                             width, height);
+                std::fwrite(m_staging.data(), 1u, static_cast<size_t>(width) * height * 4u, file);
+                std::fclose(file);
+            }
+        }
+    }
 
     SDL_GPUDevice *device = m_device.handle();
     SDL_GPUTextureCreateInfo info{};

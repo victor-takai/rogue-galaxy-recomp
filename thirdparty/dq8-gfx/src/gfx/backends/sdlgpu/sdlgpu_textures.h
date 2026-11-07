@@ -18,6 +18,7 @@
 #include <SDL3/SDL_gpu.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -79,6 +80,11 @@ struct GsTextureCacheStats {
     // already held, so nothing was expanded or uploaded (Rogue Galaxy:
     // added).
     uint64_t unchangedUpdates = 0u;
+    // The host's larger pictures: the bytes they hold on the GPU, how many
+    // were uploaded, and how many the budget let go (Rogue Galaxy: added).
+    uint64_t largerBytes = 0u;
+    uint64_t largerStored = 0u;
+    uint64_t largerLetGo = 0u;
     uint64_t evictions = 0u;
     uint64_t texelsExpanded = 0u;
     // Textures sourced from a region a render target owns. Correct, but the
@@ -149,6 +155,11 @@ public:
         m_regionPalettes = std::move(palettes);
     }
     bool hasRegionLookup() const { return static_cast<bool>(m_regionLookup); }
+    // Any thread: the host's answers changed (a pack switched on or off), so
+    // what was kept of them -- the larger pictures made, and the regions
+    // asked about and answered "none" -- is let go at the next lookup, and
+    // every region is asked about again (Rogue Galaxy: added).
+    void invalidateRegions() { m_regionGeneration.fetch_add(1u, std::memory_order_relaxed); }
     // The host's version of what `region` of an indexed texture holds now,
     // for a target at `wantedScale` (its border version with `border`, its
     // shadow version with `shadow`, its version for a draw past 0x80 alpha
@@ -165,7 +176,12 @@ public:
     // descender's end, which traced and bordered stuck out below.
     SDL_GPUTexture *replacement(const GSDrawState &state, const GsRegion &region, const GsRegion &sampled,
                                 uint32_t wantedScale, bool border, bool shadow, bool bold, uint32_t &scale,
-                                std::string &error);
+                                bool &nearest, std::string &error);
+    // A larger version of the whole texture `acquire` last gave for `state`,
+    // by the hash PCSX2 names it with (a pack made for PCSX2), drawn from at
+    // `scale` times the texels. Null while the host is still reading it, or
+    // when it has none (Rogue Galaxy: added).
+    SDL_GPUTexture *wholeReplacement(const GSDrawState &state, uint32_t &scale, bool &nearest, std::string &error);
 
 private:
     struct Entry {
@@ -204,6 +220,15 @@ private:
         // over several of a write's pages is visited once (Rogue Galaxy:
         // added).
         uint64_t invalidated = 0u;
+        // wholeReplacement(): PCSX2's hash of the texture, valid while
+        // `identity.texels` is what it was computed for.
+        uint64_t pcsx2 = 0u;
+        uint64_t pcsx2For = 0u;
+        // And of its palette, valid while `identity.clut` is what it was
+        // computed for.
+        uint64_t pcsx2Clut = 0u;
+        uint64_t pcsx2ClutFor = 0u;
+        bool pcsx2ClutValid = false;
     };
 
     std::function<void(SDL_GPUTexture *)> m_beforeRewrite;
@@ -247,7 +272,9 @@ private:
     // the region is the whole texture. `hashOnly` reads and hashes them the
     // same way and expands nothing (Rogue Galaxy: added).
     uint64_t expand(const GsTextureKey &key, const GsRegion &region, bool hashOnly = false);
-    bool uploadRegion(SDL_GPUTexture *texture, const GsRegion &region, std::string &error);
+    // m_staging's first `bytes` (0: the region's RGBA8, 4 bytes a texel; a
+    // block-compressed texture's blocks otherwise) into the texture.
+    bool uploadRegion(SDL_GPUTexture *texture, const GsRegion &region, std::string &error, size_t bytes = 0u);
     // Transfer buffers come from a pool guarded by the device's submission
     // serials: the movie path uploads dozens of regions a frame, and creating
     // a fresh buffer per region spent a quarter of the EE thread inside the
@@ -295,9 +322,13 @@ private:
         uint32_t scale = 0u;
         uint64_t bytes = 0u;
         uint64_t used = 0u;
+        bool nearest = false;
     };
     std::unordered_map<uint64_t, Larger> m_larger;
     std::unordered_set<uint64_t> m_largerMissing;
+    std::vector<uint8_t> m_regionFull;
+    std::atomic<uint64_t> m_regionGeneration{0u};
+    uint64_t m_regionGenerationSeen = 0u;
     uint64_t m_largerBytes = 0u;
     uint64_t m_largerClock = 0u;
     // The palette last asked about, and the answer.
@@ -305,6 +336,24 @@ private:
     bool m_lastPaletteWanted = false;
     bool m_lastPaletteValid = false;
     void releaseLarger();
+    // Lets go of the larger versions when the host changed what it answers.
+    void syncRegionGeneration();
+    // Uploads the host's picture (m_regionPixels, width x height, RGBA8 or
+    // the blocks of `format`) and keeps it under `id`; null with `error` set
+    // if the GPU refuses it.
+    SDL_GPUTexture *storeLarger(uint64_t id, uint32_t factor, bool nearest, uint32_t width, uint32_t height,
+                                std::string &error,
+                                SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
+    // The block formats (kRegionBc*) this GPU samples, asked once.
+    int blockFormats();
+    int m_blockFormats = -1;
+    // A texture PCSX2 names by its indices (8-bit and 4-bit, in their own
+    // words or in a 32-bit one's high bits), with a power-of-two size.
+    static bool pcsx2Hashable(const GsTextureKey &key);
+    // The hash PCSX2 names that texture by (XXH3-64 of its GS blocks, or of
+    // its indices a byte each, row by row); m_wholeBlocks is its scratch.
+    uint64_t pcsx2TexelHash(const GsTextureKey &key);
+    std::vector<uint8_t> m_wholeBlocks;
     // Expand scratch: raw texels for one row (indices for indexed PSMs, whole
     // words when the indices ride inside a 32-bit layout), and the palette
     // resolved to final RGBA so the texel loop is one lookup per pixel.

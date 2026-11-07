@@ -46,7 +46,7 @@ def main() -> int:
                 busy = {"vif1": int(m.group(1)), "gif": int(m.group(2))}
                 stall = re.search(r"main stall ([\d.]+) ms", m.group(3))
                 busy["stall"] = float(stall.group(1)) if stall else 0.0
-                vu1 = re.search(r"vu1 interpreted (\d+) pairs \((\d+)%\)", m.group(3))
+                vu1 = re.search(r"vu1 interpreted ([0-9.]+k pairs/s|\d+ pairs) \((\d+)%", m.group(3))
                 busy["interp"] = "%s (%s%%)" % vu1.groups() if vu1 else ""
                 continue
             m = re.match(r"\[gfx\] ([\d.]+) fps \(backend (\d+)% of wall\) over (\d+) frames .*? draws=(\d+)", line)

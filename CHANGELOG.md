@@ -2,13 +2,102 @@
 
 ## Unreleased
 
+### New
+
+- What the Japanese Director's Cut changed in battles, which the US
+  release did not get, as three options (Game, off by default, from the
+  next start):
+  - Director's Cut balance: smaller groups of enemies, more money from
+    many of them, the Rosencaster and Starship Factory enemies weaker, the
+    Area Masters stronger, bosses never knocked down;
+  - Director's Cut enemy behavior: the enemies' attacks and AI;
+  - Director's Cut party AI: allies low on health fall back and guard.
+  All of it comes from your own Japanese Director's Cut disc:
+  `Install-Undub.bat` reads it. With the undub already installed, the
+  update reads it from the image it came from, if that is still where it
+  was; otherwise run `Install-Undub.bat` again (the voices it copied stay).
+  The balance works with the European texts too, with their names: the
+  install that comes second makes that text's tables.
+- European texts (experimental): the menus, scenes and battles in French,
+  German, Spanish or Italian, from your own European disc (F1 > Settings >
+  Language > Text, from the next start). Run `Install-European.bat` first
+  and pick the disc image. The options on the game's own Settings screen
+  are named in that language too. The voices stay as they are. Played in
+  Spanish and tested in all four up to the first scenes; the rest of the
+  story has not been seen in them yet.
+- Mouse camera (Game, on by default): the mouse turns and tilts the
+  camera, exploring, in battle and in the first-person view, with its own
+  sensitivity and an option to invert the vertical. Once you press a key
+  of the game's or click, the mouse stays in the game's window; F1, the
+  pause, Alt+Tab or a few seconds on the controller alone let it go.
+- Keyboard and mouse: new default keys made for them (the sword on the
+  left click, the guard on E or the right click, jump on Space, the gun on
+  F, the menus on Tab or Esc; the table is in the README), mouse buttons and the
+  wheel in F1 > Settings > Controls, and Walk (hold), Left Ctrl, since
+  keys always push the stick all the way. In the game's menus the right
+  click and Esc go back and the wheel moves up and down. The game's text shows
+  the keys and mouse buttons instead of the PlayStation's while you play
+  with them. If you never changed a key, the new keys replace the old
+  ones; if you changed any, all of yours stay.
+
+### Changed
+
+- The options set against the game's own (encounter rate, experience,
+  money, item drops, weapon growth, shop prices, action gauge, camera and
+  draw distance, minimap and compass size) show as multipliers, 1.0x for
+  the game's, instead of percentages. What you set stays as it was.
+- On the game's Settings screen, the numbers' buttons read - and +
+  instead of Low and High.
+- Fast Revelation Flow is gone: the Revelation Flow plays at the
+  console's pace again.
+- An option that does nothing as things stand is greyed out in the F1
+  menu, with a line under it saying what would make it work: Mouse
+  sensitivity and Invert mouse vertical without Mouse camera, Widescreen
+  while the picture is shown at 4:3, Borders while the picture fills the
+  window, the Director's Cut options and the undub before
+  `Install-Undub.bat`, Text before `Install-European.bat` (and a language
+  it did not install), the volume
+  while muted, the frame-rate counter's position while it is off, and a
+  texture pack of 2D art alone at 1x. Widescreen and Borders are no longer
+  on the game's own Settings screen, which has no room for that line.
+- The frame-rate counter (F3) and the fast-forward badge stay in the
+  window's corners with the picture at 4:3 too, as the notifications do;
+  they sat in the picture's corners, inside the bars.
+
+## 0.2.0 (pre-release)
+
+`Update.bat`, the Japanese voices (undub), texture packs, the F1 menu with
+only a controller, and new game options. No game data is included.
+
+**Requires:** Windows 10/11 (64-bit), about 16 GB free, and your own image
+of Rogue Galaxy (USA, SCUS-97490).
+
+### Install
+
+1. Download **RogueGalaxy-0.2.0.zip** (not "Source code").
+2. Extract it to a short folder, such as `C:\RogueGalaxy`.
+3. Run `Install.bat` and pick your disc image.
+4. Wait about 20 minutes on a fast PC (up to an hour on a slower one), then
+   play with `Rogue Galaxy.exe`.
+
+### Update from 0.1.0
+
+0.1.0 has no `Update.bat`, so this once by hand: extract the zip where your
+game folder is, so that its `RogueGalaxy` folder merges into yours (let
+Windows replace the files), then run `Install.bat` again. It does not ask
+for the disc image, and your saves (`disc\mc0`) and settings stay. From
+0.2.0 on, `Update.bat` does it
+([INSTALL.md](docs/INSTALL.md#update)).
+
+### New
+
 - `Update.bat`: brings an installed folder to the newest release and rebuilds
   only what changed, a few minutes in most cases. A rebuild also no longer
   redoes the compiled 3D programs when nothing changed (every rebuild used
   to spend ten minutes on them).
 - Undub: the Japanese voices and movies from your own Japanese Director's Cut disc
-  (Settings > Language). Run `Install-Undub.bat` first and pick the disc image. The
-  text stays English.
+  (F1 > Settings > Language, from the next start). Run `Install-Undub.bat` first
+  and pick the disc image. The text stays English.
 - With an Xbox controller, the game's text shows its buttons (A, B, X, Y,
   LB, RB, LT, RT) instead of the PlayStation's (Game > Controller's
   buttons, on by default).
@@ -20,6 +109,17 @@
   size, Compass size, 50% to 100%).
 - Weapons can grow faster in battle (Game > Weapon growth, up to 1000%).
 - The loading screen's "Press X" shows the Xbox controller's A too.
+- Texture packs: above 1x, the 2D art (icons, window pieces, menu
+  pictures) can be drawn from larger versions in packs under
+  `textures\packs` (folders or zips of PNG or DDS files), each with a switch
+  in the menu (F1 > Settings > Textures). The game ships none; the format is
+  in [docs/TEXTURE_PACKS.md](docs/TEXTURE_PACKS.md), and
+  `debug\RogueGalaxy-collect.bat` collects what a pack can replace from your
+  own play.
+  A pack made for PCSX2 (`TEX0HASH-CLUTHASH-BITS.dds`) works too, at 1x as
+  well, and replaces scenery and character textures; the menus, portraits
+  and icons stay as the game draws them. Its pictures stay compressed on the
+  GPU, a quarter of the memory.
 - The free camera no longer lets a button pressed to move it reach a scene
   waiting for one, and gives the controller back at once when turned off.
 - Full bag to storage: an item found when the bag is full goes to the
@@ -32,6 +132,39 @@
 - The free camera no longer leaves the game stuck at the battle's "escape?"
   question (a hit can push the leader out of the battle's area while the
   camera flies): the question turns it off, and it can be answered.
+- Faster at high internal resolutions: blended draws take one pass instead
+  of two where the graphics card allows it, and blurs and draws from
+  upscaled pictures cost the graphics card less.
+- A Native renderer switch (Game > Native renderer, off by default): the
+  work on drawing the game with the PC's renderer goes behind it. It
+  changes nothing yet.
+- The F1 menu works with only a controller: A (✕) goes into a page and B
+  (○) comes back, one level at a time and at last to the game; Y (△)
+  reaches the menu bar, L1 and R1 turn the pages, the right stick scrolls.
+  A strip along the bottom names the buttons for where the cursor is.
+  "Quit game", at the end of the page list, asks first. On Controls, X (▢)
+  clears a binding, and holding B cancels one being set.
+- F1 sometimes paused the game without showing the menu.
+- When the sound driver stops (the black screen of
+  [#17](https://github.com/victor-takai/rogue-galaxy-recomp/issues/17)),
+  the log says where and why, and no longer fills with the same line.
+
+### Known issues
+
+- Only the USA version is supported.
+- It has not been played from start to finish; most of the testing covers
+  the early game.
+- The heaviest scenes can dip to 50 fps. After the boss at the end of
+  Juraika, the frame rate halves at high internal resolutions (about 30 fps
+  at 4x).
+- A black screen after that boss was reported once
+  ([#17](https://github.com/victor-takai/rogue-galaxy-recomp/issues/17)) and
+  has not been seen again. If it happens to you, the log
+  (`build\last-run.log`) helps.
+- In widescreen, menus and text are stretched.
+- The Steam Deck, through Proton, is prepared but untested.
+- An antivirus may block the compiler during the install: restore it and
+  run `Install.bat` again.
 
 ## 0.1.0 (pre-release)
 

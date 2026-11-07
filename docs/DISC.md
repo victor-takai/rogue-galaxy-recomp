@@ -2,7 +2,8 @@
 
 ## Supported dump
 
-Only the NTSC-U release is supported for now.
+Only the NTSC-U release is supported for now. The Japanese Director's Cut
+can add its voices and movies to it ([below](#the-japanese-disc-undub)).
 
 | | |
 |---|---|
@@ -17,6 +18,74 @@ Per-file sizes and SHA-256 for all 124 files are in
 [`config/SCUS_974.90/hashes.json`](../config/SCUS_974.90/hashes.json).
 `python setup.py verify --iso <image> --full` checks a dump against them and
 against Redump without writing anything.
+
+`Install.bat` takes the image as an uncompressed `.iso` of exactly that
+size. A compressed one (`.chd`, `.cso`) must be turned back into an `.iso`
+first.
+
+## The Japanese disc (undub)
+
+The undub takes the voices and movies of the Japanese Director's Cut
+(SCPS-17013) from your own image of it. `Install-Undub.bat` (or
+`python setup.py extract-japanese --iso <image>`) copies them, about 3 GB,
+into `disc/JA`; a movie the US disc has the same bytes of is not copied. It
+checks the image's two voice indexes against
+[`config/SCUS_974.90/japanese.json`](../config/SCUS_974.90/japanese.json)
+and refuses another Japanese release: only the Director's Cut has voices
+that line up with the US game.
+
+The same run then writes the Director's Cut's battle balance into
+`disc/JA/balance` (`python setup.py director-cut-balance --iso <image>`
+alone): four tables of the Japanese param pack (`rc\param\param_2_ja.pac`
+in `DATA0_0`, checked against the same file's `balance_pack`) with the
+Japanese numbers and the US strings, and `tables.txt`, which names the US
+table each replaces; and the 76 enemy files (`chara\mob\*.chr`) and 98 AI
+scripts (`chara\spt\*.stb`) that release changed, as they are, checked
+against `balance_files` and packed into `files.dat` (about 20 MiB) with
+their list, `files.idx` ([OPTIONS.md](OPTIONS.md#game-options), "Director's
+Cut balance", "enemy behavior" and "party AI"; `src/dc_balance.h`). Run again, it copies only the voices and
+movies not already there. `setup.py install` (so `Update.bat` too) makes the
+balance's files for an undub installed without them, from the image
+`disc/JA/manifest.json` names, when it is still there.
+
+A European text in `disc/EU` has tables of its own (the US numbers with its
+names), so the same step also writes, for each language there, the Japanese
+numbers with that language's names (`monster_param_FR.cfg.bin` and so on,
+listed in `tables.txt` too). It keeps the four Japanese tables in
+`disc/JA/balance/ja` (their sizes and CRCs in `ja.txt`), so `extract-european`
+and `setup.py install` make the tables of a language added or built again
+later, or of one whose files are gone, without the Japanese image. When those
+are missing or damaged they read the image `disc/JA/manifest.json` names, if
+it is still there; otherwise that text keeps the US numbers until
+`Install-Undub.bat` runs again. A text whose tables could not be made is noted
+in `not_made.txt` and tried again once it is built again.
+
+## The European disc (texts)
+
+The European release (SCES-54552) has the game's text in English, French,
+German, Spanish and Italian, but in a revised build: its scene scripts are
+compiled for a newer script engine, its menu packs hold other entries and
+its game tables carry the Director's Cut balance, so the US executable
+cannot read its files as they are. `Install-European.bat` (or
+`python setup.py extract-european --iso <image>`) builds, for each of the
+four languages, the files the US executable asks for in that language, each
+from the US file with the European words put in: the lines of scenes and
+menus by their labels, the strings of the game's tables (names,
+descriptions) record by record, the pictures with words and, where those
+moved in their atlas, the layouts' rectangles for them, the room the
+layouts give a line of text (the European words are longer), and the
+message font. The European executable breaks a line too long for its
+window itself, and the US one draws it past the screen's edges, so lines
+wider than the US English ever writes in that window (scene subtitles,
+talk windows, menu messages) get breaks, measured with the US font's
+letter widths; a talk window's page holds three lines at most, as in the
+US texts. A line the European disc has no words for stays English (in
+French, one line of one scene, and one scene of chapter 17). The result, about 80 MB a language, goes into
+`disc/EU/<LANG>.DAT` and `<LANG>.idx`, and takes about a minute
+([`tools/disc/european.py`](../tools/disc/european.py) says how). It checks
+the image's two text indexes against
+[`config/SCUS_974.90/european.json`](../config/SCUS_974.90/european.json)
+and refuses another release.
 
 ## Layers
 

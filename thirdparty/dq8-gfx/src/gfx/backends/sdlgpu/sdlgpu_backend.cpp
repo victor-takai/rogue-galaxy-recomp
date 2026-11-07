@@ -1,5 +1,7 @@
 #include "gfx/backends/sdlgpu/sdlgpu_backend.h"
 
+#include "gfx/native/native_pipeline.h"
+
 #include "gfx/backends/sdlgpu/sdlgpu_device.h"
 #include "gfx/backends/sdlgpu/sdlgpu_input.h"
 #include "gfx/backends/sdlgpu/sdlgpu_targets.h"
@@ -643,6 +645,10 @@ void setPresentObserver(std::function<void(double)> observer) {
 struct SdlGpuBackend::Impl {
     mutable std::mutex mutex;
     SdlGpuDevice device;
+    // The native pipeline's renderer (docs/NATIVE-PIPELINE.md, Rogue Galaxy:
+    // added), when native::enabled(): it shares this backend's device and
+    // presenter.
+    native::Renderer nativeRenderer;
     GsVram vram;
     std::unique_ptr<GsTransferEngine> transfer;
     GSTransferCommand transferCommand{};
@@ -796,7 +802,8 @@ struct SdlGpuBackend::Impl {
         GsRegion largerArea;
         if (last.textured && regionPack) {
             uint32_t scale = 0u;
-            larger = largerRegion(batch, *color, false, false, scale, largerArea);
+            bool nearest = false; // a texture's own, so merging by texture keeps it
+            larger = largerRegion(batch, *color, false, false, scale, nearest, largerArea);
             if (larger != last.larger)
                 return false;
             if (larger) {
@@ -927,7 +934,7 @@ struct SdlGpuBackend::Impl {
     // per GS texel; null when it has none, has not made it yet, or the
     // target is not upscaled.
     SDL_GPUTexture *largerRegion(const GSPrimitiveBatch &batch, const GsSurface &target, bool border,
-                                 bool shadow, uint32_t &scale, GsRegion &region) {
+                                 bool shadow, uint32_t &scale, bool &nearest, GsRegion &region) {
         if (!regionPack || target.scale <= 1u || !frameTarget(target) ||
             !gsIsIndexedPsm(batch.state.context.tex0.psm) ||
             !regionPackEnabled.load(std::memory_order_relaxed) || !spriteTexelRect(batch, region))
@@ -949,7 +956,7 @@ struct SdlGpuBackend::Impl {
             sampled = region;
         std::string error;
         SDL_GPUTexture *larger =
-            textures->replacement(batch.state, region, sampled, target.scale, border, shadow, bold, scale, error);
+            textures->replacement(batch.state, region, sampled, target.scale, border, shadow, bold, scale, nearest, error);
         if (!error.empty())
             setError(std::move(error));
         return larger;
@@ -1135,6 +1142,11 @@ struct SdlGpuBackend::Impl {
         uint32_t width = 0u, height = 0u;
         SDL_GPUFence *prepared = nullptr, *displayed = nullptr;
         bool leased = false;
+        // Its picture is whole: the last preparation into it has finished.
+        // A slot can stay leased long after that, by a ticket waiting to be
+        // displayed (Rogue Galaxy's flip pacing keeps the frame of the
+        // last flip until the next vblank, which a pause holds back).
+        bool ready = false;
     };
     struct PresentationPool {
         std::mutex mutex;
@@ -1172,6 +1184,8 @@ struct SdlGpuBackend::Impl {
     SDL_GPUPresentMode appliedPresentMode = SDL_GPU_PRESENTMODE_VSYNC;
     SdlGpuBackend::GameWidescreenQuery widescreenQuery = nullptr;
     size_t lastDisplayedSlot = SIZE_MAX;
+    std::chrono::steady_clock::time_point refreshHeldSince{};
+    bool refreshHeldReported = false;
     // Anything shown, and the last frame the game itself presented.
     std::chrono::steady_clock::time_point lastShown{};
     std::chrono::steady_clock::time_point lastGameFrame{};
@@ -1677,6 +1691,8 @@ struct SdlGpuBackend::Impl {
         r.misc[2] = depthScale;
         r.depth[0] = mesh.header.depthScale;
         r.depth[1] = mesh.header.depthMax;
+        if (mesh.header.clips)
+            std::memcpy(r.clipPlanes, mesh.header.clipPlanes, sizeof(r.clipPlanes));
     }
 
     // A native strip through submit(): a stand-in primitive covering the
@@ -2588,6 +2604,10 @@ struct SdlGpuBackend::Impl {
         // Drawn from the host's larger texture, at this many texels per GS
         // texel (Rogue Galaxy: added; setRegionReplacements).
         SDL_GPUTexture *largerTexture = nullptr;
+        bool largerNearest = false;
+        // A whole texture the host has a larger version of, and its factor.
+        uint32_t wholeScale = 0u;
+        bool wholeNearest = false;
         uint32_t largerScale = 0u;
         GsRegion largerArea;
         if (state.prim.tme) {
@@ -2771,10 +2791,26 @@ struct SdlGpuBackend::Impl {
                 plainReach = reach;
                 plainBounded = bounded;
                 if (texture && regionPack) {
-                    largerTexture =
-                        largerRegion(batch, *color, borderRequest, shadowRequest, largerScale, largerArea);
+                    largerTexture = largerRegion(batch, *color, borderRequest, shadowRequest, largerScale,
+                                                 largerNearest, largerArea);
                     if (largerTexture)
                         texture = largerTexture;
+                }
+                // A whole texture's larger version (a PCSX2 pack's) is drawn
+                // on the 3D, not on sprites: the game draws its 2D (menus, the
+                // save's portraits, icons, the compass and the minimap) with
+                // sprites, and its art stays as the game draws it, or as a
+                // region pack redraws it (Rogue Galaxy: added).
+                if (texture && regionPack && !largerTexture && state.prim.tme &&
+                    state.prim.type != GS_PRIM_SPRITE) {
+                    std::string wholeError;
+                    if (SDL_GPUTexture *whole =
+                            textures->wholeReplacement(state, wholeScale, wholeNearest, wholeError)) {
+                        texture = whole;
+                        ++stats.regionsReplaced;
+                    } else {
+                        wholeScale = 0u;
+                    }
                 }
             }
             // A border's or a shadow's quad is drawn from its version alone;
@@ -2791,10 +2827,14 @@ struct SdlGpuBackend::Impl {
                     control |= kFragFlagTcc;
                 // The host's larger version is filtered across its own
                 // texels, as an upscaled target is (Rogue Galaxy: added).
-                if (state.linearFilter || largerTexture)
+                // Unless the host asked for its texels as they are (a pack of
+                // pixel art: kRegionNearest).
+                if (largerTexture ? !largerNearest : wholeScale ? !wholeNearest : state.linearFilter)
                     control |= kFragFlagLinear;
                 if (largerTexture)
                     textureScale = static_cast<float>(largerScale);
+                else if (wholeScale)
+                    textureScale = static_cast<float>(wholeScale);
                 // A sprite's UVs can span a texel more than its pixels (DQ8's
                 // font: 23 texels over 22 pixels), so the GS never reaches the
                 // last one. Sampling between native pixels would, and pull in
@@ -2803,7 +2843,7 @@ struct SdlGpuBackend::Impl {
                 // copies of reinterpreted pixels. Filtering between native
                 // pixels would blend neighbouring halfwords, so they sample
                 // on the native grid too, bilinear or not.
-                if (state.prim.fst && color->scale > 1u && !largerTexture &&
+                if (state.prim.fst && color->scale > 1u && !largerTexture && !wholeScale &&
                     (!state.linearFilter || color->psm == GS_PSM_CT16 || color->psm == GS_PSM_CT16S))
                     control |= kFragFlagNativeGrid |
                                (std::min<uint32_t>(color->scale, 15u) << kFragTargetScaleShift);
@@ -3790,6 +3830,17 @@ struct SdlGpuBackend::Impl {
                               static_cast<unsigned long long>(stats.shadowsDrawn - previous.shadowsDrawn));
                 line += buf;
             }
+            // The larger pictures on the GPU (Rogue Galaxy: added).
+            static uint64_t previousStored = 0u, previousLetGo = 0u;
+            if (textureStats().largerStored != previousStored || textureStats().largerLetGo != previousLetGo) {
+                std::snprintf(buf, sizeof(buf), " | larger held %llu MiB, uploaded %llu, let go %llu",
+                              static_cast<unsigned long long>(textureStats().largerBytes >> 20u),
+                              static_cast<unsigned long long>(textureStats().largerStored - previousStored),
+                              static_cast<unsigned long long>(textureStats().largerLetGo - previousLetGo));
+                line += buf;
+                previousStored = textureStats().largerStored;
+                previousLetGo = textureStats().largerLetGo;
+            }
             // Draws blended in the shader from a snapshot (Rogue Galaxy: added).
             if (stats.destinationReads != previous.destinationReads) {
                 std::snprintf(buf, sizeof(buf), " | destination reads %llu",
@@ -3806,6 +3857,8 @@ struct SdlGpuBackend::Impl {
             longestPresentGap = 0.0;
             line += buf;
             std::fprintf(stderr, "%s\n", line.c_str());
+            if (native::enabled())
+                std::fputs(nativeRenderer.statsLine().c_str(), stderr);
         }
 
         previous = stats;
@@ -3864,6 +3917,7 @@ struct SdlGpuBackend::Impl {
         }
         auto result = std::make_shared<PreparedFrame>(presentationPool, selected);
         presentationPool->slots[selected].leased = true;
+        presentationPool->slots[selected].ready = false;
         return result;
     }
 
@@ -4319,24 +4373,47 @@ struct SdlGpuBackend::Impl {
     // none: paused, loading, or not started yet.
     void refreshWindow() {
         PresentationSlot *slot = nullptr;
+        bool tookLease = false;
         {
             std::lock_guard lock(presentationPool->mutex);
             if (presentationPool->closing)
                 return;
             if (lastDisplayedSlot < presentationPool->slots.size()) {
                 PresentationSlot &candidate = presentationPool->slots[lastDisplayedSlot];
-                // Leased means a new frame is on its way into it.
-                if (candidate.leased)
+                // Leased and not ready: a new frame is being prepared into it.
+                // Leased and ready: that frame is whole and waits for its
+                // vblank, perhaps for as long as the game is paused; it is
+                // the picture to show, the one coming next anyway (Rogue
+                // Galaxy: shown, where it used to leave the menu unseen).
+                if (candidate.leased && !candidate.ready) {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (refreshHeldSince == std::chrono::steady_clock::time_point{})
+                        refreshHeldSince = now;
+                    else if (!refreshHeldReported && now - refreshHeldSince > std::chrono::seconds(1)) {
+                        refreshHeldReported = true;
+                        std::fprintf(stderr, "[gfx] window refresh: slot %zu still being prepared after 1 s\n",
+                                     lastDisplayedSlot);
+                    }
                     return;
+                }
+                refreshHeldSince = {};
+                refreshHeldReported = false;
                 if (candidate.texture) {
+                    tookLease = !candidate.leased;
                     candidate.leased = true;
                     slot = &candidate;
                 }
             }
         }
+        // One prepared and not displayed yet: its drawing has to be done.
+        if (slot && !tookLease && slot->prepared &&
+            !SDL_WaitForGPUFences(device.handle(), true, &slot->prepared, 1)) {
+            std::fprintf(stderr, "[gfx] window refresh: SDL_WaitForGPUFences(prepared): %s\n", SDL_GetError());
+            return;
+        }
         std::string error;
         const bool shown = showInWindow(slot, error);
-        if (slot) {
+        if (slot && tookLease) {
             std::lock_guard lock(presentationPool->mutex);
             slot->leased = false;
             presentationPool->available.notify_one();
@@ -4549,6 +4626,37 @@ struct SdlGpuBackend::Impl {
         }
     }
 
+    // The native renderer's scene into the present source, recorded before
+    // the copy (copyToPresentSource submits what is pending first).
+    bool presentNative(PresentStage &stage) {
+        std::string error;
+        SDL_GPUCommandBuffer *commands = device.pendingCommands(error, "native pipeline");
+        if (!commands)
+            return setError(std::move(error));
+        native::Renderer::Frame out;
+        if (!nativeRenderer.render(device.handle(), commands, std::max<uint32_t>(scale, 1u), out, error))
+            return setError(std::move(error));
+        if (!copyToPresentSource(out.texture, out.width, out.height))
+            return false;
+        PresentationFrame &frame = stage.frame;
+        frame.width = out.width;
+        frame.height = out.height;
+        frame.rowPitchBytes = 0u;
+        frame.displayFbp = 0u;
+        frame.sourceFbp = 0u;
+        frame.mode = GSPresentationMode::BackendNative;
+        // Screenshots latch host pixels: the slot is read back for them, as
+        // the GPU composition's is.
+        if (gsScreenshotEnabled()) {
+            stage.download = true;
+            frame.mode = GSPresentationMode::HostPixels;
+            frame.rowPitchBytes = out.width * 4u;
+        }
+        stage.native = true;
+        stage.haveFrame = true;
+        return true;
+    }
+
     void acquirePresentation(const GSPresentationRequest &request, PresentStage &stage) {
         PresentationFrame &frame = stage.frame;
         ++stats.presents;
@@ -4564,6 +4672,13 @@ struct SdlGpuBackend::Impl {
                          stats.transferBytes != previousPresentTransfers;
         previousPresentDraws = stats.drawCalls;
         previousPresentTransfers = stats.transferBytes;
+
+        // The native pipeline shows its own scene, not what the GS's display
+        // registers name (Rogue Galaxy: added; RG_NATIVE_PIPELINE).
+        if (window != nullptr && native::enabled()) {
+            presentNative(stage);
+            return;
+        }
 
         const GsPmodeState pmode = gsDecodePmode(request.pmode);
         const GsSmode2State smode2 = gsDecodeSmode2(request.smode2);
@@ -4906,6 +5021,7 @@ SdlGpuBackend::~SdlGpuBackend() {
         for (auto &level : m_impl->blurLevels)
             m_impl->releaseScratch(level);
         m_impl->releaseSideImage();
+        m_impl->nativeRenderer.release(m_impl->device.handle());
         if (m_impl->window) {
             SDL_ReleaseWindowFromGPUDevice(m_impl->device.handle(), m_impl->window);
             SDL_DestroyWindow(m_impl->window);
@@ -5225,6 +5341,10 @@ GSPresentationTicket SdlGpuBackend::PreparePresentation(const GSPresentationRequ
     prepared->gsActive = stage.gsActive;
     prepared->download = stage.download;
     prepared->frame = std::move(stage.frame);
+    {
+        std::lock_guard lock(prepared->pool->mutex);
+        slot.ready = true;
+    }
     return prepared;
 }
 
@@ -5393,6 +5513,11 @@ void SdlGpuBackend::setRegionReplacements(RegionLookup lookup, RegionPalettes pa
 
 void SdlGpuBackend::setRegionReplacementsEnabled(bool on) {
     m_impl->regionPackEnabled.store(on, std::memory_order_relaxed);
+}
+
+void SdlGpuBackend::invalidateRegionReplacements() {
+    if (m_impl->textures)
+        m_impl->textures->invalidateRegions();
 }
 
 int SdlGpuBackend::gameWidescreen() const {
