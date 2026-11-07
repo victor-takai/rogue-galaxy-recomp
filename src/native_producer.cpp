@@ -1283,7 +1283,24 @@ bool mesh(const GSNativeMesh &mesh, const GSDrawState *drawState, const uint8_t 
     for (uint32_t k = 1; k < count; ++k)
     {
         const bool judged = !listCull || k % 3u == 2u;
-        const bool skip = culls && judged && gsNativeMeshSkips(h, points.data(), k, winding);
+        bool skip = culls && judged && gsNativeMeshSkips(h, points.data(), k, winding);
+        // A clipping chunk's triangle with a corner behind the eye (w < 0):
+        // its projected corner lands mirrored, so the projected facing has
+        // the wrong sign and a floor in front of the camera was culled at
+        // some angles. The VU1 judges such a triangle after its slot E has
+        // clipped it; here the GPU clips after, so the facing is judged in
+        // homogeneous terms: the projected one times the sign of the three
+        // w's product (the same as before while every w is positive).
+        if (h.clips && h.backface && judged && k >= 2u)
+        {
+            const float wSign = points[k - 2u].q * points[k - 1u].q * points[k].q;
+            if (wSign < 0.0f)
+            {
+                GSNativeMesh::Header facingOnly = h;
+                facingOnly.guardBand = 0u;
+                skip = gsNativeMeshSkips(facingOnly, points.data(), k, -winding);
+            }
+        }
         if (culls && !listCull)
             winding = -winding;
         const bool drawn = k >= 2u && (lists ? k % 3u == 2u : true);
