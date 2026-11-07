@@ -1137,6 +1137,28 @@ def build_font(us_pack: bytes, pal_pack: bytes) -> bytes:
     return pac_write(out)
 
 
+CHAIN_PACK = "chn\\common.pac"
+
+
+def build_chain_pack(us_pack: bytes, pal_pack: bytes, code: str) -> bytes | None:
+    """The Attack Chain's pack ("PUSH!!", "Hits", "Damage") with the language's picture.
+    The US executable asks for one pack and its common.img in every language; the PAL
+    pack holds common_EN.img to common_DE.img side by side. None when either is missing
+    (the text then keeps the English pictures)."""
+    pal = {e.name.lower(): e for e in pac_read(pal_pack)}
+    picture = pal.get(f"common_{code.lower()}.img")
+    if picture is None:
+        return None
+    out, swapped = [], False
+    for e in pac_read(us_pack):
+        if e.name.lower() == "common.img":
+            out.append(PacEntry(e.name, keep_picture_names(e.data, picture.data), e.raw_header))
+            swapped = True
+        else:
+            out.append(e)
+    return pac_write(out) if swapped else None
+
+
 def build_language(us: Disc, pal: Disc, code: str, report: Report,
                    widths: dict[int, int] | None = None) -> Iterator[tuple[str, bytes]]:
     """Every file the US executable asks for in the language that the PAL disc has words for;
@@ -1152,6 +1174,15 @@ def build_language(us: Disc, pal: Disc, code: str, report: Report,
             if not any(e.name.lower().endswith("_en.txt") for e in pac_read(us_pack)):
                 continue
             yield name, build_scene(us_pack, pal.read(name), code, report, widths)
+            continue
+        if name == CHAIN_PACK:
+            # No language token in its name: src/text_language.cpp serves it all the same
+            # (any name in the index) and moves the count for the longer words.
+            chain = build_chain_pack(us.read(name), pal.read(name), code) if name in pal_names else None
+            if chain is not None:
+                yield name, chain
+            else:
+                report.kept_us.append(f"{name}:common.img")
             continue
         target = to_language(name, code)
         if target == name:
