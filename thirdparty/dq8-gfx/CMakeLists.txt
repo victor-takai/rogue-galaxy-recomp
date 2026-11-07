@@ -87,7 +87,8 @@ foreach(shader IN ITEMS
         "gs_display.frag;frag;kGsDisplayFragSpirv"
         "gs_index8.frag;frag;kGsIndex8FragSpirv"
         "gs_local_copy.frag;frag;kGsLocalCopyFragSpirv"
-        "present_sides.frag;frag;kPresentSidesFragSpirv")
+        "present_sides.frag;frag;kPresentSidesFragSpirv"
+        "present_fsr.frag;frag;kPresentFsrFragSpirv")
     list(GET shader 0 file)
     list(GET shader 1 stage)
     list(GET shader 2 symbol)

@@ -378,14 +378,25 @@ void Overlay::drawDisplayPage() {
 
         static constexpr const char *kFilterHelp[] = {"Crisp pixels with no uneven columns, at any size.",
                                                       "Soft, smooth scaling.",
-                                                      "Raw pixels; uneven unless the size is a whole multiple."};
+                                                      "Raw pixels; uneven unless the size is a whole multiple.",
+                                                      "AMD FSR 1: edge-aware upscaling with sharpening. Best with a "
+                                                      "lower internal resolution; smooth when the picture is not enlarged."};
         settingRow("Scaling filter", kFilterHelp[static_cast<int>(m_settings.display.filter)]);
-        static constexpr const char *kFilters[] = {"Sharp", "Smooth", "Nearest"};
+        static constexpr const char *kFilters[] = {"Sharp", "Smooth", "Nearest", "FSR 1"};
         int filter = static_cast<int>(m_settings.display.filter);
-        if (segmented("filter", &filter, kFilters, 3)) {
+        if (segmented("filter", &filter, kFilters, 4)) {
             m_settings.display.filter = static_cast<gfx::SdlGpuFilter>(filter);
             m_backend.setDisplayOptions(m_settings.display);
             markDirty();
+        }
+
+        // Rogue Galaxy: added (`fsr_sharpness` in the file).
+        if (m_settings.display.filter == gfx::SdlGpuFilter::Fsr) {
+            settingRow("FSR sharpness", "How much FSR 1 sharpens the enlarged picture.");
+            if (ImGui::SliderInt("##fsrsharpness", &m_settings.display.fsrSharpness, 0, 100, "%d%%")) {
+                m_backend.setDisplayOptions(m_settings.display);
+                markDirty();
+            }
         }
 
         // Rogue Galaxy: added (`sides` in the file).

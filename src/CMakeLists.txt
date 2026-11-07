@@ -78,6 +78,7 @@ add_executable(roguegalaxy
     draw_distance.cpp
     ee_fpu.cpp
     flip_pacing.cpp
+    gs_tripwire.cpp
     free_camera.cpp
     mouse_camera.cpp
     movie_audio.cpp
@@ -105,6 +106,8 @@ add_executable(roguegalaxy
     vu1_native.cpp
     draw_state_mirror.cpp
     native_capture.cpp
+    native_2d.cpp
+    native_effects.cpp
     native_producer.cpp
     gif_events.cpp
     vu0_flags.cpp

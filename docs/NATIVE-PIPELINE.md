@@ -71,20 +71,94 @@ game built them. Every reference is an id (`native_records.h`):
   VIF1 thread sends, and reads the registers back after a libgraph stub
   writes them, patch 0031). A mesh made a draw no longer goes to the GS.
 - **Present**: the flip pushes a `Present` of the scene target.
+- **Effects as sprite draws** (step 5, `src/native_effects.h`): hooks note
+  which packet memory each effect function wrote (glare, plane shadow,
+  CBlur and CBlur draw, bloom, depth of field, the refraction's capture,
+  focus filter, shadow-map blur, colour filter, and the flip's copy into
+  the display buffer). The VIF1 thread holds those packets, builds a
+  `GSNativeEffect` from their sprites (`src/native_effect.h`: each sprite
+  as the GS would draw it, its strips joined), and
+  `rg::nativeproducer::effect` makes each op a window-space mesh draw
+  between targets, all or nothing per effect. Made, the packets go on with
+  their kicks withheld (`XYZ2` as `XYZ3`), so the GS and the draw-state
+  mirror end with the registers they would have had. An effect the builder
+  or the producer refuses goes on as packets, and the log says why once.
+  `RG_NATIVE_<EFFECT>=0` turns one off; `RG_NATIVE_EFFECTS_LOG=1` prints the
+  first of each built.
+- **2D as window-space draws** (step 5b, `src/native_2d.h`): every GIF
+  packet on its way to the GS goes through a converter first. Its
+  primitives (sprites, triangles, strips, fans; points and lines as thin
+  quads; fogged vertices keep their F) become meshes in the GS's window
+  coordinates, which `rg::nativeproducer::piece` makes mesh draws under
+  the draw-state mirror's state; the rest of the packet (register writes,
+  uploads) goes on to the GS, with a PRIM write of each mesh's attributes
+  just before it, so the mirror holds the mesh's state when it comes. The
+  GS draws nothing of a converted packet. A piece the producer refuses
+  (counted by why in its stats line) goes to the GS as a native mesh.
+  `RG_NATIVE_2D=0` turns the converter off.
+- **Object layers** (step 5c): stage E's per-object composites
+  (`ModelDrawOffscreenComposite`) draw each character into an offscreen
+  buffer (its head: a clear, the model) and lay it over the frame (its
+  tail). Hooks mark each object's head and tail packets; the VIF1 thread
+  routes the head's draws into an object layer of the renderer's own,
+  cleared over the head's clear box (`kRouteLayer`), and makes the tail's
+  sprites read that layer (`kObjectTail`). The GS's buffer, which shadow
+  volumes and uploads also use, is never read for it, so no boxes. A tail
+  the builder or the producer refuses puts the layer back into the buffer
+  first and goes on as packets. VU1 kicks are placed in a tail by where the
+  MSCAL that ran them sits in the list (patch 0032, `vif1Cursor`).
+  `RG_NATIVE_COMPOSITE=0` turns the batching off.
+- **Uploads** (steps 3b and 6): an upload the producer already made a
+  record of is withheld from the GS (its transfer registers and its image
+  data, in the packet and in the continuations after it); the rest of the
+  packet goes on. The data withheld is checked against the record's hash
+  of the guest memory it was made from (uploads up to 16 KiB;
+  `RG_NATIVE_UPLOAD_CHECK=all` every one, `=0` none): the game writes a
+  few palettes and textures after the texture hook, and such a record is
+  made again from what was sent (`replaceUpload`). A host upload nobody
+  took is gathered on its way to the GS and kept by the producer as an
+  image per base and format (`hostUpload`), which pieces reading that
+  memory sample; a local copy (`TRXDIR 2`) is mirrored between what the
+  producer holds (`noteLocalCopy`).
 
-Under the pipeline the screen shows the 3D meshes only, and untextured:
-the textures and palettes are made and uploaded, but nothing yet hands
-them to the meshes (`takeProduced`, `replaceUpload`, `hostUpload` and
-`noteLocalCopy` have their callers in the next step), so every textured
-mesh counts as a texture miss and draws white. A mesh whose material is
-not modelled is drawn as near as the renderer can (counted); one into a
-buffer the game never named has no target and stays on the GS. 2D (the
-HUD, the menus, text), the effects (glare, bloom, shadows, depth of
-field, CBlur, the per-object composites: the party in the field), local
-copies and the game's colour and depth reads still go to the GS, which
-keeps running unseen, so they are missing from the screen. Those, the
-pipeline's own present, and a check that nothing reaches the GS any more,
-come next.
+- **The stubs' registers** (step 7a): libgraph's stubs (`sceGsPutDrawEnv`,
+  `sceGsSwapDBuff`'s environments and clear) write the GS's registers
+  directly. Under the pipeline's 2D those writes are taken (patch 0034's
+  register sink) and go through the converter as one A+D packet, so the
+  mirror follows them and the clear is a 2D piece.
+- **Depth and colour reads** (steps 7b, 7c; `src/native_capture.cpp`): the
+  game's `sceGsExecStoreImage` reads are answered from the renderer
+  straight into the game's buffer, with no GS transfer and no path sync. A
+  depth read (the lens flare's 8x8 block of Z) comes from the renderer's
+  depth a frame or two late (`readDepth`; it needs D32_FLOAT depth). A
+  colour read (the fades' and menus' captured frame) comes from the target
+  drawn at that address, or the scene, as the last frame drawn left it
+  (`captureTarget`, `native::beginColorRead`), answered on the presenting
+  thread. Targets clamp alpha above 0x80, so a capture's alpha does too.
+- **The pipeline's own present** (step 7d): the runtime's loop calls a host
+  present hook (patch 0033) that shows the frame each flip's `Present`
+  closed, through the backend's `presentNativeFrame`, instead of the GS's
+  display registers; with no flip for 200 ms the last frame is shown again.
+  Flip pacing is off under the pipeline: nothing waits on the GS queue.
+- **No GS** (step 6's absorber, step 7's tripwire): what is left of a
+  packet after the converter and the upload withholding goes nowhere; the
+  game still gets SIGNAL, FINISH and LABEL in the privileged registers, set
+  as the GS would (`RG_NATIVE_ABSORB=0` sends it to the GS). The GS backend
+  is installed with nothing around it (no worker, no pacing) behind a
+  tripwire (`src/gs_tripwire.h`): any call that still reaches it is logged
+  once with a backtrace and, by default, dropped (`RG_NATIVE_GS=abort`
+  stops there, `=pass` lets it through). The backend still makes its GS
+  memory and caches at start, unused; not making them needs the backend's
+  own changes, not carried over. `tools/native-check.sh NAME` checks a
+  run's log (`build/run/NAME.log`) against these.
+
+Under the pipeline the screen shows the renderer's frame alone. Known
+limits: targets clamp alpha above 0x80; 7b needs D32_FLOAT depth; 7c is
+served from the last frame drawn; the title screen has 2D pieces whose
+source is unknown; the Flash Sword's trail is parked (it draws wrong on
+the archive branch too). A mesh into a buffer the game never named has
+no target and is dropped with the absorbed packets (counted as a target
+miss in the `[native-producer]` line), not sent to the tripwire.
 
 Memory: the renderer keeps the cameras the producer can still name (the
 newest `2 * kCameraWindow`); textures are evicted over a byte budget and
@@ -102,4 +176,5 @@ without the native renderer it is ignored and says so. The log says
 `[native-pipeline] on`. With `DQ8_GFX_STATS_EVERY`, the stats report gets
 the renderer's `[native-pipeline]` line (records by kind, the readiness
 counters R1-R5) and the producer's `[native-producer]` line (textures,
-palettes and targets made, meshes made and why not, material misses).
+palettes and targets made, meshes made and why not, material misses,
+effects and 2D pieces made and why not).
