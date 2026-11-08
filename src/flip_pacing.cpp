@@ -1,5 +1,7 @@
 #include "flip_pacing.h"
 
+#include "native_effects.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -185,6 +187,7 @@ void presentNative(uint64_t frame)
 
 void afterFlip(uint8_t *, R5900Context *, PS2Runtime *, uint32_t)
 {
+    rg::nativefx::endFlip();
     presentNative(g_flips.load(std::memory_order_relaxed) + 1u);
     g_flips.fetch_add(1u, std::memory_order_relaxed);
     if (g_paced)
@@ -197,6 +200,8 @@ void flipHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     // The vsync interval this flip waits for (RG_FPS=60).
     rg::timing::beforeFlip(rdram, ctx);
+    // The copy it sends is drawn as a native effect (src/native_effects.h).
+    rg::nativefx::beginFlip();
     // Its vsync wait blocks on a fiber and keeps this native frame, but a
     // safe point inside the flip unwinds it: the frame is presented when the
     // flip has really returned (return_hook.h).
