@@ -105,6 +105,7 @@ struct GsSurface {
     // depth-writing ALWAYS draws (`rewritten`) cover it again, so the stats
     // can tell a loss the next clear makes harmless from one a draw misses.
     struct DepthLoss {
+        GsRegion held;  // what draws wrote depth into since it was last emptied
         GsRegion lost;
         GsRegion rewritten;
         bool grown = false;

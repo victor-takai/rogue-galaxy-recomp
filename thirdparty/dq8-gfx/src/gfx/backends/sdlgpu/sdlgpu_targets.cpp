@@ -406,6 +406,7 @@ bool GsTargetCache::createTexture(GsSurface &surface, std::string &error) {
         return false;
     }
     surface.undefined = true;
+    surface.depthLoss.held.clear();
     return true;
 }
 
@@ -439,7 +440,7 @@ GsSurface *GsTargetCache::acquire(uint32_t base,
             return nullptr;
         const uint32_t grownWidth = std::max(surface.width, wantWidth);
         const uint32_t grownHeight = std::max(surface.height, wantHeight);
-        if (surface.depth && !surface.undefined)
+        if (surface.depth && !surface.depthLoss.held.empty())
             noteDepthLost(surface, nullptr, grownWidth, grownHeight);
         surface.width = grownWidth;
         surface.height = grownHeight;
@@ -601,7 +602,7 @@ void GsTargetCache::invalidate(const GsPageSet &pages, bool preserveOwned) {
             // its region simply retires the texture; the next acquire starts
             // clean.
             traceSurface("depth-discard", surface);
-            if (!surface.undefined)
+            if (!surface.depthLoss.held.empty())
                 noteDepthLost(surface, &pages);
             surface.undefined = true;
             surface.gpuDirty.clear();
@@ -630,11 +631,12 @@ void GsTargetCache::invalidate(const GsPageSet &pages, bool preserveOwned) {
 }
 
 // The whole texture goes, whatever part of it the write or the growth hit:
-// the loss is the surface's extent before it (Rogue Galaxy: added).
+// the loss is all that draws had written into it (Rogue Galaxy: added).
 void GsTargetCache::noteDepthLost(GsSurface &surface, const GsPageSet *pages, uint32_t grownWidth,
                                   uint32_t grownHeight) {
     GsSurface::DepthLoss &loss = surface.depthLoss;
-    loss.lost = surface.wholeRegion();
+    loss.lost = loss.held;
+    loss.held.clear();
     loss.rewritten.clear();
     loss.grown = pages == nullptr;
     loss.grownWidth = grownWidth;

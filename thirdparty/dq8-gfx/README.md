@@ -432,15 +432,19 @@ Depth losses (Rogue Galaxy: added, for issue 53, swords and water drawn
 through what is in front of them). A depth surface throws its texture away
 when a transfer lands in its pages (a host write or a GPU copy; depth is
 never read back) and when it grows; the stats line counts `depth lost`
-for those that held something, and `tested after` for the ones a draw then
-tested against before depth-writing ALWAYS draws covered the spot again,
-as a frame's clear does (only unions that stay rectangles count, so a gap
-between two draws is never taken as covered). Draws still queued at a
-transfer run after it, so they are checked first, in their order. The
-first eight get a `[gfx] depth lost, then tested` line: the Z buffer, the
-frame and batch, the pages written or the sizes grown between, and the
-batch that tested it, or the draws still queued when it went. Nothing
-about the drawing changes.
+for those that lost what draws had written into them (the loss is that
+area), and `tested after` for the ones a queued draw then tested against
+before depth-writing ALWAYS draws covered the spot again, as a frame's
+clear does. Draws are measured by their bounding boxes, and two refills
+add up only while their union stays a rectangle, so a line printed is a
+real lead while a quiet log is no proof. Draws still queued at a transfer
+run after it, so they are checked first, in their order. The first eight
+get a `[gfx] depth lost, then tested` line: the Z buffer, the frame and
+batch, the pages written or the sizes grown between, and the batch that
+tested it, or the draws still queued when it went. Nothing about the
+drawing changes. A host write patched into a live colour target skips
+the other targets, so a depth surface on those pages keeps its old depth,
+and nothing is reported.
 It found issue 53's cause: a scene depth buffer one pixel wider than its
 FBW, so every texture upload to the page after it emptied it.
 

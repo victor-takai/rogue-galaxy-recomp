@@ -227,11 +227,9 @@ struct DrawBatch {
 // game uploads textures every frame: from then on each upload discarded the
 // depth buffer mid-frame, and later geometry (water, a sword on a back)
 // showed through the ground and bodies (issue 53). What lands past the width
-// is not drawn.
+// is not drawn. FBW 0 names no width; its surfaces keep the scissor's.
 uint32_t surfaceWidthFor(const GSContext &context) {
-    const uint32_t width = static_cast<uint32_t>(context.scissor.x1) + 1u;
-    const uint32_t bufferPixels = context.frame.fbw * 64u;
-    return bufferPixels != 0u ? std::min(width, bufferPixels) : width;
+    return context.frame.fbw != 0u ? context.frame.fbw * 64u : static_cast<uint32_t>(context.scissor.x1) + 1u;
 }
 
 GsRegion primitiveBounds(const GSPrimitiveBatch &batch) {
@@ -844,11 +842,7 @@ struct SdlGpuBackend::Impl {
         // full path's union of each primitive's, so a primitive inside the
         // box adds nothing; one that grows it marks the grown box once.
         DrawBatch &head = batches[open - span];
-        if (head.depth && head.pipeline.hasDepth && !head.depth->depthLoss.lost.empty()) {
-            const uint8_t compare = head.pipeline.depthCompare;
-            depthLossUse(*head.depth, written, compare == SDL_GPU_COMPAREOP_ALWAYS,
-                         compare == SDL_GPU_COMPAREOP_NEVER, head.pipeline.depthWrite != 0u, &state.context);
-        }
+        noteDepthUse(head, written, state.context);
         const bool inside = last.boxPages && head.written.contains(written);
         GsPageSet grownPages;
         GsRegion grown = head.written;
@@ -1384,25 +1378,33 @@ struct SdlGpuBackend::Impl {
         for (const DrawBatch &queued : batches) {
             if (queued.depth != &surface || !queued.pipeline.hasDepth)
                 continue;
-            const uint8_t compare = queued.pipeline.depthCompare;
-            if (depthLossUse(surface, queued.written, compare == SDL_GPU_COMPAREOP_ALWAYS,
-                             compare == SDL_GPU_COMPAREOP_NEVER, queued.pipeline.depthWrite != 0u, nullptr) ||
-                surface.depthLoss.lost.empty())
+            if (depthLossUse(surface, queued.pipeline, queued.written, nullptr) || surface.depthLoss.lost.empty())
                 return;
         }
+    }
+    // A draw just queued with its depth surface: it meets a loss there
+    // first, then what it writes is held until the next loss.
+    void noteDepthUse(const DrawBatch &draw, const GsRegion &written, const GSContext &context) {
+        GsSurface *depth = draw.depth;
+        if (!depth || !draw.pipeline.hasDepth)
+            return;
+        if (!depth->depthLoss.lost.empty())
+            depthLossUse(*depth, draw.pipeline, written, &context);
+        if (draw.pipeline.depthWrite && draw.pipeline.depthCompare != SDL_GPU_COMPAREOP_NEVER)
+            depth->depthLoss.held.merge(written);
     }
     // One draw meeting a lost depth surface, in GS order: an ALWAYS draw
     // that writes depth refills what it covers; any other test reads it,
     // reported where nothing refilled it first. True when reported.
-    bool depthLossUse(GsSurface &depth, const GsRegion &written, bool always, bool never, bool writes,
+    bool depthLossUse(GsSurface &depth, const GsPipelineKey &pipeline, const GsRegion &written,
                       const GSContext *context) {
         GsSurface::DepthLoss &loss = depth.depthLoss;
         const GsRegion hit{std::max(written.x0, loss.lost.x0), std::max(written.y0, loss.lost.y0),
                            std::min(written.x1, loss.lost.x1), std::min(written.y1, loss.lost.y1)};
         if (hit.empty())
             return false;
-        if (always) {
-            if (writes) {
+        if (pipeline.depthCompare == SDL_GPU_COMPAREOP_ALWAYS) {
+            if (pipeline.depthWrite) {
                 mergeExact(loss.rewritten, hit);
                 if (loss.rewritten.contains(loss.lost)) {
                     loss.lost.clear();
@@ -1411,7 +1413,7 @@ struct SdlGpuBackend::Impl {
             }
             return false;
         }
-        if (never || loss.rewritten.contains(hit))
+        if (pipeline.depthCompare == SDL_GPU_COMPAREOP_NEVER || loss.rewritten.contains(hit))
             return false;
         reportDepthLoss(depth, context);
         return true;
@@ -2549,9 +2551,6 @@ struct SdlGpuBackend::Impl {
                                               neededWidth, neededHeight);
             passiveDepth = depth != nullptr;
         }
-        if (wantsDepth && !depth->depthLoss.lost.empty())
-            depthLossUse(*depth, written, test.depthTest == kDepthAlways, test.depthTest == kDepthNever,
-                         !context.zbuf.zmask, &context);
 
         DrawBatch draw{};
         draw.camera = batch.sourceCamera;
@@ -3108,6 +3107,7 @@ struct SdlGpuBackend::Impl {
                 ++stats.batches;
             }
         }
+        noteDepthUse(draw, draw.written, context);
         // What the next primitive may reuse (submitSameState).
         last.valid = !feedbackRecorded && !draw.feedback && !draw.destination && !draw.source && !clearsWhole &&
                      !nativeMesh &&
