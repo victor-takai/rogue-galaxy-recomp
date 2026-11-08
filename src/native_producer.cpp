@@ -1299,6 +1299,8 @@ bool mesh(const GSNativeMesh &mesh, const GSDrawState *drawState, const uint8_t 
     const uint32_t count = static_cast<uint32_t>(mesh.vertices.size());
 
     native::MeshDraw draw;
+
+    native::takeMeshStorage(draw.vertices, draw.indices);
     draw.source = source;
     // The program scales its window depth and caps it (VU quad 87.z, quad
     // 1.y): decals at 1.01 and 1.02 sit in front of their surfaces.
@@ -2057,6 +2059,7 @@ bool piece(const GSNativeMesh &mesh, const GSDrawState *drawState, bool texels)
     const GSContext &c = drawState->context;
     const GSNativeMesh::Header &h = mesh.header;
     native::MeshDraw draw;
+    native::takeMeshStorage(draw.vertices, draw.indices);
     const uint32_t frameBase = c.frame.fbp * 32u;
     uint32_t seqKey = frameBase; // the buffer's, or its narrow view's
     const bool view = narrow(s, frameBase, c.frame.fbw);
@@ -2328,6 +2331,7 @@ namespace
 native::MeshDraw rectDraw(native::Id target, const int32_t box[4], native::Id source)
 {
     native::MeshDraw draw;
+    native::takeMeshStorage(draw.vertices, draw.indices);
     draw.target = target;
     native::Material &m = draw.material;
     if (source != 0u)
@@ -2465,6 +2469,7 @@ bool effect(const GSNativeEffect &e)
             return refuse(s.counts.opsNoTarget);
         const bool greenToAlpha = (op.flags & GSNativeEffect::kGreenToAlpha) != 0u;
         native::MeshDraw draw;
+        native::takeMeshStorage(draw.vertices, draw.indices);
         draw.target = target;
         native::Material &m = draw.material;
         bool known = true;

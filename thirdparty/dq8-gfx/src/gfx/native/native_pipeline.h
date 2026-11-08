@@ -34,6 +34,12 @@ bool enabled();
 // Any thread. Dropped when the pipeline is off.
 void push(Record &&record);
 
+// Storage of meshes already drawn, emptied, for a new draw: a draw's vertices
+// and indices would otherwise be allocated on the producer's thread and freed
+// on the renderer's, thousands of times a frame. Either stays as it is when
+// there is none to give. Any thread.
+void takeMeshStorage(std::vector<Vertex> &vertices, std::vector<uint32_t> &indices);
+
 // Textures the renderer let go of (its memory budget): a producer that sends
 // a texture once and names it by id afterwards drains these and sends them
 // again when next used. Any thread.

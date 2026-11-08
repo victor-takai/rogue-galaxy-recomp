@@ -28,11 +28,50 @@ struct Queue
     std::vector<Record> records;
     std::vector<Id> evicted;
     std::function<std::string()> producerStats;
+    std::vector<std::vector<Vertex>> spareVertices;
+    std::vector<std::vector<uint32_t>> spareIndices;
 };
 Queue &queue()
 {
     static Queue instance;
     return instance;
+}
+
+// Mesh storage kept for reuse: how many, and the largest (a rare big draw's
+// goes back to the allocator, so the pool stays small).
+constexpr size_t kSpareStorage = 4096u;
+constexpr size_t kSpareCapacity = 2048u;
+constexpr size_t kSpareBatch = 256u;
+
+template <class T>
+void takeBatch(std::vector<T> &from, std::vector<T> &to)
+{
+    const size_t n = std::min(from.size(), kSpareBatch);
+    for (size_t i = 0; i < n; ++i)
+    {
+        to.push_back(std::move(from.back()));
+        from.pop_back();
+    }
+}
+
+template <class T>
+void giveBack(std::vector<T> &storage, std::vector<std::vector<T>> &pool)
+{
+    if (storage.capacity() == 0u || storage.capacity() > kSpareCapacity || pool.size() >= kSpareStorage)
+        return;
+    storage.clear();
+    pool.push_back(std::move(storage));
+}
+
+void recycleMeshes(std::vector<MeshDraw> &meshes)
+{
+    Queue &q = queue();
+    std::lock_guard lock(q.mutex);
+    for (MeshDraw &d : meshes)
+    {
+        giveBack(d.vertices, q.spareVertices);
+        giveBack(d.indices, q.spareIndices);
+    }
 }
 
 // The scene target until a producer declares one (the game's frame size).
@@ -200,6 +239,30 @@ void push(Record &&record)
     q.records.push_back(std::move(record));
 }
 
+void takeMeshStorage(std::vector<Vertex> &vertices, std::vector<uint32_t> &indices)
+{
+    // A batch at a time, so most draws take no lock.
+    thread_local std::vector<std::vector<Vertex>> localVertices;
+    thread_local std::vector<std::vector<uint32_t>> localIndices;
+    if (localVertices.empty() || localIndices.empty())
+    {
+        Queue &q = queue();
+        std::lock_guard lock(q.mutex);
+        takeBatch(q.spareVertices, localVertices);
+        takeBatch(q.spareIndices, localIndices);
+    }
+    if (!localVertices.empty())
+    {
+        vertices = std::move(localVertices.back());
+        localVertices.pop_back();
+    }
+    if (!localIndices.empty())
+    {
+        indices = std::move(localIndices.back());
+        localIndices.pop_back();
+    }
+}
+
 std::vector<Id> takeEvicted()
 {
     Queue &q = queue();
@@ -282,6 +345,7 @@ void Renderer::apply(SDL_GPUDevice *device, Record &record, std::string &error)
                 // The draws since the last one are a frame; a frame not yet
                 // drawn when the next closes is dropped (the newest shows).
                 m_frameMeshes.swap(m_meshes);
+                recycleMeshes(m_meshes);
                 m_meshes.clear();
                 m_frameReady = true;
                 ++m_meshCounts.frames;

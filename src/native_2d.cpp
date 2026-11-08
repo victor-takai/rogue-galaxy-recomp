@@ -12,9 +12,9 @@ namespace rg::native2d
 {
 namespace
 {
-std::vector<uint8_t> adPacket(const std::vector<std::pair<uint8_t, uint64_t>> &writes)
+void fillAdPacket(std::vector<uint8_t> &packet, const std::vector<std::pair<uint8_t, uint64_t>> &writes)
 {
-    std::vector<uint8_t> packet(16u + writes.size() * 16u);
+    packet.resize(16u + writes.size() * 16u);
     // NLOOP writes, EOP, PACKED, one register: A+D.
     const uint64_t tag[2] = {static_cast<uint64_t>(writes.size()) | (1ull << 15) | (1ull << 60), 0xEull};
     std::memcpy(packet.data(), tag, sizeof(tag));
@@ -23,7 +23,6 @@ std::vector<uint8_t> adPacket(const std::vector<std::pair<uint8_t, uint64_t>> &w
         const uint64_t pair[2] = {writes[i].second, writes[i].first};
         std::memcpy(packet.data() + 16u + i * 16u, pair, sizeof(pair));
     }
-    return packet;
 }
 
 GSNativeMesh::Header screenHeader()
@@ -52,7 +51,9 @@ thread_local Carried t_carried;
 
 std::vector<uint8_t> registerPacket(const std::vector<std::pair<uint8_t, uint64_t>> &writes)
 {
-    return adPacket(writes);
+    std::vector<uint8_t> packet;
+    fillAdPacket(packet, writes);
+    return packet;
 }
 
 bool enabled()
@@ -95,19 +96,28 @@ bool build(const Span *packets, size_t count, std::vector<Piece> &out, std::stri
     // The last call's meshes' vertex storage, for this call's meshes: a
     // packet's meshes would otherwise allocate and free it each time.
     thread_local std::vector<std::vector<GSNativeMesh::Vertex>> spare;
+    thread_local std::vector<std::vector<uint8_t>> sparePackets;
     for (Piece &old : out)
+    {
         if (old.mesh.vertices.capacity() != 0u && spare.size() < 64u)
         {
             old.mesh.vertices.clear();
             spare.push_back(std::move(old.mesh.vertices));
         }
+        if (old.packet.capacity() != 0u && sparePackets.size() < 64u)
+        {
+            old.packet.clear();
+            sparePackets.push_back(std::move(old.packet));
+        }
+    }
     out.clear();
     Carried &carried = t_carried;
     rg::gif::GifState &state = carried.state;
     std::vector<rg::gif::GifEvent> &queue = carried.queue;
     uint16_t &queuePrim = carried.queuePrim;
     thread_local std::vector<rg::gif::GifEvent> events;
-    std::vector<std::pair<uint8_t, uint64_t>> writes;
+    thread_local std::vector<std::pair<uint8_t, uint64_t>> writes;
+    writes.clear();
     Piece mesh;
     uint16_t meshPrim = 0xFFFFu;
 
@@ -157,7 +167,12 @@ bool build(const Span *packets, size_t count, std::vector<Piece> &out, std::stri
         {
             closeMesh();
             Piece piece;
-            piece.packet = adPacket(writes);
+            if (!sparePackets.empty())
+            {
+                piece.packet = std::move(sparePackets.back());
+                sparePackets.pop_back();
+            }
+            fillAdPacket(piece.packet, writes);
             out.push_back(std::move(piece));
             writes.clear();
         }
