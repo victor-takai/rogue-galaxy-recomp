@@ -763,7 +763,33 @@ struct SdlGpuBackend::Impl {
     } last;
 
     // False sends the primitive down the full path.
+    // Whether a source-alpha blend's factor passes one on this primitive, by
+    // its vertex alpha: where the texture brings no alpha, and where it is
+    // modulated, since a texel's alpha is scaled by the vertex's (the menus'
+    // text: a 0x30 grey glyph at alpha 0xFF, which only reads as white
+    // doubled; PCSX2 needs its full blending accuracy for the same text).
+    static bool weighsPastOne(const GSPrimitiveBatch &batch, const GsAlphaState &alpha) {
+        static const bool textured = std::getenv("DQ8_GFX_NO_TEXTURED_OVERONE") == nullptr;
+        if (alpha.c != kBlendAlphaSource)
+            return false;
+        const GSDrawState &state = batch.state;
+        const GSTex0Reg &tex0 = state.context.tex0;
+        if (state.prim.tme && tex0.tcc && !(textured && tex0.tfx == 0u))
+            return false;
+        for (uint8_t index = 0u; index < batch.vertexCount; ++index)
+            if (batch.vertices[index].a > 0x80u)
+                return true;
+        return false;
+    }
+
     bool submitSameState(const GSPrimitiveBatch &batch) {
+        // The state does not hold a vertex's alpha: a primitive with the
+        // state of the one before can still need its blend done in the
+        // shader (each glyph's fill, after its black copies at 0x80).
+        if (device.destinationCopy() && !device.framebufferFetch() && batch.state.prim.abe &&
+            weighsPastOne(batch, gsDecodeAlpha(batch.state.context.alpha)) &&
+            gsTranslateBlend(gsDecodeAlpha(batch.state.context.alpha), true).enabled)
+            return false;
         GsSurface *color = last.color;
         GsRegion written = primitiveBounds(batch);
         if (written.empty())
@@ -2592,9 +2618,8 @@ struct SdlGpuBackend::Impl {
         // brings none (the town's additive sparkles and light shafts carry
         // up to 0xB4).
         bool overOne = blend.enabled && alpha.c == kBlendAlphaFixed && alpha.fix > 0x80u;
-        if (blend.enabled && alpha.c == kBlendAlphaSource && (!state.prim.tme || !context.tex0.tcc))
-            for (uint8_t index = 0u; index < batch.vertexCount && !overOne; ++index)
-                overOne = batch.vertices[index].a > 0x80u;
+        if (blend.enabled && weighsPastOne(batch, alpha))
+            overOne = true;
         const bool destinationRead = !framebufferFetch && device.destinationCopy() &&
             (test.destinationAlphaTestEnabled || (blend.enabled && alpha.c == kBlendAlphaDest) || overOne);
         if (!framebufferFetch && !destinationRead && blend.enabled && !blend.exact)
