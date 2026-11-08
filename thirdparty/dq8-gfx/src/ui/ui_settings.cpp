@@ -9,6 +9,13 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <string>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace dq8::ui {
 namespace {
@@ -301,18 +308,32 @@ bool saveSettings(const std::string &path, const Settings &settings) {
     std::error_code error;
     if (const auto folder = std::filesystem::path(path).parent_path(); !folder.empty())
         std::filesystem::create_directories(folder, error);
-    const std::string temporary = path + ".tmp";
+    // The temporary carries the process id: two copies of the game (another
+    // folder's, on the same settings file) saving at the same moment write
+    // one each, and the one renamed last replaces the file whole.
+#ifdef _WIN32
+    const long process = _getpid();
+#else
+    const long process = static_cast<long>(getpid());
+#endif
+    const std::string temporary = path + "." + std::to_string(process) + ".tmp";
+    bool written = false;
     {
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         if (!file)
             return false;
         file << serializeSettings(settings);
-        if (!file.flush())
-            return false;
+        written = static_cast<bool>(file.flush());
     }
-    // Unlike std::rename on Windows, SDL_RenamePath replaces the old file.
-    if (SDL_RenamePath(temporary.c_str(), path.c_str()))
-        return true;
+    // Unlike std::rename on Windows, SDL_RenamePath replaces the old file. It
+    // fails while another process has it open (the other copy reading or
+    // replacing it, a virus scanner): five tries, 2 ms apart. Whatever is
+    // not renamed is removed, so no temporary is left behind.
+    for (int attempt = 0; written && attempt < 5; ++attempt) {
+        if (SDL_RenamePath(temporary.c_str(), path.c_str()))
+            return true;
+        SDL_Delay(2);
+    }
     SDL_RemovePath(temporary.c_str());
     return false;
 }
