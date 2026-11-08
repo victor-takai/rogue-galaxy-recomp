@@ -432,12 +432,17 @@ GsSurface *GsTargetCache::acquire(uint32_t base,
 
         // Growing loses the old contents unless they are preserved. Resolving
         // first and letting the reload path bring them back keeps that simple
-        // and correct; growth happens a handful of times per scene.
+        // and correct; growth happens a handful of times per scene. Depth is
+        // not preserved: the new texture starts at the far plane.
         if (!surface.depth && !surface.gpuDirty.empty() &&
             !resolveSurface(surface, error))
             return nullptr;
-        surface.width = std::max(surface.width, wantWidth);
-        surface.height = std::max(surface.height, wantHeight);
+        const uint32_t grownWidth = std::max(surface.width, wantWidth);
+        const uint32_t grownHeight = std::max(surface.height, wantHeight);
+        if (surface.depth && !surface.undefined)
+            noteDepthLost(surface, nullptr, grownWidth, grownHeight);
+        surface.width = grownWidth;
+        surface.height = grownHeight;
         if (!createTexture(surface, error))
             return nullptr;
         recomputePages(surface);
@@ -592,9 +597,12 @@ void GsTargetCache::invalidate(const GsPageSet &pages, bool preserveOwned) {
             continue;
         }
         if (surface.depth) {
-            // Depth is never read back, so a host write to its region simply
-            // retires the texture; the next acquire starts clean.
+            // Depth is never read back, so a host write (or a GPU copy) to
+            // its region simply retires the texture; the next acquire starts
+            // clean.
             traceSurface("depth-discard", surface);
+            if (!surface.undefined)
+                noteDepthLost(surface, &pages);
             surface.undefined = true;
             surface.gpuDirty.clear();
             surface.ownedPages.reset();
@@ -619,6 +627,30 @@ void GsTargetCache::invalidate(const GsPageSet &pages, bool preserveOwned) {
         }
         traceSurface("invalidate", surface);
     }
+}
+
+// The whole texture goes, whatever part of it the write or the growth hit:
+// the loss is the surface's extent before it (Rogue Galaxy: added).
+void GsTargetCache::noteDepthLost(GsSurface &surface, const GsPageSet *pages, uint32_t grownWidth,
+                                  uint32_t grownHeight) {
+    GsSurface::DepthLoss &loss = surface.depthLoss;
+    loss.lost = surface.wholeRegion();
+    loss.rewritten.clear();
+    loss.grown = pages == nullptr;
+    loss.grownWidth = grownWidth;
+    loss.grownHeight = grownHeight;
+    loss.firstPage = loss.lastPage = 0u;
+    if (pages) {
+        bool first = true;
+        gsForEachPage(surface.pages & *pages, [&](uint32_t page) {
+            if (first)
+                loss.firstPage = page;
+            first = false;
+            loss.lastPage = page;
+        });
+    }
+    if (m_depthLossHook)
+        m_depthLossHook(surface);
 }
 
 uint32_t GsTargetCache::releaseCoveredPages(const GsPageSet &covered) {

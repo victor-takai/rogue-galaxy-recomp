@@ -63,6 +63,10 @@
 - The frame-rate counter (F3) and the fast-forward badge stay in the
   window's corners with the picture at 4:3 too, as the notifications do;
   they sat in the picture's corners, inside the bars.
+- Water, a sword on a character's back and other things no longer show
+  through the ground and through bodies after a visit to the Revelation
+  screens
+  ([#53](https://github.com/victor-takai/rogue-galaxy-recomp/issues/53)).
 
 ## 0.2.0 (pre-release)
 

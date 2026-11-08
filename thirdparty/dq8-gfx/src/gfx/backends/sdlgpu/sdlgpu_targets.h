@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -97,6 +98,23 @@ struct GsSurface {
     GsPageSet pages;
     // Allocated pages can overlap; only this subset may write back to VRAM.
     GsPageSet ownedPages;
+
+    // Depth this surface held that was thrown away, by a host write to its
+    // pages or by growing it, and not tested against since (Rogue Galaxy:
+    // added, issue 53). `lost` stays set until a draw tests depth there or
+    // depth-writing ALWAYS draws (`rewritten`) cover it again, so the stats
+    // can tell a loss the next clear makes harmless from one a draw misses.
+    struct DepthLoss {
+        GsRegion lost;
+        GsRegion rewritten;
+        bool grown = false;
+        uint32_t grownWidth = 0u;  // the size it grew to
+        uint32_t grownHeight = 0u;
+        uint32_t firstPage = 0u;   // the transfer's pages in the surface
+        uint32_t lastPage = 0u;
+        uint64_t frame = 0u;      // set by the backend: when it happened
+        uint32_t batch = 0u;
+    } depthLoss;
 
     bool ownsAnything() const { return !gpuDirty.empty(); }
     GsRegion wholeRegion() const { return {0u, 0u, width, height}; }
@@ -287,7 +305,15 @@ public:
     void setResolveReason(GsResolveReason reason) { m_reason = reason; }
     GsResolveReason resolveReason() const { return m_reason; }
 
+    // Called when a depth surface that held something loses it, with its
+    // depthLoss filled in; on a growth, before the surface takes its new
+    // size (Rogue Galaxy: added, issue 53).
+    void setDepthLossHook(std::function<void(GsSurface &)> hook) { m_depthLossHook = std::move(hook); }
+
 private:
+    void noteDepthLost(GsSurface &surface, const GsPageSet *pages, uint32_t grownWidth = 0u,
+                       uint32_t grownHeight = 0u);
+    std::function<void(GsSurface &)> m_depthLossHook;
     bool resolveSurfaces(const std::vector<GsSurface *> &surfaces, std::string &error);
     bool applyCpuPatches(GsSurface &surface, std::string &error);
     bool importColorPages(GsSurface &surface, const std::vector<GsSurface *> &sources,

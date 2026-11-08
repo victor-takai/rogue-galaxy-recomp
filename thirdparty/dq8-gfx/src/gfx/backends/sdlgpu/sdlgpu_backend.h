@@ -38,6 +38,12 @@ struct SdlGpuStats {
     // done in the shader from a snapshot, without framebuffer fetch (Rogue
     // Galaxy: added).
     uint64_t destinationReads = 0u;
+    // Depth a surface held, thrown away by a host write to its pages or by
+    // growing the surface, and of those the losses a draw then tested
+    // against before depth was written there again (Rogue Galaxy: added,
+    // issue 53).
+    uint64_t depthLosses = 0u;
+    uint64_t depthLossesTested = 0u;
     // Primitives drawn from the host's larger versions of their regions,
     // glyph borders drawn from its border versions and shadows from its
     // shadow versions (Rogue Galaxy: added).

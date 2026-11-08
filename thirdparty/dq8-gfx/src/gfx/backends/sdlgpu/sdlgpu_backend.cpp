@@ -218,6 +218,22 @@ struct DrawBatch {
     }
 };
 
+// The width a draw or a clear needs of its colour and depth surfaces. A frame
+// buffer is FBW*64 pixels wide: on the GS, x past that lands in the next row
+// of pages, not in a column beside the buffer. Rogue Galaxy's scissors often
+// end one pixel past it (0..512 with FBW 8 in its menus), and the Revelation
+// board draws a few sprites up to x = 513 with depth writes on. Growing the
+// surfaces for either made them alias the page after the buffer, where the
+// game uploads textures every frame: from then on each upload discarded the
+// depth buffer mid-frame, and later geometry (water, a sword on a back)
+// showed through the ground and bodies (issue 53). What lands past the width
+// is not drawn.
+uint32_t surfaceWidthFor(const GSContext &context) {
+    const uint32_t width = static_cast<uint32_t>(context.scissor.x1) + 1u;
+    const uint32_t bufferPixels = context.frame.fbw * 64u;
+    return bufferPixels != 0u ? std::min(width, bufferPixels) : width;
+}
+
 GsRegion primitiveBounds(const GSPrimitiveBatch &batch) {
     const GSContext &context = batch.state.context;
     const GsRegion scissor{context.scissor.x0, context.scissor.y0,
@@ -828,6 +844,11 @@ struct SdlGpuBackend::Impl {
         // full path's union of each primitive's, so a primitive inside the
         // box adds nothing; one that grows it marks the grown box once.
         DrawBatch &head = batches[open - span];
+        if (head.depth && head.pipeline.hasDepth && !head.depth->depthLoss.lost.empty()) {
+            const uint8_t compare = head.pipeline.depthCompare;
+            depthLossUse(*head.depth, written, compare == SDL_GPU_COMPAREOP_ALWAYS,
+                         compare == SDL_GPU_COMPAREOP_NEVER, head.pipeline.depthWrite != 0u, &state.context);
+        }
         const bool inside = last.boxPages && head.written.contains(written);
         GsPageSet grownPages;
         GsRegion grown = head.written;
@@ -1349,6 +1370,106 @@ struct SdlGpuBackend::Impl {
         }
         return false;
     }
+
+    // Depth thrown away while it held something (Rogue Galaxy: added, issue
+    // 53; GsTargetCache::setDepthLossHook). Harmless when the next depth
+    // write covers it, as a frame's clear does; reported when a draw tests
+    // against it first. Draws still queued go after the transfer, so they
+    // meet the loss first, in their order.
+    void noteDepthLoss(GsSurface &surface) {
+        ++stats.depthLosses;
+        surface.depthLoss.frame = stats.presents;
+        // A growth happens inside the batch that needs it, already counted.
+        surface.depthLoss.batch = surface.depthLoss.grown && tracedBatch != 0u ? tracedBatch - 1u : tracedBatch;
+        for (const DrawBatch &queued : batches) {
+            if (queued.depth != &surface || !queued.pipeline.hasDepth)
+                continue;
+            const uint8_t compare = queued.pipeline.depthCompare;
+            if (depthLossUse(surface, queued.written, compare == SDL_GPU_COMPAREOP_ALWAYS,
+                             compare == SDL_GPU_COMPAREOP_NEVER, queued.pipeline.depthWrite != 0u, nullptr) ||
+                surface.depthLoss.lost.empty())
+                return;
+        }
+    }
+    // One draw meeting a lost depth surface, in GS order: an ALWAYS draw
+    // that writes depth refills what it covers; any other test reads it,
+    // reported where nothing refilled it first. True when reported.
+    bool depthLossUse(GsSurface &depth, const GsRegion &written, bool always, bool never, bool writes,
+                      const GSContext *context) {
+        GsSurface::DepthLoss &loss = depth.depthLoss;
+        const GsRegion hit{std::max(written.x0, loss.lost.x0), std::max(written.y0, loss.lost.y0),
+                           std::min(written.x1, loss.lost.x1), std::min(written.y1, loss.lost.y1)};
+        if (hit.empty())
+            return false;
+        if (always) {
+            if (writes) {
+                mergeExact(loss.rewritten, hit);
+                if (loss.rewritten.contains(loss.lost)) {
+                    loss.lost.clear();
+                    loss.rewritten.clear();
+                }
+            }
+            return false;
+        }
+        if (never || loss.rewritten.contains(hit))
+            return false;
+        reportDepthLoss(depth, context);
+        return true;
+    }
+    // Grows `into` by `region` only where the union is a rectangle too: one
+    // inside the other, or two sharing a whole edge, as a clear's strips do.
+    // Otherwise it keeps the larger, so a gap between two draws never counts
+    // as refilled (a refill missed this way only costs a line too many).
+    static void mergeExact(GsRegion &into, const GsRegion &region) {
+        if (into.empty() || region.contains(into)) {
+            into = region;
+            return;
+        }
+        if (into.contains(region))
+            return;
+        const bool sameRows = into.y0 == region.y0 && into.y1 == region.y1 && region.x0 <= into.x1 &&
+                              into.x0 <= region.x1;
+        const bool sameColumns = into.x0 == region.x0 && into.x1 == region.x1 && region.y0 <= into.y1 &&
+                                 into.y0 <= region.y1;
+        if (sameRows || sameColumns)
+            into.merge(region);
+        else if (uint64_t(region.width()) * region.height() > uint64_t(into.width()) * into.height())
+            into = region;
+    }
+    // A line for the first few, then only the stats line's count.
+    void reportDepthLoss(GsSurface &depth, const GSContext *context) {
+        ++stats.depthLossesTested;
+        GsSurface::DepthLoss &loss = depth.depthLoss;
+        static constexpr uint32_t kLines = 8u;
+        if (depthLossLines < kLines) {
+            ++depthLossLines;
+            char how[96];
+            if (loss.grown)
+                std::snprintf(how, sizeof(how), "growing from %ux%u to %ux%u", loss.lost.x1, loss.lost.y1,
+                              loss.grownWidth, loss.grownHeight);
+            else
+                std::snprintf(how, sizeof(how), "a transfer into its pages %03x-%03x", loss.firstPage,
+                              loss.lastPage);
+            // From inside a growth the surface still has its old size.
+            const uint32_t width = loss.grown ? loss.grownWidth : depth.width;
+            const uint32_t height = loss.grown ? loss.grownHeight : depth.height;
+            char by[96];
+            if (context)
+                std::snprintf(by, sizeof(by), "batch %u (fbp=%03x)", tracedBatch - 1u, context->frame.fbp);
+            else
+                std::snprintf(by, sizeof(by), "draws queued before it");
+            std::fprintf(stderr,
+                         "[gfx] depth lost, then tested: Z %03x (psm=%02x fbw=%u %ux%u) lost at batch %u "
+                         "of frame %llu by %s; tested in frame %llu by %s%s\n",
+                         depth.base >> 5u, depth.psm, depth.bufferWidth, width, height, loss.batch,
+                         static_cast<unsigned long long>(loss.frame), how,
+                         static_cast<unsigned long long>(stats.presents), by,
+                         depthLossLines == kLines ? " (later ones only counted)" : "");
+        }
+        loss.lost.clear();
+        loss.rewritten.clear();
+    }
+    uint32_t depthLossLines = 0u;
 
     // A local-to-local transfer between CT32 render targets, done on the GPU.
     // The CPU path reads both targets back -- a stall each, and at a scale
@@ -2364,25 +2485,8 @@ struct SdlGpuBackend::Impl {
         if (written.empty())
             return;
 
-        uint32_t neededWidth = static_cast<uint32_t>(context.scissor.x1) + 1u;
+        const uint32_t neededWidth = surfaceWidthFor(context);
         const uint32_t neededHeight = static_cast<uint32_t>(context.scissor.y1) + 1u;
-        // Scissors often end one pixel past the buffer (0..512 with FBW 8 in
-        // Rogue Galaxy's menus). Growing the colour and depth surfaces for that
-        // makes them alias the page after the buffer, and every texture upload
-        // there then discarded the depth buffer mid-frame, so later geometry
-        // showed through walls. Only geometry reaching past the buffer widens
-        // them: a sprite or triangle edge at x == width covers no pixel there.
-        const uint32_t bufferPixels = context.frame.fbw * 64u;
-        if (neededWidth > bufferPixels && bufferPixels != 0u) {
-            const float offsetX = static_cast<float>(context.xyoffset.ofx) / 16.0f;
-            float maxX = -1.0f;
-            for (uint8_t i = 0u; i < batch.vertexCount; ++i)
-                maxX = std::max(maxX, batch.vertices[i].x - offsetX);
-            const bool thin = state.prim.type == GS_PRIM_POINT || state.prim.type == GS_PRIM_LINE ||
-                              state.prim.type == GS_PRIM_LINESTRIP;
-            if (std::isfinite(maxX) && maxX + (thin ? 1.0f : 0.0f) <= static_cast<float>(bufferPixels))
-                neededWidth = bufferPixels;
-        }
 
         std::string error;
         GsSurface *color = targets->acquire(context.frame.fbp << 5u, context.frame.fbw,
@@ -2445,6 +2549,9 @@ struct SdlGpuBackend::Impl {
                                               neededWidth, neededHeight);
             passiveDepth = depth != nullptr;
         }
+        if (wantsDepth && !depth->depthLoss.lost.empty())
+            depthLossUse(*depth, written, test.depthTest == kDepthAlways, test.depthTest == kDepthNever,
+                         !context.zbuf.zmask, &context);
 
         DrawBatch draw{};
         draw.camera = batch.sourceCamera;
@@ -3001,11 +3108,9 @@ struct SdlGpuBackend::Impl {
                 ++stats.batches;
             }
         }
-        // What the next primitive may reuse (submitSameState). A scissor
-        // past the buffer decides per vertex whether the surface widens.
-        const bool widens = static_cast<uint32_t>(context.scissor.x1) + 1u > bufferPixels && bufferPixels != 0u;
+        // What the next primitive may reuse (submitSameState).
         last.valid = !feedbackRecorded && !draw.feedback && !draw.destination && !draw.source && !clearsWhole &&
-                     !widens && !nativeMesh &&
+                     !nativeMesh &&
                      (!state.prim.tme || plainTexture);
         if (last.valid) {
             std::memcpy(&last.state, &state, sizeof(last.state));
@@ -3851,6 +3956,16 @@ struct SdlGpuBackend::Impl {
             if (stats.roundTrips != previous.roundTrips) {
                 std::snprintf(buf, sizeof(buf), " | round trips %llu",
                               static_cast<unsigned long long>(stats.roundTrips - previous.roundTrips));
+                line += buf;
+            }
+            // Depth thrown away while it held something, and the losses a
+            // draw then tested against (Rogue Galaxy: added, issue 53).
+            if (stats.depthLosses != previous.depthLosses ||
+                stats.depthLossesTested != previous.depthLossesTested) {
+                std::snprintf(buf, sizeof(buf), " | depth lost %llu, tested after %llu",
+                              static_cast<unsigned long long>(stats.depthLosses - previous.depthLosses),
+                              static_cast<unsigned long long>(stats.depthLossesTested -
+                                                              previous.depthLossesTested));
                 line += buf;
             }
             std::snprintf(buf, sizeof(buf), " | longest frame %.1f ms", longestPresentGap * 1e3);
@@ -5050,6 +5165,7 @@ void SdlGpuBackend::Initialize(uint8_t *vram, uint32_t vramSize) {
     });
     if (!m_impl->targets)
         m_impl->targets = std::make_unique<GsTargetCache>(m_impl->device, m_impl->vram);
+    m_impl->targets->setDepthLossHook([impl = m_impl.get()](GsSurface &surface) { impl->noteDepthLoss(surface); });
     if (!m_impl->textures) {
         m_impl->textures = std::make_unique<GsTextureCache>(m_impl->device, m_impl->vram,
                                                             *m_impl->targets);
@@ -5425,16 +5541,10 @@ bool SdlGpuBackend::ClearFramebuffer(const GSContext &context, uint32_t rgba) {
     if (!m_impl->flushDraws())
         return false;
 
-    // A clear covers the buffer and never the page after it: a scissor ending
-    // past FBW pages must not widen the surface (see neededWidth in submit).
-    const uint32_t bufferPixels = context.frame.fbw * 64u;
-    uint32_t width = static_cast<uint32_t>(context.scissor.x1) + 1u;
-    if (bufferPixels != 0u && width > bufferPixels)
-        width = bufferPixels;
     std::string error;
     GsSurface *surface = m_impl->targets->acquire(
         context.frame.fbp << 5u, context.frame.fbw, context.frame.psm, false,
-        width, static_cast<uint32_t>(context.scissor.y1) + 1u, error);
+        surfaceWidthFor(context), static_cast<uint32_t>(context.scissor.y1) + 1u, error);
     Impl::ResolveReasonScope scope(*m_impl->targets, GsResolveReason::View);
     if (!surface || !m_impl->targets->prepareColorView(*surface, error)) {
         m_impl->setError(std::move(error));

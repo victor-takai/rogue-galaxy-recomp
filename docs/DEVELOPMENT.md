@@ -63,6 +63,10 @@ rebuild (`Update.bat`; it recompiles all game code).
 
 `debug\RogueGalaxy-capture.bat` sets `RG_GS_CAPTURE` to `build\captures`:
 F7 then logs the next frame, for a picture that looks wrong.
+Things drawn through what is in front of them can be lost depth: any
+launcher's log then has `depth lost N, tested after M` on the stats line,
+and the first few of those get a `[gfx] depth lost, then tested` line
+(see "Depth losses" in [the backend's README](../thirdparty/dq8-gfx/README.md)).
 `debug\RogueGalaxy-collect.bat` sets `RG_TEXTURE_DUMP` to
 `textures\collected`, for making a texture pack
 ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)).
