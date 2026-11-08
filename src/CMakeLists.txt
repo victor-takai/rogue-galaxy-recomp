@@ -122,6 +122,7 @@ add_executable(roguegalaxy
     debug/input_script.cpp
     debug/pos_trace.cpp
     debug/encounter.cpp
+    debug/force_return.cpp
     debug/jump_trace.cpp
     debug/sampler.cpp
     debug/stall_watch.cpp
