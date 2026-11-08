@@ -1300,6 +1300,10 @@ bool mesh(const GSNativeMesh &mesh, const GSDrawState *drawState, const uint8_t 
 
     native::MeshDraw draw;
     draw.source = source;
+    // The program scales its window depth and caps it (VU quad 87.z, quad
+    // 1.y): decals at 1.01 and 1.02 sit in front of their surfaces.
+    draw.depthScale = mesh.header.depthScale;
+    draw.depthMax = mesh.header.depthMax;
 
     // The triangles the program draws: a strip's every vertex from the
     // third on, a list's every third, less those the program culls (the

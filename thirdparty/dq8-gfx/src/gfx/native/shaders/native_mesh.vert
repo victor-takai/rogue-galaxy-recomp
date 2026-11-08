@@ -13,7 +13,13 @@ layout(set = 1, binding = 0) uniform Draw {
     mat4 viewport; // clip to the target's pixels (w kept)
     vec4 target;   // the target's width and height in game pixels; z: fog per vertex (a window-space draw)
     vec4 fog;      // F = clamp(fog.x + fog.w * w, at most fog.y, at least fog.z)
+    vec4 depthRow; // reversed depth (w - z) / 2 from the position, made in double, with the program's depthScale
+    vec4 depthLimit; // x: the program's depthMax as this depth; y: 1 when it applies
 } draw;
+
+// One surface drawn by several meshes in several pipelines (terrain layers,
+// a light laid on a wall) must get bit-identical positions and depth.
+invariant gl_Position;
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec2 inUv;
@@ -31,9 +37,14 @@ void main() {
     outColor = inColor;
     outFog = draw.target.z != 0.0 ? inFog : clamp(draw.fog.x + draw.fog.w * clip.w, draw.fog.z, draw.fog.y);
     // Window pixels to SDL's normalized coordinates (y up), times w so the
-    // GPU's divide gives them back.
+    // GPU's divide gives them back. The program caps its depth per vertex
+    // (depthMax); only in front of the eye, where the cap means a depth
+    // (behind it the GPU clips).
+    float depth = dot(draw.depthRow, vec4(inPosition, 1.0));
+    if (draw.depthLimit.y != 0.0 && clip.w > 0.0)
+        depth = min(depth, draw.depthLimit.x * clip.w);
     gl_Position = vec4(window.x * 2.0 / draw.target.x - window.w,
                        window.w - window.y * 2.0 / draw.target.y,
-                       (clip.w - clip.z) * 0.5,
+                       depth,
                        clip.w);
 }
