@@ -258,12 +258,15 @@ commit of this folder is upstream as is, so `git log -p` on it shows them.
   `DQ8_GFX_NO_COVERED_RELEASE=1` patches every page, as before. The stats
   line counts `covered-releases` and their pages.
 
-One change fixes a result rather than speed: in `sdlgpu_backend.cpp`, a
-scissor ending past the buffer (0 to 512 with FBW 8, in Rogue Galaxy's
-menus) no longer grows the colour and depth surfaces past FBW pages unless
-the geometry reaches there (a clear never does), and a draw's host scissor
-and written region are clipped to its surface. Grown surfaces took in the page after the
-buffer; texture uploads to it then discarded the depth buffer mid-frame.
+One change fixes a result rather than speed: in `sdlgpu_backend.cpp`, the
+colour and depth surfaces never grow past FBW pages, and a draw's host
+scissor and written region are clipped to its surface; on the GS, x past
+FBW*64 lands in the next row of pages, never beside the buffer. Rogue
+Galaxy's menu scissors end past the buffer (0 to 512 with FBW 8), and its
+Revelation board draws a few sprites up to x = 513 with depth writes on
+(until issue 53 a surface grew when geometry reached past the buffer).
+Grown surfaces took in the page after the buffer; texture uploads to it
+then discarded the depth buffer mid-frame, every frame from then on.
 
 Five more fix results:
 
@@ -424,6 +427,26 @@ a command buffer is done the time from each label to the next is added to
 that label's total; every two seconds `[gputime]` lines give each label's
 GPU milliseconds and count per second, heaviest first. The timestamps cost
 about a tenth of the frame at 8x; off, nothing changes.
+
+Depth losses (Rogue Galaxy: added, for issue 53, swords and water drawn
+through what is in front of them). A depth surface throws its texture away
+when a transfer lands in its pages (a host write or a GPU copy; depth is
+never read back) and when it grows; the stats line counts `depth lost`
+for those that lost what draws had written into them (the loss is that
+area), and `tested after` for the ones a queued draw then tested against
+before depth-writing ALWAYS draws covered the spot again, as a frame's
+clear does. Draws are measured by their bounding boxes, and two refills
+add up only while their union stays a rectangle, so a line printed is a
+real lead while a quiet log is no proof. Draws still queued at a transfer
+run after it, so they are checked first, in their order. The first eight
+get a `[gfx] depth lost, then tested` line: the Z buffer, the frame and
+batch, the pages written or the sizes grown between, and the batch that
+tested it, or the draws still queued when it went. Nothing about the
+drawing changes. A host write patched into a live colour target skips
+the other targets, so a depth surface on those pages keeps its old depth,
+and nothing is reported.
+It found issue 53's cause: a scene depth buffer one pixel wider than its
+FBW, so every texture upload to the page after it emptied it.
 
 The target trace numbers the batches from each present (`[target] batch N`),
 as a frame log numbers them. `DQ8_GFX_HIDDEN_WINDOW=1` creates the window
