@@ -19,8 +19,8 @@ layout(set = 3, binding = 0) uniform Material {
     // x, y: the size the uvs are normalized to (the game's 2^TW, 2^TH);
     // z, w: the texture's own, which an upload may leave smaller
     vec4 size;
-    // x: a channel shuffle (1: alpha's bits 2-7 from green's), z: clamp u,
-    // w: clamp v (y unused)
+    // x: a channel shuffle (1: alpha's bits 2-7 from green's), y: filtered
+    // (bilinear, for what is fetched by hand below), z: clamp u, w: clamp v
     vec4 blend;
     vec4 fogColor; // 0-1
     // x: the texel's alpha replaced by this (0-255) when not negative (a
@@ -43,6 +43,17 @@ int wrapAxis(int a, int size, uint mode, uint lo, uint hi, bool clampOld) {
     else
         return clampOld ? clamp(a, 0, size - 1) : int(mod(float(a), float(size)));
     return clamp(a, 0, size - 1);
+}
+
+// One texel as the GS addresses it: an index goes through the palette here.
+vec4 fetchTexel(ivec2 at, ivec2 size) {
+    at.x = wrapAxis(at.x, size.x, material.wrap.x, material.region.x, material.region.y, material.blend.z != 0.0);
+    at.y = wrapAxis(at.y, size.y, material.wrap.y, material.region.z, material.region.w, material.blend.w != 0.0);
+    if (material.mode.x == 2u) {
+        int index = int(texelFetch(image, at, 0).r * 255.0 + 0.5);
+        return texelFetch(palette, ivec2(min(index, int(material.mode.w) - 1), 0), 0);
+    }
+    return texelFetch(image, at, 0);
 }
 
 layout(location = 0) in vec2 inUv;
@@ -79,16 +90,17 @@ void main() {
         // A region (a tile of a sheet) is fetched as the GS addresses it.
         bool region = material.mode.x != 3u && (material.wrap.x >= 2u || material.wrap.y >= 2u);
         if (material.mode.x == 2u || region) {
-            // Fetched, not filtered: an index is not a color.
+            // Fetched by hand: an index is not a color, so filtering comes
+            // after the palette, as on the GS.
             ivec2 size = ivec2(material.size.zw);
-            ivec2 at = ivec2(floor(texel));
-            at.x = wrapAxis(at.x, size.x, material.wrap.x, material.region.x, material.region.y, material.blend.z != 0.0);
-            at.y = wrapAxis(at.y, size.y, material.wrap.y, material.region.z, material.region.w, material.blend.w != 0.0);
-            if (material.mode.x == 2u) {
-                int index = int(texelFetch(image, at, 0).r * 255.0 + 0.5);
-                t = texelFetch(palette, ivec2(min(index, int(material.mode.w) - 1), 0), 0);
+            if (material.blend.y != 0.0) {
+                vec2 p = texel - 0.5;
+                ivec2 a = ivec2(floor(p));
+                vec2 f = p - floor(p);
+                t = mix(mix(fetchTexel(a, size), fetchTexel(a + ivec2(1, 0), size), f.x),
+                        mix(fetchTexel(a + ivec2(0, 1), size), fetchTexel(a + ivec2(1, 1), size), f.x), f.y);
             } else {
-                t = texelFetch(image, at, 0);
+                t = fetchTexel(ivec2(floor(texel)), size);
             }
         } else {
             t = texture(image, texel / material.size.zw);

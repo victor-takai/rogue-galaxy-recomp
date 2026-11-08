@@ -524,6 +524,7 @@ void Renderer::drawMeshes(SDL_GPUDevice *device, SDL_GPUCommandBuffer *commands,
         mu.size[2] = ownW;
         mu.size[3] = ownH;
         mu.blend[0] = m.shuffle == ChannelShuffle::GreenToAlpha ? 1.0f : 0.0f;
+        mu.blend[1] = m.linear ? 1.0f : 0.0f;
         mu.blend[2] = m.clampU ? 1.0f : 0.0f;
         mu.blend[3] = m.clampV ? 1.0f : 0.0f;
         mu.wrap[0] = m.wrapU;
