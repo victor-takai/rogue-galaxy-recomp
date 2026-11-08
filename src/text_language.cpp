@@ -100,6 +100,10 @@ int g_logged = 0;
 // pack to texts built since): the PAL places for them only then.
 constexpr const char *kChainPack = "chn\\common.pac";
 std::atomic<bool> g_chainPictures{false};
+// The PAL map packs' minimap icons, with every language's shop letter
+// (european.py's MINIMAP_ICON, in texts built since): a name the game never
+// asks for, read by the minimap's hooks below.
+constexpr const char *kMinimapIcon = "rg\\minimap_icon.tm2";
 
 uint32_t readWord(const uint8_t *rdram, uint32_t address)
 {
@@ -292,6 +296,11 @@ Index &textIndex(uint8_t *rdram, R5900Context *ctx)
     {
         std::fprintf(stderr, "[rg] the Attack Chain keeps its English words: this text was built before "
                              "they came in (run Install-European.bat again)\n");
+    }
+    if (g_text.ok && g_text.files.count(kMinimapIcon) == 0u)
+    {
+        std::fprintf(stderr, "[rg] the minimap's shops keep the English S: this text was built before "
+                             "the European letters came in (run Install-European.bat again)\n");
     }
     return g_text;
 }
@@ -1404,6 +1413,174 @@ void spriteAnchorBR(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     g_originalAnchorBR(rdram, ctx, runtime);
 }
 
+// The minimap marks a shop with an "S" (MinimapDrawEntry, 0x325720: the people
+// with f8 & 6), a 14x14 cut at (0, 50) of the minimap_icon picture in the map
+// pack's minimap IM3. The PAL map packs' picture has the other languages'
+// letters beside it, and the PAL executable cuts the language's (0x4603E0):
+// M in French, G in German, T in Spanish, B in Italian. A European text carries
+// that picture (european.py); MinimapLoad (0x32A240, a1 the IM3, a2 its size,
+// copied whole) gets it in place of the US one, and then the sign's call to
+// MinimapEmitSprite (0x324D30, t2 and t3 the cut's u and v) takes the letter.
+constexpr uint32_t kMinimapLoad = 0x0032A240u;
+constexpr uint32_t kMinimapEmitSprite = 0x00324D30u;
+constexpr uint32_t kShopSignReturn = 0x00327074u;
+constexpr uint32_t kRdramSize = 0x02000000u;
+constexpr char kIconPicture[] = "minimap_icon";
+constexpr size_t kTim2Head = 0x40; // the file's header and the picture's, alike in both
+struct Cut
+{
+    int32_t u;
+    int32_t v;
+};
+constexpr Cut kShopSignUs = {0, 50};
+constexpr Cut kShopSign[4] = {{42, 50}, {42, 36}, {28, 50}, {14, 50}};
+PS2Runtime::RecompiledFunction g_originalMinimapLoad = nullptr;
+PS2Runtime::RecompiledFunction g_originalEmitSprite = nullptr;
+std::vector<uint8_t> g_minimapIcon; // empty when the text has none
+bool g_minimapIconRead = false;
+// The minimap loaded last has the PAL picture.
+std::atomic<bool> g_shopLetters{false};
+
+const std::vector<uint8_t> &minimapIcon()
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_minimapIconRead)
+    {
+        return g_minimapIcon;
+    }
+    g_minimapIconRead = true;
+    const auto found = g_text.files.find(kMinimapIcon);
+    if (found == g_text.files.end() || found->second.size < kTim2Head || found->second.size > 0x10000u)
+    {
+        return g_minimapIcon;
+    }
+    const std::string upper = upperCode();
+    std::ifstream in(PS2Runtime::getIoPaths().cdRoot / kFolder / (upper + ".DAT"), std::ios::binary);
+    std::vector<uint8_t> icon(found->second.size);
+    in.seekg(static_cast<std::streamoff>(found->second.sector) * 2048);
+    if (in.read(reinterpret_cast<char *>(icon.data()), static_cast<std::streamsize>(icon.size())) &&
+        std::memcmp(icon.data(), "TIM2", 4) == 0)
+    {
+        g_minimapIcon = std::move(icon);
+    }
+    else
+    {
+        std::fprintf(stderr, "[rg] %s.DAT: the minimap's icons could not be read; the shops keep the S\n",
+                     upper.c_str());
+    }
+    return g_minimapIcon;
+}
+
+// Puts the PAL picture over the US one in a minimap IM3 (entries of 0x40 bytes
+// from 0x10, a name of 0x20, the TIM2's offset at +0x24); the headers must match.
+bool swapMinimapIcon(uint8_t *rdram, uint32_t data, int32_t size)
+{
+    const std::vector<uint8_t> &icon = minimapIcon();
+    const uint32_t at = data & 0x1FFFFFFFu;
+    if (icon.empty() || size < 0x10 || at >= kRdramSize || static_cast<uint32_t>(size) > kRdramSize - at)
+    {
+        return false;
+    }
+    uint8_t *im3 = rdram + at;
+    if (std::memcmp(im3, "IM3\0", 4) != 0)
+    {
+        return false;
+    }
+    uint32_t count = 0;
+    std::memcpy(&count, im3 + 8, 4);
+    count = std::min<uint32_t>(count, static_cast<uint32_t>(size - 0x10) / 0x40u);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        const uint8_t *entry = im3 + 0x10 + 0x40 * i;
+        if (std::memcmp(entry, kIconPicture, sizeof(kIconPicture)) != 0)
+        {
+            continue;
+        }
+        uint32_t offset = 0;
+        std::memcpy(&offset, entry + 0x24, 4);
+        if (offset > static_cast<uint32_t>(size) || icon.size() > static_cast<uint32_t>(size) - offset ||
+            std::memcmp(im3 + offset, icon.data(), kTim2Head) != 0)
+        {
+            return false;
+        }
+        std::memcpy(im3 + offset, icon.data(), icon.size());
+        return true;
+    }
+    return false;
+}
+
+void minimapLoad(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const bool swapped = europeanColumn() >= 0 &&
+                         swapMinimapIcon(rdram, getRegU32(ctx, 5), static_cast<int32_t>(getRegU32(ctx, 6)));
+    g_shopLetters.store(swapped, std::memory_order_relaxed);
+    g_originalMinimapLoad(rdram, ctx, runtime);
+}
+
+void minimapEmitSprite(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    if (column >= 0 && getRegU32(ctx, 31) == kShopSignReturn && g_shopLetters.load(std::memory_order_relaxed) &&
+        static_cast<int32_t>(getRegU32(ctx, 10)) == kShopSignUs.u &&
+        static_cast<int32_t>(getRegU32(ctx, 11)) == kShopSignUs.v)
+    {
+        ctx->r[10] = _mm_set_epi64x(0, kShopSign[column].u);
+        ctx->r[11] = _mm_set_epi64x(0, kShopSign[column].v);
+    }
+    g_originalEmitSprite(rdram, ctx, runtime);
+}
+
+// The Seventh Mystery quiz (its UI at 0x4E9550). Its title banner (widget 3,
+// the picture 7mys_01) is two halves 128 wide at 128 and 256 in the PAL
+// layout a European text takes, the words not centred in them; the PAL
+// executable moves them when the quiz starts (SeventhMysteryQuizStart,
+// 0x394ED0, a1 set the first time) to (512 - W) / 2 - O and on, W the words'
+// width and O where they start (0x471EA0, 0x471E80). Its result box puts
+// "Correct!" at x 60 (UiSetTextPos, 0x28F5D0, a2 the x, from
+// SeventhMysteryQuizResult), where a longer word reaches the count beside
+// it; the PAL executable puts it at 45 in Spanish and French (0x471E68).
+constexpr uint32_t kQuizStart = 0x00394ED0u;
+constexpr uint32_t kUiSetTextPos = 0x0028F5D0u;
+constexpr uint32_t kQuizUi = 0x004E9550u;
+constexpr uint16_t kQuizBannerWidget = 3;
+constexpr int16_t kQuizBannerUsX[2] = {128, 256};
+constexpr int16_t kQuizBannerHalf = 128;
+constexpr int16_t kQuizBannerWords[4] = {194, 200, 178, 168};
+constexpr int16_t kQuizBannerStart[4] = {12, 26, 28, 38};
+constexpr uint32_t kQuizResultTextReturn = 0x0039442Cu;
+constexpr int32_t kQuizResultUsX = 0x3C;
+constexpr int32_t kQuizResultX[4] = {45, 60, 45, 60};
+PS2Runtime::RecompiledFunction g_originalQuizStart = nullptr;
+PS2Runtime::RecompiledFunction g_originalTextPos = nullptr;
+
+void quizStart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    const uint32_t sprites = column >= 0 && getRegU32(ctx, 5) != 0u ? widgetSprites(rdram, kQuizUi, kQuizBannerWidget)
+                                                                    : 0u;
+    // Only on the PAL layout's halves (the US layout's are 90 wide).
+    if (sprites != 0u && readHalf(rdram, sprites) == kQuizBannerUsX[0] &&
+        readHalf(rdram, sprites + kSpriteBytes) == kQuizBannerUsX[1] &&
+        readHalf(rdram, sprites + kSpriteWidth) == kQuizBannerHalf)
+    {
+        const int16_t x = static_cast<int16_t>((512 - kQuizBannerWords[column]) / 2 - kQuizBannerStart[column]);
+        writeHalf(rdram, sprites, x);
+        writeHalf(rdram, sprites + kSpriteBytes, static_cast<int16_t>(x + kQuizBannerHalf));
+    }
+    g_originalQuizStart(rdram, ctx, runtime);
+}
+
+void uiSetTextPos(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    if (column >= 0 && getRegU32(ctx, 31) == kQuizResultTextReturn &&
+        static_cast<int32_t>(getRegU32(ctx, 6)) == kQuizResultUsX)
+    {
+        ctx->r[6] = _mm_set_epi64x(0, kQuizResultX[column]);
+    }
+    g_originalTextPos(rdram, ctx, runtime);
+}
+
 void weaponsHeader(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     const uint32_t page = getRegU32(ctx, 4);
@@ -1764,6 +1941,19 @@ void install(PS2Runtime &runtime)
                   {kSpriteAnchorBR, &spriteAnchorBR, g_originalAnchorBR}))
     {
         std::fprintf(stderr, "[rg] the Attack Chain's count keeps the English place\n");
+    }
+    if (!hookBoth(runtime, {kMinimapLoad, &minimapLoad, g_originalMinimapLoad},
+                  {kMinimapEmitSprite, &minimapEmitSprite, g_originalEmitSprite}))
+    {
+        std::fprintf(stderr, "[rg] the minimap's shops keep the English S\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kQuizStart, &quizStart, g_originalQuizStart))
+    {
+        std::fprintf(stderr, "[rg] the Seventh Mystery's title keeps the English place\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kUiSetTextPos, &uiSetTextPos, g_originalTextPos))
+    {
+        std::fprintf(stderr, "[rg] the Seventh Mystery's result keeps the English place\n");
     }
     if (!rg::timing::hookFunction(runtime, kSaveMsgBoxShow, &saveMsgBoxShow, g_originalSaveMsgBox))
     {
