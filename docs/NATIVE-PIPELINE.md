@@ -121,13 +121,44 @@ game built them. Every reference is an id (`native_records.h`):
   memory sample; a local copy (`TRXDIR 2`) is mirrored between what the
   producer holds (`noteLocalCopy`).
 
-Under the pipeline the screen shows the 3D meshes, the effects and the 2D.
-Still on the GS, which keeps running unseen: the game's colour and depth
-reads, which read the GS's memory (wrong now that the GS draws little of
-the frame: the lens flare's depth test, the menus' and fades' captured
-frame).
-Those, the pipeline's own present, and a check that nothing reaches the GS
-any more, come next.
+- **The stubs' registers** (step 7a): libgraph's stubs (`sceGsPutDrawEnv`,
+  `sceGsSwapDBuff`'s environments and clear) write the GS's registers
+  directly. Under the pipeline's 2D those writes are taken (patch 0034's
+  register sink) and go through the converter as one A+D packet, so the
+  mirror follows them and the clear is a 2D piece.
+- **Depth and colour reads** (steps 7b, 7c; `src/native_capture.cpp`): the
+  game's `sceGsExecStoreImage` reads are answered from the renderer
+  straight into the game's buffer, with no GS transfer and no path sync. A
+  depth read (the lens flare's 8x8 block of Z) comes from the renderer's
+  depth a frame or two late (`readDepth`; it needs D32_FLOAT depth). A
+  colour read (the fades' and menus' captured frame) comes from the target
+  drawn at that address, or the scene, as the last frame drawn left it
+  (`captureTarget`, `native::beginColorRead`), answered on the presenting
+  thread. Targets clamp alpha above 0x80, so a capture's alpha does too.
+- **The pipeline's own present** (step 7d): the runtime's loop calls a host
+  present hook (patch 0033) that shows the frame each flip's `Present`
+  closed, through the backend's `presentNativeFrame`, instead of the GS's
+  display registers; with no flip for 200 ms the last frame is shown again.
+  Flip pacing is off under the pipeline: nothing waits on the GS queue.
+- **No GS** (step 6's absorber, step 7's tripwire): what is left of a
+  packet after the converter and the upload withholding goes nowhere; the
+  game still gets SIGNAL, FINISH and LABEL in the privileged registers, set
+  as the GS would (`RG_NATIVE_ABSORB=0` sends it to the GS). The GS backend
+  is installed with nothing around it (no worker, no pacing) behind a
+  tripwire (`src/gs_tripwire.h`): any call that still reaches it is logged
+  once with a backtrace and, by default, dropped (`RG_NATIVE_GS=abort`
+  stops there, `=pass` lets it through). The backend still makes its GS
+  memory and caches at start, unused; not making them needs the backend's
+  own changes, not carried over. `tools/native-check.sh NAME` checks a
+  run's log (`build/run/NAME.log`) against these.
+
+Under the pipeline the screen shows the renderer's frame alone. Known
+limits: targets clamp alpha above 0x80; 7b needs D32_FLOAT depth; 7c is
+served from the last frame drawn; the title screen has 2D pieces whose
+source is unknown; the Flash Sword's trail is parked (it draws wrong on
+the archive branch too). A mesh into a buffer the game never named has
+no target and is dropped with the absorbed packets (counted as a target
+miss in the `[native-producer]` line), not sent to the tripwire.
 
 Memory: the renderer keeps the cameras the producer can still name (the
 newest `2 * kCameraWindow`); textures are evicted over a byte budget and

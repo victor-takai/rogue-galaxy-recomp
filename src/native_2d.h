@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "runtime/gs/gs_types.h"
@@ -50,6 +51,9 @@ struct Span
 // meshes. False, with `why`, when they hold something the converter cannot
 // express (a reserved primitive type): then they go on as they are.
 bool build(const Span *packets, size_t count, std::vector<Piece> &out, std::string &why);
+
+// Register writes as one A+D packet (PACKED, NLOOP of them, EOP).
+std::vector<uint8_t> registerPacket(const std::vector<std::pair<uint8_t, uint64_t>> &writes);
 
 // A packet going to the GS as it is (not through build): the vertex state
 // the converter carries follows it, as the GS's does.
