@@ -145,16 +145,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR commandLine, in
     (void)commandLine;
     (void)show;
 
-    // A second start while the game is up (nothing shows for a moment after
-    // a double-click) would start a second game.
-    CreateMutexW(NULL, FALSE, L"Local\\RogueGalaxyRecompiledLauncher");
-    if (GetLastError() == ERROR_ALREADY_EXISTS)
-    {
-        MessageBoxW(NULL, L"Rogue Galaxy is already running.", kTitle,
-                    MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
-        return 0;
-    }
-
     // The repository's folder: this program's own.
     static wchar_t folder[32768];
     const DWORD length = GetModuleFileNameW(NULL, folder, sizeof(folder) / sizeof(folder[0]));
@@ -172,6 +162,24 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR commandLine, in
     {
         stop(L"Could not enter this program's folder.");
         return 1;
+    }
+
+    // A second start from this folder while its game is up (nothing shows
+    // for a moment after a double-click) would start a second game on the
+    // same log and memory card. A file of the folder's, held open with no
+    // sharing until this program ends (Windows then closes and deletes it,
+    // however it ends), tells: it is the same file however the folder's path
+    // is spelled (a subst drive, a short name, a link), and another folder's
+    // game (a second copy, a worktree's) is free to run beside this one. The
+    // game does not inherit it. Without build\ there is nothing to hold: the
+    // game is not built, and that is said below.
+    const HANDLE running = CreateFileW(L"build\\launcher.lock", GENERIC_WRITE, 0, NULL, OPEN_ALWAYS,
+                                       FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (running == INVALID_HANDLE_VALUE && GetLastError() == ERROR_SHARING_VIOLATION)
+    {
+        MessageBoxW(NULL, L"Rogue Galaxy is already running from this folder.", kTitle,
+                    MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+        return 0;
     }
 
     if (GetFileAttributesW(kGame) == INVALID_FILE_ATTRIBUTES)

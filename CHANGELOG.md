@@ -67,6 +67,11 @@
   through the ground and through bodies after a visit to the Revelation
   screens
   ([#53](https://github.com/victor-takai/rogue-galaxy-recomp/issues/53)).
+- Two copies of the game in different folders can be open at the same
+  time: `Rogue Galaxy.exe` now refuses only a second start from its own
+  folder. Both copies still share the settings in
+  `%APPDATA%\RogueGalaxy\Recompiled`: each saves all of its settings
+  whenever one of them changes (moving its window too), over the other's.
 
 ## 0.2.0 (pre-release)
 

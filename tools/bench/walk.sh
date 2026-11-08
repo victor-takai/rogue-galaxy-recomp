@@ -67,20 +67,61 @@
 #                shots.ps1); by default it stays hidden and never takes the
 #                desktop or the focus (DQ8_GFX_HIDDEN_WINDOW), with the same
 #                GS work: compare speed only between runs alike.
-# Refuses to start while a game is running; loads File 01 from a copy of
-# the card (build/run/mc0-bench), so the player's card is never touched.
+# Refuses to start while the player's game or another run of this folder's
+# is going, and runs beside other folders' (another session's), saying so in
+# its summary; loads File 01 from a copy of the card (build/run/mc0-bench),
+# so the player's card is never touched.
 cd "$(dirname "$0")/../.." || exit 1
 NAME=$1; SCALE=${2:-3}; FPS=${3:-60}
 if [ -z "$NAME" ]; then echo "usage: walk.sh NAME [SCALE] [FPS]"; exit 2; fi
-# The game this script starts (this folder's build, or EXE): with it or any
-# other game running, a measurement would share the machine with it.
+# The game this script starts: this folder's build, or EXE.
 GAME=${EXE:-build/game/src/roguegalaxy.exe}
-GAME_NAME=$(basename "$GAME")
-# tasklist cuts names at 25 characters. The name is matched as it is, in
-# lower case, by bash (Git Bash's grep 3.0 aborts on -iF with a bracket).
-RUNNING=$(tasklist); RUNNING=${RUNNING,,}; SHORT=${GAME_NAME:0:25}; SHORT=${SHORT,,}
-if [[ $RUNNING == *roguegalaxy.exe* || $RUNNING == *"$SHORT"* ]]; then echo "a game is running; not starting"; exit 2; fi
+# The games running, a line each: its kind (player, here for this folder's,
+# other), process id and executable, tab-separated, then "end"
+# (tools/bench/games.ps1, beside this script, says how it tells them
+# apart); $1 is a process id left out, the run's own game. PowerShell ends
+# its lines with CRLF.
+FOLDER_WIN=$(cygpath -w "$PWD")
+games() {
+    powershell -NoProfile -ExecutionPolicy Bypass -File tools/bench/games.ps1 -Folder "$FOLDER_WIN" -Skip "${1:-0}" | tr -d '\r'
+}
+# Never beside the player's game: its feel and this run's numbers would both
+# suffer. Nor beside another run of this folder's, which shares build/run
+# (the bench card and settings, the input scripts). Beside other folders'
+# runs, yes: the summary counts them, since a speed figure taken while they
+# ran shares the machine with them.
+refuse() { echo "$1; not starting"; grep "^$2" <<< "$RUNNING" | sed 's/^/  /'; exit 2; }
+RUNNING=$(games)
+if ! grep -qx end <<< "$RUNNING"; then echo "could not list the games (tools/bench/games.ps1 beside this script); not starting"; exit 2; fi
+if grep -q '^player' <<< "$RUNNING"; then refuse "the player's game is running" player; fi
+if grep -q '^here' <<< "$RUNNING"; then refuse "this folder's game is running already" here; fi
+OTHERS=$(grep -c '^other' <<< "$RUNNING")
 mkdir -p build/run
+# Two runs of this folder started at once would both pass the check above
+# (the games are listed seconds before this one's starts), so a run also
+# holds build/run/walk.lock, a folder made in one step with the id of the
+# script that made it inside, removed when the script ends. A lock whose
+# script has ended (a run killed before it could remove it) is taken over,
+# one with no id yet only after a minute.
+LOCK=build/run/walk.lock
+if ! mkdir "$LOCK" 2>/dev/null; then
+    HOLDER=$(cat "$LOCK/pid" 2>/dev/null)
+    STALE=
+    if [ -n "$HOLDER" ]; then kill -0 "$HOLDER" 2>/dev/null || STALE=1
+    elif [ -n "$(find "$LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then STALE=1; fi
+    if [ -n "$STALE" ]; then rm -rf "$LOCK"; fi
+    if ! mkdir "$LOCK" 2>/dev/null; then echo "another run of this folder's is going (build/run/walk.lock, script ${HOLDER:-?}); not starting"; exit 2; fi
+fi
+echo $$ > "$LOCK/pid"
+# On the way out the lock goes, and so does the game of a run stopped early
+# (Ctrl+C, a kill): left running, it would hold the machine and keep this
+# folder's next run from starting.
+cleanup() {
+    if [ -n "$GAME_JOB" ]; then powershell -NoProfile -Command "$(this_game) | Stop-Process -Force"; fi
+    rm -rf "$LOCK"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
 INPUT=${INPUT:-build/run/input_pad3.txt}
 if [ "$BATTLE" = "1" ]; then
     INPUT=build/run/input_battle4.txt
@@ -196,29 +237,43 @@ AFTER=${AFTER_OVERRIDE:-$AFTER}
 # diverged until this).
 cat disc/*.DAT disc/*.HD6 > /dev/null 2>&1
 start=$(date +%s)
-# This instance, the one stopped below: its own executable, by its full
-# path, started with a forward-slash disc path (the launchers pass a
-# backslash one). The user's game, or another folder's, is never it. The
-# path goes in PowerShell's single quotes, where only an apostrophe (a
-# folder named after the Director's Cut) needs doubling.
+# This instance, the one stopped below: its Windows process id (Git Bash
+# keeps it beside the job's own), so never the player's game nor another
+# run, of this folder or another. Read when needed and checked against the
+# executable's full path: a game that ended has no id, and its old one may
+# be another program's by then. The path goes in PowerShell's single quotes,
+# where only an apostrophe (a folder named after the Director's Cut) needs
+# doubling.
 GAME_WIN=$(cygpath -w "$(realpath "$GAME")")
 GAME_WIN_PS=${GAME_WIN//\'/\'\'}
-THIS_GAME="Get-CimInstance Win32_Process | Where-Object { \$_.ExecutablePath -eq '$GAME_WIN_PS' -and \$_.CommandLine -like '*disc/SCUS*' }"
+game_pid() { cat "/proc/$GAME_JOB/winpid" 2>/dev/null || echo 0; }
+this_game() { echo "Get-Process -Id $(game_pid) -ErrorAction SilentlyContinue | Where-Object { \$_.Path -eq '$GAME_WIN_PS' }"; }
 "$GAME" disc/SCUS_974.90 > "build/run/$NAME.log" 2>&1 &
+GAME_JOB=$!
 # AFFINITY=HEX: the instance's processor mask (5555: one logical processor
 # per core of an 8-core SMT machine), to see whether two busy threads
 # sharing a core is what varies between runs.
 if [ -n "$AFFINITY" ]; then
     sleep 2
-    powershell -NoProfile -Command "$THIS_GAME | ForEach-Object { (Get-Process -Id \$_.ProcessId).ProcessorAffinity = 0x$AFFINITY }"
+    powershell -NoProfile -Command "$(this_game) | ForEach-Object { \$_.ProcessorAffinity = 0x$AFFINITY }"
 fi
 for i in $(seq 1 120); do
     sleep 3
     grep -q "frame logged\|\[crash\]\|fatal" "build/run/$NAME.log" && break
 done
 sleep $AFTER
-powershell -NoProfile -Command "$THIS_GAME | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }"
+# This run's game stops first, on time; then the games beside it at its end
+# are counted too (a run that started or ended meanwhile shared the machine
+# for a part of it), leaving out its id while it may still be going away.
+LAST_PID=$(game_pid)
+powershell -NoProfile -Command "$(this_game) | Stop-Process -Force"
+GAME_JOB=
+RUNNING=$(games "$LAST_PID")
+LATER=$(grep -c '^\(other\|here\)' <<< "$RUNNING")
+if [ "$LATER" -gt "$OTHERS" ]; then OTHERS=$LATER; fi
 echo "--- $NAME: scale $SCALE fps-mode $FPS, $(( $(date +%s) - start )) s"
+if grep -q '^player' <<< "$RUNNING"; then echo "the player's game opened during the run: its speed is not comparable"; fi
+if [ "$OTHERS" -gt 0 ]; then echo "$OTHERS other run(s) shared the machine: compare its speed only with runs alike"; fi
 grep -n "frame logged\|\[crash\]\|fatal\|VK_ERROR" "build/run/$NAME.log" | head -5
 grep -m1 "internal scale" "build/run/$NAME.log"
 if [ "$LONG" = "1" ]; then python tools/bench/fpscmp.py "build/run/$NAME.log" -n 6 -w 12:36
