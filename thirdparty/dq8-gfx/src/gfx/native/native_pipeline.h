@@ -39,6 +39,26 @@ void push(Record &&record);
 // on the renderer's, thousands of times a frame. Either stays as it is when
 // there is none to give. Any thread.
 void takeMeshStorage(std::vector<Vertex> &vertices, std::vector<uint32_t> &indices);
+// A draw's storage back to this thread's share when the draw is not pushed
+// (refused), so it is neither lost to the pool nor freed here; storage moved
+// out already, or too large, is left alone.
+void returnMeshStorage(std::vector<Vertex> &vertices, std::vector<uint32_t> &indices);
+// The renderer's release: the shared pool's storage goes back to the
+// allocator (a thread's share, at most kSpareBatch a list, stays).
+void dropMeshStorage();
+
+// Takes a draw's storage, and gives it back if the draw is still holding it
+// when this goes out of scope (a refusal); a pushed draw was moved from.
+struct MeshStorage
+{
+    explicit MeshStorage(MeshDraw &draw) : m_draw(draw) { takeMeshStorage(draw.vertices, draw.indices); }
+    ~MeshStorage() { returnMeshStorage(m_draw.vertices, m_draw.indices); }
+    MeshStorage(const MeshStorage &) = delete;
+    MeshStorage &operator=(const MeshStorage &) = delete;
+
+private:
+    MeshDraw &m_draw;
+};
 
 // Textures the renderer let go of (its memory budget): a producer that sends
 // a texture once and names it by id afterwards drains these and sends them

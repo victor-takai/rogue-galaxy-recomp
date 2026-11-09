@@ -30,6 +30,7 @@ struct Queue
     std::function<std::string()> producerStats;
     std::vector<std::vector<Vertex>> spareVertices;
     std::vector<std::vector<uint32_t>> spareIndices;
+    size_t spareVertexBytes = 0u, spareIndexBytes = 0u;
 };
 Queue &queue()
 {
@@ -37,29 +38,40 @@ Queue &queue()
     return instance;
 }
 
-// Mesh storage kept for reuse: how many, and the largest (a rare big draw's
-// goes back to the allocator, so the pool stays small).
-constexpr size_t kSpareStorage = 4096u;
-constexpr size_t kSpareCapacity = 2048u;
+// Mesh storage kept for reuse, counted in bytes: none larger than
+// kSpareBytes (a rare big draw's goes back to the allocator, and the pool
+// cannot drift toward the large ones), at most kPoolBytes a list. A thread
+// takes kSpareBatch at a time, so most draws take no lock.
+constexpr size_t kSpareBytes = 16u * 1024u;
+constexpr size_t kPoolBytes = 8u * 1024u * 1024u;
 constexpr size_t kSpareBatch = 256u;
 
 template <class T>
-void takeBatch(std::vector<T> &from, std::vector<T> &to)
+size_t bytesOf(const std::vector<T> &storage)
+{
+    return storage.capacity() * sizeof(T);
+}
+
+template <class T>
+void takeBatch(std::vector<std::vector<T>> &from, size_t &fromBytes, std::vector<std::vector<T>> &to)
 {
     const size_t n = std::min(from.size(), kSpareBatch);
     for (size_t i = 0; i < n; ++i)
     {
+        fromBytes -= bytesOf(from.back());
         to.push_back(std::move(from.back()));
         from.pop_back();
     }
 }
 
 template <class T>
-void giveBack(std::vector<T> &storage, std::vector<std::vector<T>> &pool)
+void giveBack(std::vector<T> &storage, std::vector<std::vector<T>> &pool, size_t &poolBytes)
 {
-    if (storage.capacity() == 0u || storage.capacity() > kSpareCapacity || pool.size() >= kSpareStorage)
+    const size_t bytes = bytesOf(storage);
+    if (bytes == 0u || bytes > kSpareBytes || poolBytes + bytes > kPoolBytes)
         return;
     storage.clear();
+    poolBytes += bytes;
     pool.push_back(std::move(storage));
 }
 
@@ -69,10 +81,14 @@ void recycleMeshes(std::vector<MeshDraw> &meshes)
     std::lock_guard lock(q.mutex);
     for (MeshDraw &d : meshes)
     {
-        giveBack(d.vertices, q.spareVertices);
-        giveBack(d.indices, q.spareIndices);
+        giveBack(d.vertices, q.spareVertices, q.spareVertexBytes);
+        giveBack(d.indices, q.spareIndices, q.spareIndexBytes);
     }
 }
+
+// Each thread's share of the pool (takeMeshStorage, returnMeshStorage).
+thread_local std::vector<std::vector<Vertex>> t_localVertices;
+thread_local std::vector<std::vector<uint32_t>> t_localIndices;
 
 // The scene target until a producer declares one (the game's frame size).
 constexpr uint32_t kDefaultWidth = 640u;
@@ -241,26 +257,48 @@ void push(Record &&record)
 
 void takeMeshStorage(std::vector<Vertex> &vertices, std::vector<uint32_t> &indices)
 {
-    // A batch at a time, so most draws take no lock.
-    thread_local std::vector<std::vector<Vertex>> localVertices;
-    thread_local std::vector<std::vector<uint32_t>> localIndices;
-    if (localVertices.empty() || localIndices.empty())
+    // Each list refilled on its own: the indices' empties first, and the
+    // vertices' must not be pulled in again while there are some.
+    if (t_localVertices.empty() || t_localIndices.empty())
     {
         Queue &q = queue();
         std::lock_guard lock(q.mutex);
-        takeBatch(q.spareVertices, localVertices);
-        takeBatch(q.spareIndices, localIndices);
+        if (t_localVertices.empty())
+            takeBatch(q.spareVertices, q.spareVertexBytes, t_localVertices);
+        if (t_localIndices.empty())
+            takeBatch(q.spareIndices, q.spareIndexBytes, t_localIndices);
     }
-    if (!localVertices.empty())
+    if (!t_localVertices.empty())
     {
-        vertices = std::move(localVertices.back());
-        localVertices.pop_back();
+        vertices = std::move(t_localVertices.back());
+        t_localVertices.pop_back();
     }
-    if (!localIndices.empty())
+    if (!t_localIndices.empty())
     {
-        indices = std::move(localIndices.back());
-        localIndices.pop_back();
+        indices = std::move(t_localIndices.back());
+        t_localIndices.pop_back();
     }
+}
+
+void returnMeshStorage(std::vector<Vertex> &vertices, std::vector<uint32_t> &indices)
+{
+    const auto keep = [](auto &storage, auto &local) {
+        if (storage.capacity() == 0u || bytesOf(storage) > kSpareBytes || local.size() >= kSpareBatch)
+            return;
+        storage.clear();
+        local.push_back(std::move(storage));
+    };
+    keep(vertices, t_localVertices);
+    keep(indices, t_localIndices);
+}
+
+void dropMeshStorage()
+{
+    Queue &q = queue();
+    std::lock_guard lock(q.mutex);
+    std::vector<std::vector<Vertex>>().swap(q.spareVertices);
+    std::vector<std::vector<uint32_t>>().swap(q.spareIndices);
+    q.spareVertexBytes = q.spareIndexBytes = 0u;
 }
 
 std::vector<Id> takeEvicted()
@@ -1157,6 +1195,7 @@ void Renderer::release(SDL_GPUDevice *device)
     releaseDepth(device);
     m_meshes.clear();
     m_frameMeshes.clear();
+    dropMeshStorage();
     if (m_scene)
         SDL_ReleaseGPUTexture(device, m_scene);
     for (auto &[id, image] : m_images)

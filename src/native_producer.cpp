@@ -1299,8 +1299,7 @@ bool mesh(const GSNativeMesh &mesh, const GSDrawState *drawState, const uint8_t 
     const uint32_t count = static_cast<uint32_t>(mesh.vertices.size());
 
     native::MeshDraw draw;
-
-    native::takeMeshStorage(draw.vertices, draw.indices);
+    const native::MeshStorage storage(draw);
     draw.source = source;
     // The program scales its window depth and caps it (VU quad 87.z, quad
     // 1.y): decals at 1.01 and 1.02 sit in front of their surfaces.
@@ -2059,7 +2058,7 @@ bool piece(const GSNativeMesh &mesh, const GSDrawState *drawState, bool texels)
     const GSContext &c = drawState->context;
     const GSNativeMesh::Header &h = mesh.header;
     native::MeshDraw draw;
-    native::takeMeshStorage(draw.vertices, draw.indices);
+    const native::MeshStorage storage(draw);
     const uint32_t frameBase = c.frame.fbp * 32u;
     uint32_t seqKey = frameBase; // the buffer's, or its narrow view's
     const bool view = narrow(s, frameBase, c.frame.fbw);
@@ -2445,16 +2444,18 @@ bool effect(const GSNativeEffect &e)
     State &s = state();
     std::lock_guard lock(s.mutex);
     forgetEvicted(s);
+    thread_local std::vector<native::MeshDraw> made;
+    thread_local std::vector<uint32_t> bases;
     const auto refuse = [&](uint64_t &why) {
         ++why;
         ++s.counts.effectsRefused;
+        for (native::MeshDraw &d : made)
+            native::returnMeshStorage(d.vertices, d.indices);
         return false;
     };
     // Everything is resolved before anything is sent: an effect is the
     // renderer's or the GS's, never split between them.
     const uint32_t ops = std::min<uint32_t>(e.opCount, GSNativeEffect::kMaxOps);
-    thread_local std::vector<native::MeshDraw> made;
-    thread_local std::vector<uint32_t> bases;
     made.clear();
     bases.clear();
     for (uint32_t k = 0; k < ops; ++k)
@@ -2469,7 +2470,7 @@ bool effect(const GSNativeEffect &e)
             return refuse(s.counts.opsNoTarget);
         const bool greenToAlpha = (op.flags & GSNativeEffect::kGreenToAlpha) != 0u;
         native::MeshDraw draw;
-        native::takeMeshStorage(draw.vertices, draw.indices);
+        const native::MeshStorage storage(draw);
         draw.target = target;
         native::Material &m = draw.material;
         bool known = true;
