@@ -11,7 +11,10 @@
 layout(set = 1, binding = 0) uniform Draw {
     mat4 clip;     // model x view x projection
     mat4 viewport; // clip to the target's pixels (w kept)
-    vec4 target;   // the target's width and height in game pixels; z: fog per vertex (a window-space draw)
+    // x, y: the target's width and height in game pixels; z: fog per vertex
+    // (a window-space draw); w: the sample offset, half a host pixel in game
+    // pixels (the GS backend's kSampleOffset)
+    vec4 target;
     vec4 fog;      // F = clamp(fog.x + fog.w * w, at most fog.y, at least fog.z)
     vec4 depthRow; // reversed depth (w - z) / 2 from the position, made in double, with the program's depthScale
     vec4 depthLimit; // x: the program's depthMax as this depth; y: 1 when it applies
@@ -43,6 +46,11 @@ void main() {
     float depth = dot(draw.depthRow, vec4(inPosition, 1.0));
     if (draw.depthLimit.y != 0.0 && clip.w > 0.0)
         depth = min(depth, draw.depthLimit.x * clip.w);
+    // The GS samples a pixel at its integer coordinates, the host at n + 0.5:
+    // shifted by half a host pixel, game pixel p covers host pixels
+    // [p * scale, (p + 1) * scale) and its first samples at p, so a filtered
+    // sheet (icons, fonts) is not mixed with its neighbours.
+    window.xy += draw.target.w * window.w;
     gl_Position = vec4(window.x * 2.0 / draw.target.x - window.w,
                        window.w - window.y * 2.0 / draw.target.y,
                        depth,

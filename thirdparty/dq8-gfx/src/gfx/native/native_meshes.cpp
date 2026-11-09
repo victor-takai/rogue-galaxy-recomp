@@ -579,6 +579,7 @@ void Renderer::drawMeshes(SDL_GPUDevice *device, SDL_GPUCommandBuffer *commands,
         du.target[0] = targetW;
         du.target[1] = targetH;
         du.target[2] = d.hasModel ? 0.0f : 1.0f; // fog per vertex
+        du.target[3] = 0.5f / float(std::max(scale, 1u)); // the sample offset
         std::memcpy(du.fog, d.fog, sizeof(du.fog));
 
         if (m.blending && (m.srcFactor == BlendFactor::Fixed || m.srcFactor == BlendFactor::InvFixed ||

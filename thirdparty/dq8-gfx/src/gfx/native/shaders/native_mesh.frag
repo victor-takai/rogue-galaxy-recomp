@@ -45,15 +45,21 @@ int wrapAxis(int a, int size, uint mode, uint lo, uint hi, bool clampOld) {
     return clamp(a, 0, size - 1);
 }
 
-// One texel as the GS addresses it: an index goes through the palette here.
+// One texel as the GS addresses it: an index goes through the palette here,
+// and TEXA's alpha (CT24, AEM) is the texel's, before any filtering.
 vec4 fetchTexel(ivec2 at, ivec2 size) {
     at.x = wrapAxis(at.x, size.x, material.wrap.x, material.region.x, material.region.y, material.blend.z != 0.0);
     at.y = wrapAxis(at.y, size.y, material.wrap.y, material.region.z, material.region.w, material.blend.w != 0.0);
+    vec4 t;
     if (material.mode.x == 2u) {
         int index = int(texelFetch(image, at, 0).r * 255.0 + 0.5);
-        return texelFetch(palette, ivec2(min(index, int(material.mode.w) - 1), 0), 0);
+        t = texelFetch(palette, ivec2(min(index, int(material.mode.w) - 1), 0), 0);
+    } else {
+        t = texelFetch(image, at, 0);
     }
-    return texelFetch(image, at, 0);
+    if (material.texa.x >= 0.0)
+        t.a = (material.texa.y != 0.0 && floor(t.rgb * 255.0 + 0.5) == vec3(0.0)) ? 0.0 : material.texa.x / 255.0;
+    return t;
 }
 
 layout(location = 0) in vec2 inUv;
@@ -89,16 +95,17 @@ void main() {
         vec2 texel = inUv * material.size.xy; // in the game's texels
         // A region (a tile of a sheet) is fetched as the GS addresses it.
         bool region = material.mode.x != 3u && (material.wrap.x >= 2u || material.wrap.y >= 2u);
-        if (material.mode.x == 2u || region) {
+        bool fetched = material.mode.x == 2u || region;
+        if (fetched) {
             // Fetched by hand: an index is not a color, so filtering comes
             // after the palette, as on the GS.
             ivec2 size = ivec2(material.size.zw);
             if (material.blend.y != 0.0) {
                 vec2 p = texel - 0.5;
                 ivec2 a = ivec2(floor(p));
-                vec2 f = p - floor(p);
-                t = mix(mix(fetchTexel(a, size), fetchTexel(a + ivec2(1, 0), size), f.x),
-                        mix(fetchTexel(a + ivec2(0, 1), size), fetchTexel(a + ivec2(1, 1), size), f.x), f.y);
+                vec2 w = p - floor(p);
+                t = mix(mix(fetchTexel(a, size), fetchTexel(a + ivec2(1, 0), size), w.x),
+                        mix(fetchTexel(a + ivec2(0, 1), size), fetchTexel(a + ivec2(1, 1), size), w.x), w.y);
             } else {
                 t = fetchTexel(ivec2(floor(texel)), size);
             }
@@ -107,7 +114,7 @@ void main() {
         }
         bool target = material.mode.x == 3u;
         t = vec4(floor(t.rgb * 255.0 + 0.5), floor(t.a * (target ? 128.0 : 255.0) + 0.5));
-        if (material.texa.x >= 0.0)
+        if (material.texa.x >= 0.0 && !fetched)
             t.a = (material.texa.y != 0.0 && t.rgb == vec3(0.0)) ? 0.0 : material.texa.x;
         if (material.blend.x == 1.0)
             t.a = float((uint(t.g) & 0xFCu) | (uint(t.a) & 3u));

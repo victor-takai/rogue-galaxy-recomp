@@ -166,8 +166,8 @@ struct Material
     bool clampV = true;
     // The GS's CLAMP per axis: 0 repeat, 1 clamp, 2 region clamp (to
     // [region[0], region[1]]), 3 region repeat ((t & region[0]) |
-    // region[1]); in the texture's texels. Regions are fetched, not
-    // filtered (a texture's, not a target's).
+    // region[1]); in the texture's texels. Regions are fetched by hand (a
+    // texture's, not a target's) and filtered after the fetch when linear.
     uint8_t wrapU = 0, wrapV = 0;
     uint16_t regionU[2] = {0, 0}, regionV[2] = {0, 0};
     TextureFunction function = TextureFunction::Modulate;
