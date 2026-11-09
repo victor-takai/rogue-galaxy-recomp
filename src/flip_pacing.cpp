@@ -206,9 +206,15 @@ private:
         {
             m_flips.erase(m_flips.begin(), m_flips.begin() + static_cast<std::ptrdiff_t>(*ready));
         }
-        while (m_flips.size() > kHeldFlips)
+        // RG_PRESENT_LATEST=1: only the newest flip is held, as before.
+        static const bool latestOnly = [] {
+            const char *value = std::getenv("RG_PRESENT_LATEST");
+            return value && *value && std::strcmp(value, "0") != 0;
+        }();
+        const size_t held = latestOnly ? 1u : kHeldFlips;
+        while (m_flips.size() > held)
         {
-            m_flips.erase(m_flips.begin() + 1);
+            m_flips.erase(m_flips.begin() + static_cast<std::ptrdiff_t>(held - 1u));
         }
     }
 };
