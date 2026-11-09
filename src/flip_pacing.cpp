@@ -7,7 +7,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <mutex>
+#include <optional>
 
 #include "ps2_runtime.h"
 #include "return_hook.h"
@@ -58,25 +60,20 @@ public:
         // Queued behind the flip's copy: it shows exactly that frame.
         GSPresentationTicket ticket = m_inner->PreparePresentation(request);
         std::lock_guard lock(m_mutex);
-        // Taking only the newest flip locks the display to half rate once the
-        // worker runs a frame behind: the presenter waits for the worker to
-        // reach a flip just queued, another flip arrives meanwhile and is
-        // replaced by the next, and it waits two frames again. One flip is
-        // held back so that the presenter takes the older one, already nearly
-        // done. Beyond that, the newest replaces the one held back.
-        if (!m_pending)
-        {
-            m_pending = std::move(ticket);
-        }
-        else
-        {
-            m_heldBack = std::move(ticket);
-        }
+        m_flips.push_back(std::move(ticket));
+        prune();
         m_lastFlip = Clock::now();
     }
 
     void Initialize(uint8_t *vram, uint32_t vramSize) override { m_inner->Initialize(vram, vramSize); }
-    void Reset() override { m_inner->Reset(); }
+    void Reset() override
+    {
+        {
+            std::lock_guard lock(m_mutex);
+            m_flips.clear();
+        }
+        m_inner->Reset();
+    }
     void SubmitNativeMesh(const GSNativeMesh &mesh, const GSDrawState &state) override
     {
         m_inner->SubmitNativeMesh(mesh, state);
@@ -142,14 +139,22 @@ public:
             m_haveRequest = true;
             if (Clock::now() - m_lastFlip < kFlipTimeout)
             {
-                GSPresentationTicket ticket = std::move(m_pending);
-                m_pending = std::move(m_heldBack);
-                m_heldBack.reset();
+                GSPresentationTicket ticket;
+                if (!m_flips.empty())
+                {
+                    // The newest flip already done, so a steady 60 shows
+                    // each flip at the next vblank; when none is, the oldest,
+                    // nearest to done (waiting on the newest locked the
+                    // display to half rate once the worker ran a frame
+                    // behind). The older ones are passed over.
+                    const size_t take = newestReady().value_or(0u);
+                    ticket = std::move(m_flips[take]);
+                    m_flips.erase(m_flips.begin(), m_flips.begin() + static_cast<std::ptrdiff_t>(take) + 1);
+                }
                 t_nothingToPresent = !ticket;
                 return ticket;
             }
-            m_pending.reset();
-            m_heldBack.reset();
+            m_flips.clear();
         }
         return m_inner->PreparePresentation(request);
     }
@@ -161,8 +166,7 @@ public:
     {
         {
             std::lock_guard lock(m_mutex);
-            m_pending.reset();
-            m_heldBack.reset();
+            m_flips.clear();
         }
         m_inner->CancelPreparedPresentations();
     }
@@ -172,9 +176,41 @@ private:
     std::mutex m_mutex;
     GSPresentationRequest m_lastRequest{};
     bool m_haveRequest = false;
-    GSPresentationTicket m_pending;
-    GSPresentationTicket m_heldBack;
+    // The flips not presented yet, oldest first, at most kHeldFlips: each
+    // holds one of the backend's three presentation slots once prepared,
+    // and the presenter holds a third.
+    std::deque<GSPresentationTicket> m_flips;
     Clock::time_point m_lastFlip{};
+
+    static constexpr size_t kHeldFlips = 2u;
+
+    // Under m_mutex.
+    std::optional<size_t> newestReady() const
+    {
+        for (size_t i = m_flips.size(); i-- > 0u;)
+        {
+            if (m_inner->IsPresentationReady(m_flips[i]))
+            {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Under m_mutex: a flip older than one already done is never taken, and
+    // past kHeldFlips the oldest (which the presenter would wait on) and the
+    // newest stay.
+    void prune()
+    {
+        if (const std::optional<size_t> ready = newestReady(); ready && *ready > 0u)
+        {
+            m_flips.erase(m_flips.begin(), m_flips.begin() + static_cast<std::ptrdiff_t>(*ready));
+        }
+        while (m_flips.size() > kHeldFlips)
+        {
+            m_flips.erase(m_flips.begin() + 1);
+        }
+    }
 };
 
 FlipPacedBackend *g_paced = nullptr;
