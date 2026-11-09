@@ -302,8 +302,9 @@ Five more fix results:
 - `sdlgpu_backend.cpp`, `sdlgpu_device.cpp`, `shaders/gs_draw.frag`:
   destination reads without framebuffer fetch. A draw with a destination
   alpha test, a factor of destination alpha (/128 on the GS, /255 in a
-  fixed-function blend) or a factor past one (FIX, or vertex alpha where
-  the texture brings none, above 0x80) uses the `DQ8_DESTINATION_COPY`
+  fixed-function blend) or a factor past one (FIX, or vertex alpha above
+  0x80 where the texture brings none or is modulated by it; not on a
+  native mesh) uses the `DQ8_DESTINATION_COPY`
   build of the draw shader: a snapshot of its target, of the primitive's
   region, taken before each primitive and bound as a second texture, and
   the fetch path's integer blend, test and masks on it. Rogue Galaxy draws
