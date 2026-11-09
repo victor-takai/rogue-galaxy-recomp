@@ -1,0 +1,102 @@
+name: Bug report
+description: Something goes wrong while installing, updating or playing.
+labels: ["bug"]
+body:
+  - type: checkboxes
+    attributes:
+      label: Before you post
+      options:
+        - label: I searched the open and closed issues for this problem.
+          required: true
+        - label: >-
+            I am not attaching anything from the disc, a BIOS or a texture pack.
+            The only game files I may attach are my saves, as the `disc\mc0` folder zipped.
+          required: true
+
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Where and how
+      description: >-
+        The planet and place, what you did just before, and whether it happens
+        every time or happened once.
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: When
+      options:
+        - Installing
+        - Updating
+        - Playing
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Version
+      description: F1 > Rogue Galaxy > About, or "built from main at" and the commit.
+      placeholder: 0.2.0 (abc1234)
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: System
+      options:
+        - Windows 11
+        - Windows 10
+        - Steam Deck (Proton)
+        - Linux
+        - Other (name it under Anything unusual)
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Graphics card
+      placeholder: NVIDIA RTX 3070
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Anything unusual
+      description: >-
+        Streaming (Sunshine, Moonlight), an overlay or capture program, a texture
+        pack, options you changed... Leave it empty if nothing.
+
+  - type: textarea
+    attributes:
+      label: Log
+      description: >-
+        Drag `build\last-run.log` here (in the game's folder). If you started the
+        game again since, `build\last-run.prev.log` too. For an install or update
+        problem, `install.log` or `update.log`.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Settings
+      description: Optional. `%APPDATA%\RogueGalaxy\Recompiled\settings.ini`.
+
+  - type: textarea
+    attributes:
+      label: Save
+      description: >-
+        Optional, but it often decides whether we can reproduce it: zip only the
+        `disc\mc0` folder, attach the zip and say which slot is near the problem.
+        Nothing else from `disc\`.
+
+  - type: textarea
+    attributes:
+      label: Screenshot or video
+      description: Optional. F12 takes a screenshot.

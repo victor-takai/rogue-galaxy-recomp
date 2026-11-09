@@ -1,0 +1,122 @@
+name: Performance
+description: The game runs slowly, stutters or hitches somewhere.
+labels: ["performance"]
+body:
+  - type: checkboxes
+    attributes:
+      label: Before you post
+      options:
+        - label: I searched the open and closed issues for this place or problem.
+          required: true
+        - label: >-
+            I am not attaching anything from the disc, a BIOS or a texture pack.
+            The only game files I may attach are my saves, as the `disc\mc0` folder zipped.
+          required: true
+
+  - type: textarea
+    attributes:
+      label: What is slow
+      description: >-
+        A low frame rate, stutter, or a hitch at one moment. The F3 counter's
+        frame rate there, and what you get elsewhere.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Where
+      description: >-
+        The planet and place, and what is on screen (a battle, a scene, the
+        field). Every time, or once?
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Version
+      description: F1 > Rogue Galaxy > About, or "built from main at" and the commit.
+      placeholder: 0.2.0 (abc1234)
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: System
+      options:
+        - Windows 11
+        - Windows 10
+        - Steam Deck (Proton)
+        - Linux
+        - Other (name it under Anything unusual)
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Processor and graphics card
+      placeholder: Ryzen 5 5600X, NVIDIA RTX 3070
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Internal resolution
+      description: F1 > Settings > Display.
+      options:
+        - 1x
+        - 2x
+        - 3x
+        - 4x
+        - 5x
+        - 6x
+        - 7x
+        - 8x
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: 60 frames per second
+      options:
+        - "On (the default)"
+        - "Off"
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Native renderer
+      options:
+        - "Off (the default)"
+        - "On"
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Anything unusual
+      description: >-
+        Streaming, an overlay or capture program, a texture pack, other programs
+        running, a laptop on battery... Leave it empty if nothing.
+
+  - type: textarea
+    attributes:
+      label: Log
+      description: >-
+        Drag `build\last-run.log` here, from a run where it was slow (each start
+        replaces it; the run before is `build\last-run.prev.log`).
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Settings
+      description: Optional. `%APPDATA%\RogueGalaxy\Recompiled\settings.ini`.
+
+  - type: textarea
+    attributes:
+      label: Save
+      description: >-
+        Optional, but asked for: places we have not measured often run graphics
+        code our tests never reach. Zip only the `disc\mc0` folder, attach the zip
+        and say which slot is near the slow place. Nothing else from `disc\`.

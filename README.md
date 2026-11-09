@@ -35,9 +35,11 @@ This is an early pre-release (0.2.0). The whole game plays, but:
 Known issues are in the [CHANGELOG](CHANGELOG.md); what is being worked on
 is in [docs/STATUS.md](docs/STATUS.md).
 
-**Found a problem?** Open an [issue](../../issues), say what you were doing
-and attach `build\last-run.log` (`install.log` for the install). The log of
-the run before is `build\last-run.prev.log`.
+**Found a problem?** Open an [issue](../../issues/new/choose): its form asks
+what you were doing, the version (F1 > Rogue Galaxy > About) and
+`build\last-run.log` (`install.log` for the install). The log of the run
+before is `build\last-run.prev.log`. Rules for issues and pull requests:
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Install (Windows)
 
