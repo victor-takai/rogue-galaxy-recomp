@@ -1776,8 +1776,10 @@ void uiSetSpriteW(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 // cursor on that column (18) by that x less 18 cells and 32, which keeps it
 // beside them with Spanish's narrower cells too (TextEntryPaletteCursorBob,
 // 0x433DC0: UiMoveWidgetUniform, 0x290F50, a2 the x, s0 the cursor's place,
-// its column an s16 at +0x10). As it. The other modes (no caller in the
-// game) keep the labels at 410, the cursor beside them.
+// its column an s16 at +0x10). As it, with the step the palette really holds
+// (TextEntrySetMode runs first). The PAL code moves the labels in the other
+// modes too (measuring both words of Upper/Lower as well); nothing in the game
+// opens those, so they keep 410 here, the cursor beside them.
 constexpr uint32_t kTextStyleSetFixedCell = 0x0026F0E0u;
 constexpr uint32_t kPaletteCellReturn = 0x004334D8u;
 constexpr uint32_t kTextEntrySetMode = 0x00436450u;
@@ -1886,9 +1888,9 @@ int32_t widgetTextWidth(uint8_t *rdram, const R5900Context *ctx, PS2Runtime *run
         return -1;
     }
     R5900Context local = *ctx;
-    local.r[4] = _mm_set_epi64x(0, static_cast<int64_t>(ui));
-    local.r[5] = _mm_set_epi64x(0, static_cast<int64_t>(id));
-    local.r[6] = _mm_set_epi64x(0, 0);
+    setArg(&local, 4, static_cast<int32_t>(ui));
+    setArg(&local, 5, static_cast<int32_t>(id));
+    setArg(&local, 6, 0);
     if (!rg::hooks::runToEnd(g_textWidth, kUiGetWidgetTextWidth, rdram, local, runtime))
     {
         std::fprintf(stderr, "[rg] measuring a label stopped at 0x%08X\n", local.pc);
@@ -1899,26 +1901,24 @@ int32_t widgetTextWidth(uint8_t *rdram, const R5900Context *ctx, PS2Runtime *run
 
 void afterEntrySetup(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t entry)
 {
-    g_entryShift = 0;
-    const int column = europeanColumn();
-    if (column < 0)
+    if (europeanColumn() < 0)
     {
         return;
     }
-    // The commands where the US code has just put them.
+    // The commands where the US code has just put them; when one is not, they
+    // stay and the cursor keeps the US place.
     const uint32_t ui = readWord(rdram, entry + kEntryUi);
     uint32_t commands[3] = {};
-    for (size_t i = 0; i < std::size(kEntryCommands); ++i)
+    bool found = ui != 0u;
+    for (size_t i = 0; found && i < std::size(kEntryCommands); ++i)
     {
-        commands[i] = ui ? findWidget(rdram, ui, kEntryCommands[i]) : 0u;
-        if (commands[i] == 0u || readFloat(rdram, commands[i] + kWidgetX) != static_cast<float>(kEntryCommandsUsX))
-        {
-            return;
-        }
+        commands[i] = findWidget(rdram, ui, kEntryCommands[i]);
+        found = commands[i] != 0u &&
+                readFloat(rdram, commands[i] + kWidgetX) == static_cast<float>(kEntryCommandsUsX);
     }
     int32_t x = kEntryCommandsUsX;
     const int16_t mode = readHalf(rdram, entry + kEntryMode);
-    if (mode == 1 || mode == 3)
+    if (found && (mode == 1 || mode == 3))
     {
         const int32_t first = widgetTextWidth(rdram, ctx, runtime, ui, kEntryCommands[0]);
         const int32_t second = widgetTextWidth(rdram, ctx, runtime, ui, kEntryCommands[1]);
@@ -1932,7 +1932,11 @@ void afterEntrySetup(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uin
             }
         }
     }
-    g_entryShift = x - (kEntryCommandColumn * kEntryCell[column] + kEntryColumnStart);
+    // The cursor's step as the grid uses it: 21 unless the cell hooks set it.
+    const uint32_t palette = entryPart(rdram, entry, kPaletteTag);
+    const int16_t held = palette != 0u ? readHalf(rdram, palette + kPartCellStep) : int16_t{0};
+    const int32_t step = held > 0 ? held : kEntryCellUs;
+    g_entryShift = x - (kEntryCommandColumn * step + kEntryColumnStart);
 }
 
 void textEntrySetupState(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -1943,6 +1947,7 @@ void textEntrySetupState(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         g_originalEntrySetup(rdram, ctx, runtime);
         return;
     }
+    g_entryShift = 0; // not the last entry's while this one is set up
     rg::hooks::callThen(g_originalEntrySetup, rdram, ctx, runtime, &afterEntrySetup, entry);
 }
 
@@ -2241,12 +2246,16 @@ void install(PS2Runtime &runtime)
     {
         g_textWidth = runtime.lookupFunction(kUiGetWidgetTextWidth);
     }
+    // Apart: the column's cursor follows the step the grid really has.
     if (!hookAll(runtime, {{kTextStyleSetFixedCell, &textStyleSetFixedCell, g_originalFixedCell},
-                           {kTextEntrySetMode, &textEntrySetMode, g_originalSetMode},
-                           {kTextEntrySetupState, &textEntrySetupState, g_originalEntrySetup},
+                           {kTextEntrySetMode, &textEntrySetMode, g_originalSetMode}}))
+    {
+        std::fprintf(stderr, "[rg] the name entry keeps the US cells\n");
+    }
+    if (!hookAll(runtime, {{kTextEntrySetupState, &textEntrySetupState, g_originalEntrySetup},
                            {kUiMoveWidgetUniform, &uiMoveWidgetUniform, g_originalMoveWidget}}))
     {
-        std::fprintf(stderr, "[rg] the name entry keeps the US cells and command column\n");
+        std::fprintf(stderr, "[rg] the name entry keeps the US command column\n");
     }
 }
 
