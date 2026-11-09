@@ -58,8 +58,20 @@ public:
         // Queued behind the flip's copy: it shows exactly that frame.
         GSPresentationTicket ticket = m_inner->PreparePresentation(request);
         std::lock_guard lock(m_mutex);
-        // A frame the presenter has not taken yet is dropped for the newer one.
-        m_pending = std::move(ticket);
+        // Taking only the newest flip locks the display to half rate once the
+        // worker runs a frame behind: the presenter waits for the worker to
+        // reach a flip just queued, another flip arrives meanwhile and is
+        // replaced by the next, and it waits two frames again. One flip is
+        // held back so that the presenter takes the older one, already nearly
+        // done. Beyond that, the newest replaces the one held back.
+        if (!m_pending)
+        {
+            m_pending = std::move(ticket);
+        }
+        else
+        {
+            m_heldBack = std::move(ticket);
+        }
         m_lastFlip = Clock::now();
     }
 
@@ -131,11 +143,13 @@ public:
             if (Clock::now() - m_lastFlip < kFlipTimeout)
             {
                 GSPresentationTicket ticket = std::move(m_pending);
-                m_pending.reset();
+                m_pending = std::move(m_heldBack);
+                m_heldBack.reset();
                 t_nothingToPresent = !ticket;
                 return ticket;
             }
             m_pending.reset();
+            m_heldBack.reset();
         }
         return m_inner->PreparePresentation(request);
     }
@@ -148,6 +162,7 @@ public:
         {
             std::lock_guard lock(m_mutex);
             m_pending.reset();
+            m_heldBack.reset();
         }
         m_inner->CancelPreparedPresentations();
     }
@@ -158,6 +173,7 @@ private:
     GSPresentationRequest m_lastRequest{};
     bool m_haveRequest = false;
     GSPresentationTicket m_pending;
+    GSPresentationTicket m_heldBack;
     Clock::time_point m_lastFlip{};
 };
 
