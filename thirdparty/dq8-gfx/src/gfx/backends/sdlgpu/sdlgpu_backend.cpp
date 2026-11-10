@@ -906,6 +906,10 @@ struct SdlGpuBackend::Impl {
     // DQ8_GFX_NO_GPU_PADDING: a feedback snapshot's padding rows come from
     // local memory, resolving the target that owns them, as before.
     const bool noGpuPadding = std::getenv("DQ8_GFX_NO_GPU_PADDING") != nullptr;
+    // DQ8_GFX_NO_EMPTY_SPRITES: a sprite of no width or no height goes
+    // through like any other draw, as before (see submitOne; Rogue Galaxy:
+    // added).
+    const bool noEmptySpriteDrop = std::getenv("DQ8_GFX_NO_EMPTY_SPRITES") != nullptr;
     // DQ8_GFX_CYCLE_SNAPSHOTS: the copies into a snapshot texture cycle it,
     // as before, and count against the pending budget (see recordSnapshot).
     const bool cycleSnapshots = std::getenv("DQ8_GFX_CYCLE_SNAPSHOTS") != nullptr;
@@ -2479,6 +2483,19 @@ struct SdlGpuBackend::Impl {
             return;
         if (!gsIsColorFramePsm(context.frame.psm))
             return;
+        // A sprite of no width or no height covers no pixel at any scale (its
+        // edges are exclusive), so it draws nothing; dropped here, it also
+        // builds no texture, while primitiveBounds below rounds its edges out
+        // to a pixel. Rogue Galaxy draws such sprites, and in Zerard's plaza
+        // six a frame read the 512x448 buffer 0x2A00 as CT24, which the GPU
+        // path refused (no samples to fit), so the whole buffer was read back
+        // from the GPU twice a frame for textures nothing showed: a quarter of
+        // this thread's time (Rogue Galaxy: added).
+        if (!noEmptySpriteDrop && state.prim.type == GS_PRIM_SPRITE && batch.vertexCount >= 2u &&
+            (batch.vertices[0].x == batch.vertices[1].x || batch.vertices[0].y == batch.vertices[1].y)) {
+            ++stats.emptySprites;
+            return;
+        }
         if (last.valid && std::memcmp(&state, &last.state, sizeof(state)) == 0 && submitSameState(batch))
             return;
         last.valid = false;
@@ -3784,7 +3801,7 @@ struct SdlGpuBackend::Impl {
                      "[gfx] same-state primitives %llu of %llu submitted | flushes: settle=%llu transfer=%llu "
                      "snapshot=%llu alias=%llu texread=%llu feedback=%llu localcopy=%llu present=%llu "
                      "rewrite=%llu of %llu | covered-releases=%llu (%llu pages) | native strips=%llu (on the CPU %llu, "
-                     "draws %llu, off screen %llu)\n",
+                     "draws %llu, off screen %llu) | empty sprites=%llu\n",
                      d(stats.sameStatePrimitives, previousSameState), d(stats.primitivesSubmitted, previousSubmitted),
                      d(stats.flushSettle, previousReasons.flushSettle),
                      d(stats.transferFlushes, previousReasons.transferFlushes),
@@ -3797,7 +3814,8 @@ struct SdlGpuBackend::Impl {
                      d(stats.nativeMeshes, previousReasons.nativeMeshes),
                      d(stats.nativeMeshesExpanded, previousReasons.nativeMeshesExpanded),
                      d(stats.nativeDraws, previousReasons.nativeDraws),
-                     d(stats.nativeMeshesCulled, previousReasons.nativeMeshesCulled));
+                     d(stats.nativeMeshesCulled, previousReasons.nativeMeshesCulled),
+                     d(stats.emptySprites, previousReasons.emptySprites));
         previousReasons = stats;
         previousSameState = stats.sameStatePrimitives;
         previousSubmitted = stats.primitivesSubmitted;

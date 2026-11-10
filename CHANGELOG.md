@@ -72,6 +72,10 @@
   folder. Both copies still share the settings in
   `%APPDATA%\RogueGalaxy\Recompiled`: each saves all of its settings
   whenever one of them changes (moving its window too), over the other's.
+- Zerard's central plaza, where you land after the boss at the end of
+  Juraika, runs faster at high internal resolutions: from about 40 to
+  about 51 fps at 4x on the PC it was measured on, with the same picture
+  ([#17](https://github.com/victor-takai/rogue-galaxy-recomp/issues/17)).
 
 ## 0.2.0 (pre-release)
 
