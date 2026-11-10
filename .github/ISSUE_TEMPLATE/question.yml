@@ -1,0 +1,16 @@
+name: Question
+description: Something you want to know about installing, the options or the project.
+labels: ["question"]
+body:
+  - type: checkboxes
+    attributes:
+      label: Before you post
+      options:
+        - label: I read docs/INSTALL.md and docs/OPTIONS.md, and searched the issues.
+          required: true
+
+  - type: textarea
+    attributes:
+      label: Question
+    validations:
+      required: true

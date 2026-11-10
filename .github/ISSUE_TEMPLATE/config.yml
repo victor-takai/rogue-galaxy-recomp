@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Installing and updating
+    url: https://github.com/victor-takai/rogue-galaxy-recomp/blob/main/docs/INSTALL.md
+    about: The install, Update.bat, the undub, the European texts, saves from PCSX2, uninstalling.
+  - name: Every option
+    url: https://github.com/victor-takai/rogue-galaxy-recomp/blob/main/docs/OPTIONS.md
+    about: The F1 menu and the game options (widescreen, 60 fps, internal resolution...), and where each one is.
+  - name: Known issues
+    url: https://github.com/victor-takai/rogue-galaxy-recomp/blob/main/CHANGELOG.md#known-issues
+    about: What the latest release is known to get wrong, in the CHANGELOG.

@@ -2,8 +2,17 @@
 """The release page's text, from the version's section of CHANGELOG.md.
 
     python tools/release/release_notes.py VERSION [--out FILE] [--changelog FILE]
+    python tools/release/release_notes.py VERSION --issues [--changelog FILE]
 
-Writes build/release/RogueGalaxy-<version>-notes.md, for
+With --issues it writes nothing and prints the issues the version's entries
+link, one a line, each with the entry that names it first: on release day each
+gets "This is in VERSION" and is closed, open or already closed
+(CONTRIBUTING.md: issues close when a release ships the fix, not at the
+merge). The "Known issues" subsection is left out, since what it names is not
+fixed; read the rest too, as an entry can name an issue it does not fix (0.2.0's
+log line about #17).
+
+Otherwise it writes build/release/RogueGalaxy-<version>-notes.md, for
 `gh release create v<version> ... --notes-file`. The CHANGELOG's lines are
 wrapped by hand, and GitHub's release page keeps every single newline as a
 break, so the lines of a paragraph or list item are joined. Relative links
@@ -59,15 +68,54 @@ def absolute_links(body: str, tag: str) -> str:
                   lambda m: f"]({REPO}/blob/{tag}/{m.group(1)}{m.group(2) or ''})", body)
 
 
+LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+ISSUE_URL = re.compile(rf"(?:{re.escape(REPO)}/|^(?:\.\./)+)issues/(\d+)/?(?:#.*)?$")
+
+
+def entry_issues(entry: str) -> list[int]:
+    """This repository's issues one entry names: its links to them (full or
+    relative), plain URLs, and a bare #N outside any link."""
+    numbers = [int(hit.group(1)) for link in LINK.finditer(entry)
+               if (hit := ISSUE_URL.search(link.group(1)))]
+    rest = LINK.sub("", entry)
+    numbers += [int(n) for n in re.findall(rf"{re.escape(REPO)}/issues/(\d+)", rest)]
+    numbers += [int(n) for n in re.findall(r"(?<![\w/&])#(\d+)\b", rest)]
+    return numbers
+
+
+def linked_issues(lines: list[str]) -> list[tuple[int, str, str]]:
+    """(number, subsection, entry) for each issue the section's entries name,
+    in order, once each, outside its "Known issues"."""
+    found: dict[int, tuple[int, str, str]] = {}
+    heading = ""
+    for entry in unwrap(lines).splitlines():
+        if entry.startswith("### "):
+            heading = entry[4:].strip()
+        elif heading.lower() != "known issues":
+            for number in entry_issues(entry):
+                found.setdefault(number, (number, heading, entry))
+    return list(found.values())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("version", help="the version, as its CHANGELOG heading has it (0.2.0)")
     parser.add_argument("--changelog", type=Path, default=ROOT / "CHANGELOG.md")
     parser.add_argument("--out", type=Path, help="default build/release/RogueGalaxy-<version>-notes.md")
+    parser.add_argument("--issues", action="store_true",
+                        help="print the issues the section links instead of writing the notes")
     args = parser.parse_args()
+    if args.issues and args.out:
+        parser.error("--issues writes no notes: leave out --out")
 
     tag = "v" + args.version
     text = args.changelog.read_text(encoding="utf-8")
+    if args.issues:
+        for number, heading, entry in linked_issues(section(text, args.version)):
+            words = entry.removeprefix("- ")
+            words = words if len(words) <= 70 else words[:67] + "..."
+            print(f"#{number} {REPO}/issues/{number}  ({heading or 'top'}) {words}")
+        return 0
     body = absolute_links(unwrap(section(text, args.version)), tag)
     picture = (f'<p align="center"><img src="{RAW}/{tag}/{PICTURE}" '
                f'width="70%" alt="The F1 menu\'s Game page"></p>\n\n')

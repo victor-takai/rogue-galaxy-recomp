@@ -24,7 +24,8 @@
   and pick the disc image. The options on the game's own Settings screen
   are named in that language too. The voices stay as they are. Played in
   Spanish and tested in all four up to the first scenes; the rest of the
-  story has not been seen in them yet.
+  story has not been seen in them yet
+  ([#3](https://github.com/victor-takai/rogue-galaxy-recomp/issues/3)).
 - Mouse camera (Game, on by default): the mouse turns and tilts the
   camera, exploring, in battle and in the first-person view, with its own
   sensitivity and an option to invert the vertical. Once you press a key
