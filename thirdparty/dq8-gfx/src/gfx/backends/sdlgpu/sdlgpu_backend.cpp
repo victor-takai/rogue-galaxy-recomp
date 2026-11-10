@@ -3796,12 +3796,13 @@ struct SdlGpuBackend::Impl {
         const uint64_t submissions = device.submissions();
         static uint64_t previousSameState = 0u, previousSubmitted = 0u;
         static SdlGpuStats previousReasons{};
+        static uint64_t previousUploadMerges = 0u;
         const auto d = [](uint64_t now, uint64_t before) { return static_cast<unsigned long long>(now - before); };
         std::fprintf(stderr,
                      "[gfx] same-state primitives %llu of %llu submitted | flushes: settle=%llu transfer=%llu "
                      "snapshot=%llu alias=%llu texread=%llu feedback=%llu localcopy=%llu present=%llu "
                      "rewrite=%llu of %llu | covered-releases=%llu (%llu pages) | native strips=%llu (on the CPU %llu, "
-                     "draws %llu, off screen %llu) | empty sprites=%llu\n",
+                     "draws %llu, off screen %llu) | empty sprites=%llu | upload merges=%llu\n",
                      d(stats.sameStatePrimitives, previousSameState), d(stats.primitivesSubmitted, previousSubmitted),
                      d(stats.flushSettle, previousReasons.flushSettle),
                      d(stats.transferFlushes, previousReasons.transferFlushes),
@@ -3815,8 +3816,10 @@ struct SdlGpuBackend::Impl {
                      d(stats.nativeMeshesExpanded, previousReasons.nativeMeshesExpanded),
                      d(stats.nativeDraws, previousReasons.nativeDraws),
                      d(stats.nativeMeshesCulled, previousReasons.nativeMeshesCulled),
-                     d(stats.emptySprites, previousReasons.emptySprites));
+                     d(stats.emptySprites, previousReasons.emptySprites),
+                     d(targetStats().uploadMerges, previousUploadMerges));
         previousReasons = stats;
+        previousUploadMerges = targetStats().uploadMerges;
         previousSameState = stats.sameStatePrimitives;
         previousSubmitted = stats.primitivesSubmitted;
         if (const auto &extra = statsExtraLine()) {

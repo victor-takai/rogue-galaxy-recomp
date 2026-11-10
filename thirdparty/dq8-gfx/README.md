@@ -378,6 +378,22 @@ Five more fix results:
   regions`, `borders` and `shadows`. First written for
   a pack of upscaled pictures (the `texture-pack` branch), from which
   the frame-target test and the clamp come.
+- `sdlgpu_backend.cpp`: a sprite of no width or no height (its two vertices
+  share an x or a y) covers no pixel and is dropped before any work. In
+  Rogue Galaxy's plaza after the Juraika boss six a frame sampled a buffer
+  the GPU path cannot read in that format, so each cost a readback: 39.7 to
+  51.2 frames a second at 4x. The stats line counts `empty sprites`;
+  `DQ8_GFX_NO_EMPTY_SPRITES=1` draws them as before.
+- `sdlgpu_targets.cpp`: a draw merges the region of the pages it wrote into
+  every other surface's pending upload; one already due whole is skipped
+  (`dueWhole`; regionForPages never leaves the surface, so nothing
+  changes), in `markDrawn` and in `invalidate`'s GPU-copy path, and only the
+  pages both share are walked. In the same plaza 93% of the surfaces a draw
+  shared pages with were due whole: at 4x the worker's share of wall went
+  from 91-92% to 83-87% with the native renderer on and from 84% to 80%
+  with it off, byte-identical frames at 1x, 3x and 4x. The stats line
+  counts the `upload merges` left; `DQ8_GFX_NO_WHOLE_UPLOAD_SKIP=1` merges
+  into every one, as before.
 
 Native strips (Rogue Galaxy: added). `SdlGpuBackend::SubmitNativeMesh`
 takes a `GSNativeMesh` (a strip a VU1 program would have drawn, as its

@@ -527,6 +527,16 @@ GsSurface *GsTargetCache::findSampleSource(uint32_t base, uint32_t psm,
     return nullptr;
 }
 
+namespace {
+// A surface already due for a whole upload gains nothing from merging more
+// into it: regionForPages never leaves the surface (Rogue Galaxy: added).
+// DQ8_GFX_NO_WHOLE_UPLOAD_SKIP=1 merges anyway, as before.
+bool dueWhole(const GsSurface &surface) {
+    static const bool skip = std::getenv("DQ8_GFX_NO_WHOLE_UPLOAD_SKIP") == nullptr;
+    return skip && surface.needsUpload.contains(surface.wholeRegion());
+}
+}
+
 // Which part of a surface a set of local-memory pages covers. Pages tile the
 // surface in the PSM's page geometry, so this is arithmetic rather than a
 // search; the result is a bounding box, which over-covers a scattered set but
@@ -575,10 +585,19 @@ void GsTargetCache::markDrawn(GsSurface &surface, const GsRegion &region) {
     surface.ownedPages |= writtenPages;
     // A word at a time: this runs for every batch drawn.
     gsForEachPage(writtenPages, [&](uint32_t page) { ++m_pageGeneration[page]; });
+    // In Zerard's plaza a draw shares its pages with 14 other surfaces, 93%
+    // of them due whole, and working out their regions was a tenth of the
+    // worker's time (Rogue Galaxy: added; see dueWhole). Only the shared
+    // pages are walked: the others fall in no cell of the surface.
     for (auto &candidate : m_surfaces) {
         GsSurface &other = *candidate;
-        if (&other != &surface && !other.depth && (other.pages & writtenPages).any())
-            other.needsUpload.merge(regionForPages(other, writtenPages));
+        if (&other == &surface || other.depth || dueWhole(other))
+            continue;
+        const GsPageSet shared = other.pages & writtenPages;
+        if (shared.any()) {
+            other.needsUpload.merge(regionForPages(other, shared));
+            ++m_stats.uploadMerges;
+        }
     }
     // The texture is now ahead of local memory here, so a pending upload of the
     // same region would undo the draw.
@@ -594,7 +613,8 @@ void GsTargetCache::invalidate(const GsPageSet &pages, bool preserveOwned) {
         if ((surface.pages & pages).none())
             continue;
         if (preserveOwned && !surface.depth && !surface.gpuDirty.empty()) {
-            surface.needsUpload.merge(regionForPages(surface, pages & ~surface.ownedPages));
+            if (!dueWhole(surface))
+                surface.needsUpload.merge(regionForPages(surface, pages & ~surface.ownedPages));
             continue;
         }
         if (surface.depth) {
