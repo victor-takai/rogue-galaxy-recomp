@@ -1,0 +1,302 @@
+diff --git a/ps2xRuntime/include/ps2_runtime.h b/ps2xRuntime/include/ps2_runtime.h
+index b1f9376..d280f2f 100644
+--- a/ps2xRuntime/include/ps2_runtime.h
++++ b/ps2xRuntime/include/ps2_runtime.h
+@@ -476,7 +476,7 @@ public:
+     const EeScheduler &eeScheduler() const;
+     void postEeEvent(EeEvent event);
+     bool eeCheckpointDue(uint32_t cycles = 32u) noexcept;
+-    [[noreturn]] void eeWaitVSyncTicks(uint32_t ticks, uint32_t resumePc);
++    void eeWaitVSyncTicks(uint32_t ticks, uint32_t resumePc);
+ 
+     struct EeExitHandlerRegistration
+     {
+diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
+index 36e7854..9daf0a4 100644
+--- a/ps2xRuntime/include/runtime/ee_scheduler.h
++++ b/ps2xRuntime/include/runtime/ee_scheduler.h
+@@ -126,7 +126,14 @@ struct GuestThread
+     uint32_t tlsBase = 0;
+     EeWaitState wait{};
+     std::function<void(R5900Context &)> resumeCompletion;
+-    std::vector<GuestInvocation> invocations;
++    // A deque: a suspended fiber holds a pointer to its level's context, so
++    // pushing a nested invocation must not move the ones below it.
++    std::deque<GuestInvocation> invocations;
++    // RG_NATIVE_CPU: blockCurrent runs a wake's completion on the fiber; one
++    // that blocks again hands its own completion back through here, so a
++    // chain of waits (a CD stream) loops instead of recursing.
++    std::function<void(R5900Context &)> inlineNextCompletion;
++    bool runningInlineCompletion = false;
+     // Host stacks this thread's guest code runs on, created on first use:
+     // [0] the thread's own, [n] its n-th nested invocation (an interrupt
+     // handler or callback runs on a stack of its own, so it can start while
+@@ -403,8 +410,13 @@ public:
+     int setAlarm(uint16_t ticks, uint32_t handler, uint32_t argument, uint32_t gp, uint32_t sp);
+     int cancelAlarm(int id);
+     void queueInvocation(GuestInvocation invocation);
+-    [[noreturn]] void invokeCurrent(GuestInvocation invocation);
+-    [[noreturn]] void invokeCurrentSequence(std::vector<GuestInvocation> invocations);
++    // Off a fiber (or with RG_NATIVE_CPU off) these and the waits below
++    // unwind to the run loop and do not return. With RG_NATIVE_CPU on a
++    // fiber they suspend in place and return once the invocation has run
++    // (or the wait is over and its completion has run): the caller must
++    // return straight away, with nothing left to do.
++    void invokeCurrent(GuestInvocation invocation);
++    void invokeCurrentSequence(std::vector<GuestInvocation> invocations);
+     [[nodiscard]] bool hasInvocation(GuestInvocationKind kind, uint64_t tag) const;
+     [[nodiscard]] uint32_t invocationStackTop();
+     void releaseInvocationStacks(int threadId);
+@@ -426,10 +438,10 @@ public:
+     [[nodiscard]] uint64_t eeCycle() const noexcept { return m_eeCycle; }
+     uint32_t setGsVSyncCallback(uint32_t callback, uint32_t gp, uint32_t sp);
+ 
+-    [[noreturn]] void waitVSync(uint64_t afterTick, int fixedResult = -1, std::function<void(R5900Context &)> completion = {});
++    void waitVSync(uint64_t afterTick, int fixedResult = -1, std::function<void(R5900Context &)> completion = {});
+     void completeVSync(uint64_t tick);
+     void completeExternalWait(uint32_t type, uint64_t token, int result);
+-    [[noreturn]] void waitExternal(EeWaitReason reason, uint32_t type, uint64_t token, std::function<void(R5900Context &)> completion = {});
++    void waitExternal(EeWaitReason reason, uint32_t type, uint64_t token, std::function<void(R5900Context &)> completion = {});
+ 
+     [[nodiscard]] GuestThread *thread(int id);
+     [[nodiscard]] const GuestThread *thread(int id) const;
+@@ -495,7 +507,9 @@ private:
+     void makeRunning(GuestThread &thread);
+     void makeDormant(GuestThread &thread);
+     void removeFromWaitObject(GuestThread &thread);
+-    [[noreturn]] void blockCurrent(EeWaitState wait);
++    void blockCurrent(EeWaitState wait);
++    // RG_NATIVE_CPU on a guest fiber outside an interrupt: block and invoke in place.
++    [[nodiscard]] bool canSuspendInPlace() const noexcept;
+     // Suspends the guest stack instead of unwinding it; see the definition for
+     // when that is allowed.
+     void blockCurrentResumable(EeWaitState wait);
+diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+index c47d1ec..2351aca 100644
+--- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
++++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+@@ -1655,7 +1655,13 @@ void EeScheduler::queueInvocation(GuestInvocation invocation)
+     m_checkpointPending.store(true, std::memory_order_release);
+ }
+ 
+-[[noreturn]] void EeScheduler::invokeCurrent(GuestInvocation invocation)
++bool EeScheduler::canSuspendInPlace() const noexcept
++{
++    return s_nativeCpu && m_activeFiber != nullptr && !m_insideInterrupt &&
++           !m_stopRequested.load(std::memory_order_acquire);
++}
++
++void EeScheduler::invokeCurrent(GuestInvocation invocation)
+ {
+     assertExecutor();
+     GuestThread *owner = currentThread();
+@@ -1667,11 +1673,18 @@ void EeScheduler::queueInvocation(GuestInvocation invocation)
+     invocation.sequence = ++m_invocationSequence;
+     owner->invocations.push_back(std::move(invocation));
+     publishSnapshot();
++    if (canSuspendInPlace())
++    {
++        // The run loop runs it on the next level's fiber, then resumes this one.
++        g_eeTransferSuspendCount.fetch_add(1u, std::memory_order_relaxed);
++        m_activeFiber->suspend();
++        return;
++    }
+     g_eeTransferThrowCount.fetch_add(1u, std::memory_order_relaxed);
+     throw EeDispatcherTransfer{};
+ }
+ 
+-[[noreturn]] void EeScheduler::invokeCurrentSequence(std::vector<GuestInvocation> invocations)
++void EeScheduler::invokeCurrentSequence(std::vector<GuestInvocation> invocations)
+ {
+     assertExecutor();
+     GuestThread *owner = currentThread();
+@@ -1687,6 +1700,12 @@ void EeScheduler::queueInvocation(GuestInvocation invocation)
+         owner->invocations.push_back(std::move(*it));
+     }
+     publishSnapshot();
++    if (canSuspendInPlace())
++    {
++        g_eeTransferSuspendCount.fetch_add(1u, std::memory_order_relaxed);
++        m_activeFiber->suspend();
++        return;
++    }
+     g_eeTransferThrowCount.fetch_add(1u, std::memory_order_relaxed);
+     throw EeDispatcherTransfer{};
+ }
+@@ -1920,7 +1939,7 @@ uint32_t EeScheduler::setGsVSyncCallback(uint32_t callback, uint32_t gp, uint32_
+     return previous;
+ }
+ 
+-[[noreturn]] void EeScheduler::waitVSync(uint64_t afterTick, int fixedResult, std::function<void(R5900Context &)> completion)
++void EeScheduler::waitVSync(uint64_t afterTick, int fixedResult, std::function<void(R5900Context &)> completion)
+ {
+     blockCurrent(EeWaitState{
+         EeWaitReason::VSync,
+@@ -1983,10 +2002,10 @@ void EeScheduler::completeExternalWait(uint32_t type, uint64_t token, int result
+     publishSnapshot();
+ }
+ 
+-[[noreturn]] void EeScheduler::waitExternal(EeWaitReason reason,
+-                                            uint32_t type,
+-                                            uint64_t token,
+-                                            std::function<void(R5900Context &)> completion)
++void EeScheduler::waitExternal(EeWaitReason reason,
++                               uint32_t type,
++                               uint64_t token,
++                               std::function<void(R5900Context &)> completion)
+ {
+     EeWaitState wait{reason, EeExternalWait{type, token}, std::move(completion)};
+     blockCurrent(std::move(wait));
+@@ -2435,6 +2454,8 @@ void EeScheduler::makeDormant(GuestThread &item)
+     item.status = EeThreadStatus::Dormant;
+     item.wait = {};
+     item.resumeCompletion = {};
++    item.inlineNextCompletion = {};
++    item.runningInlineCompletion = false;
+     item.suspendCount = 0;
+     item.wakeupCount = 0;
+     item.invocations.clear();
+@@ -2474,13 +2495,46 @@ void EeScheduler::blockCurrent(EeWaitState wait)
+ {
+     GuestThread *self = currentThread();
+     assert(self != nullptr);
++    const int id = self->id;
+     self->wait = std::move(wait);
+     eewait::blocked(self->id, self->wait);
+     self->status = self->suspendCount == 0 ? EeThreadStatus::Waiting : EeThreadStatus::WaitingSuspended;
+     m_currentThreadId = 0;
+     publishSnapshot();
+-    g_eeTransferThrowCount.fetch_add(1u, std::memory_order_relaxed);
+-    throw EeDispatcherTransfer{};
++    if (!canSuspendInPlace())
++    {
++        g_eeTransferThrowCount.fetch_add(1u, std::memory_order_relaxed);
++        throw EeDispatcherTransfer{};
++    }
++
++    // RG_NATIVE_CPU: native code cannot be re-entered at a saved pc, so the
++    // stack stays and the wake's completion (which the run loop would have
++    // run before re-dispatching) runs here, on the fiber, before returning.
++    g_eeTransferSuspendCount.fetch_add(1u, std::memory_order_relaxed);
++    m_activeFiber->suspend();
++    self = thread(id);
++    assert(self != nullptr);
++    std::function<void(R5900Context &)> completion = std::move(self->resumeCompletion);
++    self->resumeCompletion = {};
++    if (!completion)
++    {
++        return;
++    }
++    if (self->runningInlineCompletion)
++    {
++        self->inlineNextCompletion = std::move(completion);
++        return;
++    }
++    self->runningInlineCompletion = true;
++    while (completion)
++    {
++        completion(self->activeContext());
++        self = thread(id);
++        assert(self != nullptr);
++        completion = std::move(self->inlineNextCompletion);
++        self->inlineNextCompletion = {};
++    }
++    self->runningInlineCompletion = false;
+ }
+ 
+ // Blocks and comes back where it left off. Only for waits that carry no
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/CD.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/CD.cpp
+index 56a978e..ac34814 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/CD.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/CD.cpp
+@@ -790,6 +790,7 @@ namespace ps2_stubs
+                             }
+                             continueCdStRead(rdram, &resumeContext, runtime, state);
+                         });
++                    return;
+                 }
+ 
+                 uint32_t sectors = std::min(remaining, available);
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/IPU.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/IPU.cpp
+index e851bd2..1731774 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/IPU.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/IPU.cpp
+@@ -86,6 +86,7 @@ namespace ps2_stubs
+                 completeIpuInit(rdram, &parent, runtime);
+             };
+             scheduler.invokeCurrent(std::move(invocation));
++            return;
+         }
+ 
+         completeIpuInit(rdram, ctx, runtime);
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+index 8c047c8..fe76e02 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -2614,6 +2614,7 @@ namespace ps2_stubs
+                         }
+                         sceMpegGetPicture(rdram, &resumeContext, runtime);
+                     });
++                return;
+             }
+ 
+             if (!playback.decodedFrames.empty())
+@@ -2650,6 +2651,7 @@ namespace ps2_stubs
+                             }
+                             sceMpegGetPicture(rdram, &resumeContext, runtime);
+                         });
++                    return;
+                 }
+ 
+                 frame = std::move(playback.decodedFrames.front());
+diff --git a/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp b/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
+index 4142516..007686f 100644
+--- a/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
+@@ -702,6 +702,7 @@ namespace ps2_syscalls
+                 finishCall(&completed, parent);
+             };
+             runtime->eeScheduler().invokeCurrent(std::move(invocation));
++            return;
+         }
+         finishCall(nullptr, *ctx);
+     }
+diff --git a/ps2xRuntime/src/lib/Kernel/Syscalls/System.cpp b/ps2xRuntime/src/lib/Kernel/Syscalls/System.cpp
+index 6c0f7aa..aa823dd 100644
+--- a/ps2xRuntime/src/lib/Kernel/Syscalls/System.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Syscalls/System.cpp
+@@ -440,6 +440,7 @@ namespace ps2_syscalls
+             parent.r[2] = completed.r[2];
+         };
+         scheduler.invokeCurrent(std::move(invocation));
++        return true;
+     }
+ 
+     static bool tryResolveGuestSyscallMirrorAddr(uint32_t syscallIndex, uint32_t &guestAddr)
+diff --git a/ps2xRuntime/src/lib/Kernel/Syscalls/Thread.cpp b/ps2xRuntime/src/lib/Kernel/Syscalls/Thread.cpp
+index 5110ee2..5bb0886 100644
+--- a/ps2xRuntime/src/lib/Kernel/Syscalls/Thread.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Syscalls/Thread.cpp
+@@ -100,6 +100,9 @@ namespace ps2_syscalls
+                 runtime->eeScheduler().exitCurrent(deleteThread);
+             };
+             ee.invokeCurrentSequence(std::move(invocations));
++            // In place (RG_NATIVE_CPU) the last handler's completion ends the
++            // thread and drops this suspended stack; it never comes back here.
++            ee.exitCurrent(deleteThread);
+         }
+ 
+         void changePriorityImpl(uint8_t *rdram,
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index e219c32..c7e2ac4 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -2457,7 +2457,7 @@ bool PS2Runtime::eeCheckpointDue(uint32_t cycles) noexcept
+     return false;
+ }
+ 
+-[[noreturn]] void PS2Runtime::eeWaitVSyncTicks(uint32_t ticks, uint32_t resumePc)
++void PS2Runtime::eeWaitVSyncTicks(uint32_t ticks, uint32_t resumePc)
+ {
+     const uint64_t currentTick = m_eeScheduler->currentVSyncTick();
+     const uint64_t waitTicks = std::max<uint64_t>(1u, ticks);

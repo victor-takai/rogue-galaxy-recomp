@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <csignal>
 #include <thread>
 #include <variant>
 
@@ -143,7 +144,7 @@ void dump(PS2Runtime &runtime, double stalledSeconds, uint64_t flips)
         }
         std::fprintf(stderr, "[stall]   thread %d %s%s%s, priority %d, pc 0x%08X ra 0x%08X sp 0x%08X%s%s\n", id,
                      statusName(thread->status), reasonName(thread->wait.reason), detail, thread->currentPriority,
-                     ctx.pc, getRegU32(&ctx, 31), getRegU32(&ctx, 29), thread->inGuestCall ? ", in a guest call" : "",
+                     ctx.pc, getRegU32(&ctx, 31), getRegU32(&ctx, 29), thread->inGuestCallMask != 0u ? ", in a guest call" : "",
                      thread->invocations.empty() ? "" : ", inside a callback");
         if (thread->wait.reason == EeWaitReason::Semaphore)
         {
@@ -339,6 +340,9 @@ void startStallWatch(PS2Runtime &runtime)
     const double threshold = seconds && std::atof(seconds) > 0.0 ? std::atof(seconds) : 15.0;
     g_stop.store(false, std::memory_order_release);
     g_thread = std::thread(run, &runtime, threshold);
+    // The same report as F10 from outside (`pkill -USR1 roguegalaxy`): for a
+    // hidden window, or a hang that keeps flipping.
+    std::signal(SIGUSR1, [](int) { g_reportRequested.store(true, std::memory_order_release); });
 }
 
 void requestStallReport()

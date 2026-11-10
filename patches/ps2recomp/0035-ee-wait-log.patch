@@ -1,0 +1,260 @@
+--- a/ps2xRuntime/include/runtime/ee_scheduler.h
++++ b/ps2xRuntime/include/runtime/ee_scheduler.h
+@@ -493,6 +493,7 @@
+     static int waitObjectId(const EeWaitState &wait);
+     void writeGuestU32(uint32_t address, uint32_t value);
+     void waitForEvent();
++    void reportWaitLog(); // RG_EE_WAITLOG (Rogue Galaxy: added)
+     void scheduleEvent(uint64_t deadlineCycle, std::chrono::steady_clock::time_point hostDeadline, EeEvent event);
+     void updateNextDeadline();
+     // Host-pacing time: wall time through the pause and speed above.
+--- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
++++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+@@ -13,6 +13,8 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
++#include <chrono>
++#include <mutex>
+ #include <exception>
+ #include <limits>
+ #include <stdexcept>
+@@ -37,6 +39,80 @@
+ std::atomic<uint64_t> g_eeProcessPendingEventsCount{0};
+ std::atomic<uint64_t> g_eeEnterGuestCount{0};
+ 
++// RG_EE_WAITLOG=1 (Rogue Galaxy: added): where the executor's host time goes,
++// every second: inside each guest thread, idle (waitForEvent), and the rest
++// (the scheduler itself); and what each guest thread waited on, by reason and
++// object, for how long. A frame's cost when unpaced is the executor's time
++// between vsyncs, so this names what it is spent on.
++namespace eewait
++{
++using Clock = std::chrono::steady_clock;
++const bool g_on = [] {
++    const char *v = std::getenv("RG_EE_WAITLOG");
++    return v && *v && *v != '0';
++}();
++struct Key
++{
++    int thread;
++    int reason;
++    int object;
++    bool operator==(const Key &o) const { return thread == o.thread && reason == o.reason && object == o.object; }
++};
++struct KeyHash
++{
++    size_t operator()(const Key &k) const { return (size_t(k.thread) * 131u + size_t(k.reason)) * 65599u + size_t(k.object); }
++};
++struct Span
++{
++    uint64_t ns = 0, count = 0;
++};
++std::mutex g_mutex;
++std::unordered_map<int, Span> g_running;  // host ns inside each guest thread
++std::unordered_map<int, Clock::time_point> g_blockedAt;
++std::unordered_map<int, Key> g_blockedOn;
++std::unordered_map<Key, Span, KeyHash> g_waits;
++Span g_idle, g_sched;
++uint64_t g_vsyncs = 0;
++Clock::time_point g_windowStart = Clock::now();
++
++int objectOf(const EeWaitState &w)
++{
++    if (const auto *sema = std::get_if<EeSemaphoreWait>(&w.payload))
++        return sema->id;
++    if (const auto *flag = std::get_if<EeEventFlagWait>(&w.payload))
++        return flag->id;
++    if (const auto *ext = std::get_if<EeExternalWait>(&w.payload))
++        return int(ext->type);
++    return 0;
++}
++void blocked(int thread, const EeWaitState &w)
++{
++    if (!g_on)
++        return;
++    std::lock_guard lock(g_mutex);
++    g_blockedAt[thread] = Clock::now();
++    g_blockedOn[thread] = Key{thread, int(w.reason), objectOf(w)};
++}
++void woken(int thread)
++{
++    if (!g_on)
++        return;
++    std::lock_guard lock(g_mutex);
++    const auto at = g_blockedAt.find(thread);
++    if (at == g_blockedAt.end())
++        return;
++    Span &span = g_waits[g_blockedOn[thread]];
++    span.ns += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - at->second).count());
++    ++span.count;
++    g_blockedAt.erase(at);
++}
++const char *reasonName(int r)
++{
++    static const char *names[] = {"none", "sleep", "sema", "eventflag", "vsync", "external", "mpeg"};
++    return r >= 0 && r < 7 ? names[r] : "?";
++}
++} // namespace eewait
++
+ namespace
+ {
+     const uint64_t g_eeDispatchHistogramInterval = [] {
+@@ -248,6 +324,8 @@
+     while (!m_stopRequested.load(std::memory_order_acquire))
+     {
+         g_eeRunLoopIterations.fetch_add(1u, std::memory_order_relaxed);
++        if (eewait::g_on)
++            reportWaitLog();
+         // Service events and preemption once between guest turns.
+         processPendingEvents();
+         if (m_stopRequested.load(std::memory_order_acquire))
+@@ -263,7 +341,13 @@
+                 // About to sleep: nothing after this would service a pending
+                 // snapshot request until the guest runs again.
+                 publishSnapshotNow();
++                const auto idleStart = eewait::Clock::now();
+                 waitForEvent();
++                if (eewait::g_on)
++                {
++                    eewait::g_idle.ns += uint64_t((eewait::Clock::now() - idleStart).count());
++                    ++eewait::g_idle.count;
++                }
+                 continue;
+             }
+             if (next)
+@@ -300,7 +384,13 @@
+         if (running->inGuestCall)
+         {
+             g_eeRunLoopResumeCount.fetch_add(1u, std::memory_order_relaxed);
+-            enterGuest(*running);
++            {
++                const int id = running->id;
++                const auto start = eewait::Clock::now();
++                enterGuest(*running);
++                if (eewait::g_on)
++                    eewait::g_running[id].ns += uint64_t((eewait::Clock::now() - start).count());
++            }
+             if (m_fiberException)
+             {
+                 std::exception_ptr escaped;
+@@ -319,7 +409,11 @@
+             try
+             {
+                 m_dispatchedThreadId = running->id;
++                const int id = running->id;
++                const auto start = eewait::Clock::now();
+                 completion(running->activeContext());
++                if (eewait::g_on)
++                    eewait::g_running[id].ns += uint64_t((eewait::Clock::now() - start).count());
+                 m_dispatchedThreadId = 0;
+             }
+             catch (const EeDispatcherTransfer &)
+@@ -473,7 +567,17 @@
+         m_pendingInsideInterrupt =
+             !running->invocations.empty() &&
+             running->invocations.back().kind == GuestInvocationKind::Interrupt;
+-        enterGuest(*running);
++        {
++            const int id = running->id;
++            const auto start = eewait::Clock::now();
++            enterGuest(*running);
++            if (eewait::g_on)
++            {
++                eewait::Span &span = eewait::g_running[id];
++                span.ns += uint64_t((eewait::Clock::now() - start).count());
++                ++span.count;
++            }
++        }
+         if (m_fiberException)
+         {
+             std::exception_ptr escaped;
+@@ -490,6 +594,56 @@
+     publishSnapshot();
+ }
+ 
++void EeScheduler::reportWaitLog()
++{
++    using namespace eewait;
++    const auto now = Clock::now();
++    const uint64_t window = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(now - g_windowStart).count());
++    if (window < 1000000000ull)
++        return;
++    std::lock_guard lock(g_mutex);
++    const double w = double(window);
++    uint64_t guest = 0;
++    std::vector<std::pair<uint64_t, int>> threads;
++    for (const auto &[id, span] : g_running)
++    {
++        guest += span.ns;
++        threads.emplace_back(span.ns, id);
++    }
++    std::sort(threads.rbegin(), threads.rend());
++    const uint64_t sched = window > guest + g_idle.ns ? window - guest - g_idle.ns : 0;
++    std::fprintf(stderr, "[eewait] %.2fs vsyncs %llu (%.1f ms each) | guest %.0f%% idle %.0f%% (%llu sleeps) sched %.0f%% |",
++                 w / 1e9, (unsigned long long)g_vsyncs, g_vsyncs ? w / 1e6 / double(g_vsyncs) : 0.0,
++                 100.0 * double(guest) / w, 100.0 * double(g_idle.ns) / w, (unsigned long long)g_idle.count,
++                 100.0 * double(sched) / w);
++    for (size_t i = 0; i < threads.size() && i < 8; ++i)
++    {
++        const GuestThread *t = thread(threads[i].second);
++        std::fprintf(stderr, " t%d(%06x p%d) %.1f%%", threads[i].second, t ? t->entry : 0u,
++                     t ? t->currentPriority : -1, 100.0 * double(threads[i].first) / w);
++    }
++    std::fprintf(stderr, "\n");
++    std::vector<std::pair<uint64_t, Key>> waits;
++    for (const auto &[key, span] : g_waits)
++        waits.emplace_back(span.ns, key);
++    std::sort(waits.begin(), waits.end(), [](const auto &l, const auto &r) { return l.first > r.first; });
++    std::fprintf(stderr, "[eewait]   waits:");
++    for (size_t i = 0; i < waits.size() && i < 10; ++i)
++    {
++        const Key &k = waits[i].second;
++        const Span &span = g_waits[k];
++        std::fprintf(stderr, " t%d %s %d %.1f%% x%llu (%.2f ms);", k.thread, reasonName(k.reason), k.object,
++                     100.0 * double(span.ns) / w, (unsigned long long)span.count,
++                     span.count ? double(span.ns) / 1e6 / double(span.count) : 0.0);
++    }
++    std::fprintf(stderr, "\n");
++    g_running.clear();
++    g_waits.clear();
++    g_idle = {};
++    g_vsyncs = 0;
++    g_windowStart = now;
++}
++
+ void EeScheduler::requestStop()
+ {
+     m_stopRequested.store(true, std::memory_order_release);
+@@ -2249,6 +2403,7 @@
+     GuestThread *self = currentThread();
+     assert(self != nullptr);
+     self->wait = std::move(wait);
++    eewait::blocked(self->id, self->wait);
+     self->status = self->suspendCount == 0 ? EeThreadStatus::Waiting : EeThreadStatus::WaitingSuspended;
+     m_currentThreadId = 0;
+     publishSnapshot();
+@@ -2272,6 +2427,7 @@
+     GuestThread *self = currentThread();
+     assert(self != nullptr);
+     self->wait = std::move(wait);
++    eewait::blocked(self->id, self->wait);
+     self->status = self->suspendCount == 0 ? EeThreadStatus::Waiting : EeThreadStatus::WaitingSuspended;
+     m_currentThreadId = 0;
+     publishSnapshot();
+@@ -2281,6 +2437,7 @@
+ 
+ void EeScheduler::makeReady(GuestThread &item, int result, bool interruptSafe)
+ {
++    eewait::woken(item.id);
+     auto completion = std::move(item.wait.completion);
+     item.wait = {};
+     setReturnS32(&item.activeContext(), result);
+@@ -2495,6 +2652,7 @@
+         requestStop();
+         break;
+     case EeEventType::VBlankStart:
++        ++eewait::g_vsyncs;
+         ++m_vsyncTick;
+         m_runtime.memory().gs().vsyncTick.store(m_vsyncTick, std::memory_order_release);
+         if ((m_vsyncTick & 1u) != 0u)

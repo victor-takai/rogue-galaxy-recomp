@@ -45,7 +45,8 @@ drop next to the `[gfx]` lines of that moment. F10 writes the stall
 watchdog's report at once (the guest
 threads and what each waits on, the semaphores' counts, the host
 stacks), for a freeze the watchdog does not see by itself because the
-screen keeps flipping; the watchdog also reports on its own when the
+screen keeps flipping (on Linux `pkill -USR1 roguegalaxy` does the same
+from outside, for a hidden window); the watchdog also reports on its own when the
 main thread has not moved for 15 s, and the runtime logs a `[ee]` line
 when a guest thread ends with pc 0 or the main thread exits. A frozen
 process can be dumped with `tools\hang\dumpmem.ps1` (its guest RAM and
@@ -122,6 +123,7 @@ Most of these set an option of the F1 menu for one run, without saving it.
 | `RG_BIGGER_BAG=1` | The bag has a seventh page, 280 spaces, from the start (the menu's "Seventh bag page"; `0` turns it off; `src/inventory.h`) |
 | `RG_NATIVE_RENDERER=1` | The native renderer for this run, whatever the menu's "Native renderer" says (`0` turns it off; `src/native_renderer.h`, [NATIVE-RENDERER.md](NATIVE-RENDERER.md)): the switch the native rendering work goes behind as it lands, off by default. On, `RG_VU1_NATIVE` defaults to `gpu` and `RG_VU0_NATIVE` to on; each variable still overrides it. The bench and oracle scripts set it unless it is set. Logs `[rg] native renderer on` |
 | `RG_NATIVE_PIPELINE=1` | Only with the native renderer on: the native pipeline ([NATIVE-PIPELINE.md](NATIVE-PIPELINE.md), `thirdparty/dq8-gfx/src/gfx/native`) presents its own scene in place of the GS display. It draws the whole frame (the 3D meshes with their textures, the effects, the 2D, the per-object composites) and answers the game's colour and depth reads; nothing reaches the GS, whose calls a tripwire logs and drops (`RG_NATIVE_GS`). A mesh into a buffer the game never named is dropped (a target miss). Known limits in [NATIVE-PIPELINE.md](NATIVE-PIPELINE.md). Screenshots capture the native scene. Logs `[native-pipeline] on`; with `DQ8_GFX_STATS_EVERY`, a `[native-pipeline]` line (records by kind, R1-R5) and a `[native-producer]` line (textures, palettes, targets and meshes made, and why not) |
+| `RG_NATIVE_CPU=1` | The native CPU ([NATIVE-CPU.md](NATIVE-CPU.md)), off by default. So far: the scheduler suspends a guest thread's fiber in place at a checkpoint, a wait or a callback instead of unwinding the host stack (patches 0036, 0037); the game runs as without it |
 | `RG_DEV_TOOLS=1` | The developers' tools left in the game come back (the menu's "Developer tools"; `src/dev_tools.h`) |
 | `RG_TEXTURE_PACK=DIR` | Read that one texture pack, a folder or a `.zip`, instead of `textures\hd` and `textures\packs` ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)) |
 
@@ -150,6 +152,7 @@ the project's fixes off to compare.
 | `RG_PROFILE_AUTO_MS=N` | With `RG_PROFILE_BEFORE`: a hitch opens a window by itself (a frame N ms long and three times the usual, or the frame rate halved for a few frames), of the hitch and half a second either side, at most 30 a run |
 | `RG_PROFILE_INTERVAL_MS=N` | The pause between two sampling rounds (default 1 for a window, 5 when sampling all the time with `RG_PROFILE_BEFORE`) |
 | `RG_STALL_SECONDS=15` | When no frame has been flipped for that long while the game is not paused, the log gets every guest thread's state (what it waits on; the running one's registers and the addresses it passes over the next second) and every host thread's stack (Windows only; `exe!0x...` frames resolve with `llvm-symbolizer --obj=build/game/src/roguegalaxy.exe`, from the toolchain's `bin`), again every minute; `RG_STALL_WATCH=0` turns the watchdog off |
+| `RG_EE_WAITLOG=1` | Every second, `[eewait]` lines: where the EE executor's host time goes (each guest thread, idle, the scheduler), what each guest thread waited on and how long, vsyncs per second; and from the VIF1 thread its idle time, its waits on the GIF stage and the game thread's drains (patch 0035). The main guest thread's share of wall time over the frame rate is its ms per frame |
 | `RG_POS_TRACE=1` | Log every call that puts a character somewhere it did not walk to (`CharaSetPos`, `CharaSetPosXYZ`, `CharaPlaceAt`: character, id, old and new position, caller), and any character still falling after 90 movement updates, with where it fell from |
 | `RG_JUMP_TRACE=1` | Log the party leader's movement updates while off the ground (host time, position, step-scaled velocity, the motion's displacement, the action mode and the gravity flags, one line per `CharaMoveCollideMaybe`; `=2` logs the moves on the ground too, for the speed ramps; `=3` every character's, tagged with address and id, and for enemies every move with what drives it and every move request with its caller; `=4` every character's moves on the ground too, for a party following its leader): compares a jump's arc and timing between the 30 and 60 fps modes |
 | `RG_SCENE_TRACE=1` | Prints each change of the game's mode and phase and of the main menu's state (`[scene]` lines; the quick scenes go by the mode and the warp's script) |

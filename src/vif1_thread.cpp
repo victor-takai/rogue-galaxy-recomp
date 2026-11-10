@@ -32,6 +32,65 @@
 #include "ps2_syscalls.h"
 #include "runtime/ee_scheduler.h"
 
+// RG_EE_WAITLOG=1: the host waits around the VIF1 thread, every second: the
+// game thread's drains (by source line), the VIF1 thread's idle and its waits
+// on the GIF stage, the stage's idle.
+namespace vifwait
+{
+const bool g_on = [] {
+    const char *v = std::getenv("RG_EE_WAITLOG");
+    return v && *v && *v != '0';
+}();
+struct Acc
+{
+    std::atomic<uint64_t> ns{0}, count{0};
+};
+constexpr int kLines = 4096;
+Acc g_drain[kLines]; // the game thread in Vif1Thread::drain, by caller line
+Acc g_vif1Idle, g_vif1Space, g_stageIdle, g_stageDrain;
+std::atomic<int64_t> g_windowStart{0};
+int64_t nowNs()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+void add(Acc &acc, int64_t start)
+{
+    acc.ns.fetch_add(uint64_t(nowNs() - start), std::memory_order_relaxed);
+    acc.count.fetch_add(1u, std::memory_order_relaxed);
+}
+void report()
+{
+    const int64_t now = nowNs();
+    int64_t start = g_windowStart.load(std::memory_order_relaxed);
+    if (start == 0)
+    {
+        g_windowStart.compare_exchange_strong(start, now);
+        return;
+    }
+    if (now - start < 1000000000 || !g_windowStart.compare_exchange_strong(start, now))
+        return;
+    const double w = double(now - start);
+    auto pct = [&](Acc &a) { return 100.0 * double(a.ns.exchange(0)) / w; };
+    auto cnt = [&](Acc &a) { return (unsigned long long)a.count.exchange(0); };
+    std::fprintf(stderr, "[vifwait] vif1 idle %.1f%% (x%llu) waits-on-stage %.1f%% (x%llu) | stage idle %.1f%% (x%llu) | game->stage drain %.1f%% (x%llu) | game drains:",
+                 pct(g_vif1Idle), cnt(g_vif1Idle), pct(g_vif1Space), cnt(g_vif1Space), pct(g_stageIdle),
+                 cnt(g_stageIdle), pct(g_stageDrain), cnt(g_stageDrain));
+    double total = 0.0;
+    for (int line = 0; line < kLines; ++line)
+    {
+        const uint64_t c = g_drain[line].count.exchange(0);
+        const uint64_t ns = g_drain[line].ns.exchange(0);
+        if (c == 0u)
+            continue;
+        total += 100.0 * double(ns) / w;
+        if (ns * 1000u > uint64_t(w)) // above 0.1%
+            std::fprintf(stderr, " L%d %.1f%% x%llu;", line, 100.0 * double(ns) / w, (unsigned long long)c);
+    }
+    std::fprintf(stderr, " total %.1f%%\n", total);
+}
+} // namespace vifwait
+
 namespace rg::vif1
 {
 namespace
@@ -361,7 +420,10 @@ public:
             std::unique_lock lock(m_mutex);
             // A GS that falls behind holds the VIF1 thread back instead of
             // letting the copies pile up.
+            const int64_t spaceStart = vifwait::g_on ? vifwait::nowNs() : 0;
             m_space.wait(lock, [&] { return m_outstanding == 0u || m_outstanding + bytes <= kCapacity; });
+            if (vifwait::g_on)
+                vifwait::add(vifwait::g_vif1Space, spaceStart);
             m_buffers.push_back(std::move(m_staged));
             m_outstanding += bytes;
             ++m_published;
@@ -383,8 +445,11 @@ public:
         {
             return;
         }
+        const int64_t drainStart = vifwait::g_on ? vifwait::nowNs() : 0;
         std::unique_lock lock(m_mutex);
         m_idle.wait(lock, [&] { return m_done == m_published; });
+        if (vifwait::g_on)
+            vifwait::add(vifwait::g_stageDrain, drainStart);
     }
 
     bool busy()
@@ -459,7 +524,10 @@ private:
             std::vector<uint8_t> buffer;
             {
                 std::unique_lock lock(m_mutex);
+                const int64_t idleStart = vifwait::g_on ? vifwait::nowNs() : 0;
                 m_work.wait(lock, [&] { return !m_buffers.empty() || m_stop; });
+                if (vifwait::g_on)
+                    vifwait::add(vifwait::g_stageIdle, idleStart);
                 if (m_buffers.empty())
                 {
                     return;
@@ -931,12 +999,13 @@ public:
     // Waits until every list handed over has run, and the GS packets they
     // made with them. A no-op on the VIF1 thread itself, which never starts
     // DMA but could reach a hook, and on the GIF stage's.
-    void drain()
+    void drain(int line = __builtin_LINE())
     {
         if (std::this_thread::get_id() == m_workerId || (g_stage && std::this_thread::get_id() == g_stage->id()))
         {
             return;
         }
+        const int64_t start = vifwait::g_on ? vifwait::nowNs() : 0;
         {
             std::unique_lock lock(m_mutex);
             m_idle.wait(lock, [&] { return m_completed == m_submitted; });
@@ -944,6 +1013,11 @@ public:
         if (g_stage)
         {
             g_stage->drain();
+        }
+        if (vifwait::g_on)
+        {
+            vifwait::add(vifwait::g_drain[line & (vifwait::kLines - 1)], start);
+            vifwait::report();
         }
     }
 
@@ -978,7 +1052,10 @@ private:
         {
             {
                 std::unique_lock lock(m_mutex);
+                const int64_t idleStart = vifwait::g_on ? vifwait::nowNs() : 0;
                 m_work.wait(lock, [&] { return !m_lists.empty() || m_stop; });
+                if (vifwait::g_on)
+                    vifwait::add(vifwait::g_vif1Idle, idleStart);
                 if (m_lists.empty())
                 {
                     return;
