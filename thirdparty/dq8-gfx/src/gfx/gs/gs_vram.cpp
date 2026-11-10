@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 
@@ -682,6 +683,85 @@ void writeRun(uint8_t *data, uint32_t base, uint32_t bw, uint32_t dsax, uint32_t
     }
 }
 
+// ---------------------------------------------------------------------------
+// The row readers, the group writers run backwards (Rogue Galaxy: added).
+// GSMem's row readers look up a table and copy one pixel at a time; texture
+// expansion and target patches read whole rows, so a group (a row's texels
+// in one block) is read piece by piece here.
+
+// PSMT8: piece c holds texels 2c, 8 + 2c, 2c + 1 and 9 + 2c in its even
+// bytes, or its odd ones for the column's rows 2 and 3 (see writeGroup8).
+void readGroup8(const uint8_t *block, uint32_t y, uint8_t *out) {
+    const uint8_t *row = block + 64u * ((y >> 2) & 3u) + 8u * (y & 1u);
+    const uint32_t shift = ((y >> 1) & 1u) * 8u;
+    const uint32_t flip = flip32(y);
+    for (uint32_t c = 0; c < 4u; ++c) {
+        const uint64_t piece = load64(row + ((16u * c) ^ flip)) >> shift;
+        out[2u * c] = static_cast<uint8_t>(piece);
+        out[8u + 2u * c] = static_cast<uint8_t>(piece >> 16);
+        out[2u * c + 1u] = static_cast<uint8_t>(piece >> 32);
+        out[9u + 2u * c] = static_cast<uint8_t>(piece >> 48);
+    }
+}
+
+// PSMCT32/Z32: a row's eight pixels are its four pieces in order.
+void readGroup32(const uint8_t *block, uint32_t y, uint8_t *out) {
+    const uint8_t *row = block + texelByte32(0u, y);
+    store64(out, load64(row));
+    store64(out + 8, load64(row + 16));
+    store64(out + 16, load64(row + 32));
+    store64(out + 24, load64(row + 48));
+}
+
+struct ReadT8 {
+    using Format = FormatT8;
+    static constexpr uint32_t kBytes = 1u;
+    static void texel(const uint8_t *block, uint32_t x, uint32_t y, uint8_t *out) {
+        *out = block[rowBytes8(y) + (kPieceByte8[x & 15u] ^ flip32(y))];
+    }
+    static void group(const uint8_t *block, uint32_t y, uint8_t *out) { readGroup8(block, y, out); }
+};
+
+template <class F>
+struct Read32 {
+    using Format = F;
+    static constexpr uint32_t kBytes = 4u;
+    static void texel(const uint8_t *block, uint32_t x, uint32_t y, uint8_t *out) {
+        std::memcpy(out, block + texelByte32(x, y), 4u);
+    }
+    static void group(const uint8_t *block, uint32_t y, uint8_t *out) { readGroup32(block, y, out); }
+};
+
+// `count` texels of row y from x, as `count` GSMem reads return them. The
+// row's blocks are found as the writers find them (BlockMap: the base's
+// offset inside its page may carry into the next page, the address wraps at
+// 4 MiB as GSMem's does).
+template <class R>
+void readRow(const uint8_t *data, uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t count,
+             uint8_t *out) {
+    using F = typename R::Format;
+    const BlockMap<F> at = blockMap<F>(const_cast<uint8_t *>(data), base, bw);
+    for (uint32_t i = 0; i < count;) {
+        const uint8_t *block = at(x, y);
+        const uint32_t inBlock = x % F::kBlockW;
+        if (inBlock == 0u && count - i >= F::kBlockW) {
+            R::group(block, y, out + size_t(i) * R::kBytes);
+            x += F::kBlockW;
+            i += F::kBlockW;
+            continue;
+        }
+        const uint32_t n = std::min(count - i, F::kBlockW - inBlock);
+        for (uint32_t k = 0; k < n; ++k, ++x, ++i)
+            R::texel(block, x, y, out + size_t(i) * R::kBytes);
+    }
+}
+
+// DQ8_GFX_NO_BLOCK_READS=1: the row readers hand over to GSMem's, as before.
+bool gsmemReads() {
+    static const bool set = std::getenv("DQ8_GFX_NO_BLOCK_READS") != nullptr;
+    return set;
+}
+
 } // namespace
 
 void GsVram::writeRunT8(uint32_t base, uint32_t bw, uint32_t dsax, uint32_t rowEnd, uint32_t x, uint32_t y,
@@ -716,6 +796,33 @@ void GsVram::readRowT4(uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint3
         for (uint32_t k = 0; k < n; ++k, ++x, ++i)
             out[i] = static_cast<uint8_t>((row[kPieceByte4[x & 31u] ^ flip] >> shift) & 0x0fu);
     }
+}
+
+void GsVram::readRowT8(uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t count, uint8_t *out) const {
+    if (!attached())
+        return;
+    if (gsmemReads())
+        GSMem::ReadRowP8(m_data, base, bw, x, y, count, out);
+    else
+        readRow<ReadT8>(m_data, base, bw, x, y, count, out);
+}
+
+void GsVram::readRowCT32(uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t count, uint8_t *out) const {
+    if (!attached())
+        return;
+    if (gsmemReads())
+        GSMem::ReadRowCT32(m_data, base, bw, x, y, count, out);
+    else
+        readRow<Read32<FormatCT32>>(m_data, base, bw, x, y, count, out);
+}
+
+void GsVram::readRowZ32(uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t count, uint8_t *out) const {
+    if (!attached())
+        return;
+    if (gsmemReads())
+        GSMem::ReadRowZ32(m_data, base, bw, x, y, count, out);
+    else
+        readRow<Read32<FormatZ32>>(m_data, base, bw, x, y, count, out);
 }
 
 template <class F>

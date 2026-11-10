@@ -71,6 +71,14 @@ commit of this folder is upstream as is, so `git log -p` on it shows them.
   PSMT4 and from 0.53 to 0.05 for PSMT8; CT32 and Z32 2.5x. Only rows
   narrower than one group fall back to texel-by-texel writes.
   `-DDQ8_GS_VRAM_SCALAR` builds the portable kernels, same bytes.
+  `readRowT8`, `readRowCT32` and `readRowZ32` read the same layout back a
+  block's row at a time (a PSMT8 group's 16 texels from four 8-byte
+  pieces, a 32-bit group's 8 pixels as four 8-byte copies), where GSMem's
+  row readers look up and copy each pixel; texture expansion and the
+  target patches use them. In Rogue Galaxy's plaza after the Juraika boss
+  the worker's share of wall went from 82% to 78% at 4x with the native
+  renderer on and from 79% to 74% with it off, byte-identical frames.
+  `DQ8_GFX_NO_BLOCK_READS=1` reads through GSMem's, as before.
 - `gs/gs_transfer.cpp`: host-to-local PSMT8, PSMT4, PSMCT32 and PSMZ32
   transfers write runs instead of one dispatched `write()` per pixel.
 - `sdlgpu_textures.cpp`: PSMT4 textures expand through the palette
@@ -378,6 +386,24 @@ Five more fix results:
   regions`, `borders` and `shadows`. First written for
   a pack of upscaled pictures (the `texture-pack` branch), from which
   the frame-target test and the clamp come.
+- `sdlgpu_backend.cpp`: a sprite of no width or no height (its two vertices
+  share an x or a y) covers no pixel and is dropped before any work. In
+  Rogue Galaxy's plaza after the Juraika boss six a frame sampled a buffer
+  the GPU path cannot read in that format, so each cost a readback: 39.7 to
+  51.2 frames a second at 4x. The stats line counts `empty sprites`;
+  `DQ8_GFX_NO_EMPTY_SPRITES=1` draws them as before.
+- `sdlgpu_targets.cpp`: a draw merges the region of the pages it wrote into
+  every other surface's pending upload; one already due whole is skipped
+  (`dueWhole`; regionForPages never leaves the surface, so nothing
+  changes), in `markDrawn` and in `invalidate`'s GPU-copy path, and only the
+  pages both share are walked. In the same plaza 93% of the surfaces a draw
+  shared pages with were due whole: at 4x the worker's share of wall went
+  from 91-92% to 83-87% with the native renderer on and from 84% to 80%
+  with it off, byte-identical frames at 1x, 3x and 4x. The stats line
+  counts the surfaces still merged into (`upload merges`; a merge can add
+  an empty region); `DQ8_GFX_NO_WHOLE_UPLOAD_SKIP=1` merges into every
+  one, as before, while the walk stays over the shared pages (the same
+  regions).
 
 Native strips (Rogue Galaxy: added). `SdlGpuBackend::SubmitNativeMesh`
 takes a `GSNativeMesh` (a strip a VU1 program would have drawn, as its
