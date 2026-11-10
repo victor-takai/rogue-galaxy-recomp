@@ -512,11 +512,11 @@ uint64_t GsTextureCache::pcsx2TexelHash(const GsTextureKey &key) {
     for (uint32_t y = 0u; y < height; ++y) {
         uint8_t *row = m_wholeBlocks.data() + size_t(y) * width;
         if (psm == GS_PSM_T8) {
-            GSMem::ReadRowP8(m_vram.data(), key.tbp0, key.tbw, 0u, y, width, row);
+            m_vram.readRowT8(key.tbp0, key.tbw, 0u, y, width, row);
         } else if (four) {
             m_vram.readRowT4(key.tbp0, key.tbw, 0u, y, width, row);
         } else {
-            GSMem::ReadRowCT32(m_vram.data(), key.tbp0, key.tbw, 0u, y, width, m_rawRow.data());
+            m_vram.readRowCT32(key.tbp0, key.tbw, 0u, y, width, m_rawRow.data());
             for (uint32_t x = 0u; x < width; ++x) {
                 uint32_t word;
                 std::memcpy(&word, m_rawRow.data() + size_t(x) * 4u, sizeof(word));
@@ -758,15 +758,17 @@ uint64_t GsTextureCache::expand(const GsTextureKey &key, const GsRegion &region,
         case GS_PSM_CT32:
         case GS_PSM_Z32: {
             // The raw word is the RGBA byte sequence; TEXA does not apply.
-            const auto readRow = psm == GS_PSM_Z32 ? GSMem::ReadRowZ32 : GSMem::ReadRowCT32;
             uint8_t *out = hashOnly ? m_rawRow.data() : row;
-            readRow(m_vram.data(), key.tbp0, key.tbw, region.x0, y, regionWidth, out);
+            if (psm == GS_PSM_Z32)
+                m_vram.readRowZ32(key.tbp0, key.tbw, region.x0, y, regionWidth, out);
+            else
+                m_vram.readRowCT32(key.tbp0, key.tbw, region.x0, y, regionWidth, out);
             texelHash = hashBytes(texelHash, out, static_cast<size_t>(regionWidth) * 4u);
             continue;
         }
         case GS_PSM_T8: {
             uint8_t *raw = m_rawRow.data();
-            GSMem::ReadRowP8(m_vram.data(), key.tbp0, key.tbw, region.x0, y,
+            m_vram.readRowT8(key.tbp0, key.tbw, region.x0, y,
                              regionWidth, raw);
             texelHash = hashBytes(texelHash, raw, regionWidth);
             if (hashOnly)
@@ -801,7 +803,7 @@ uint64_t GsTextureCache::expand(const GsTextureKey &key, const GsRegion &region,
             // not needed here.
             uint32_t *words = reinterpret_cast<uint32_t *>(m_rawRow.data());
             uint8_t *raw = m_idxRow.data();
-            GSMem::ReadRowCT32(m_vram.data(), key.tbp0, key.tbw, region.x0, y,
+            m_vram.readRowCT32(key.tbp0, key.tbw, region.x0, y,
                                regionWidth, reinterpret_cast<uint8_t *>(words));
             const uint32_t shift = psm == GS_PSM_T4HH ? 28u : 24u;
             const uint32_t mask = psm == GS_PSM_T8H ? 0xffu : 0x0fu;

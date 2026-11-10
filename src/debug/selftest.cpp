@@ -130,6 +130,58 @@ bool vramRunWriters()
         }
     }
     std::printf("[selftest] GsVram T4 row reader matches GSMem over 2000 rows\n");
+
+    // The T8, CT32 and Z32 row readers against GSMem's per-pixel reads and
+    // its row readers, over the same memory: rows that start inside a block,
+    // cross pages and run past 4 MiB. With DQ8_GFX_NO_BLOCK_READS set they
+    // are GSMem's own, so nothing would be checked: refuse rather than pass.
+    if (std::getenv("DQ8_GFX_NO_BLOCK_READS"))
+    {
+        std::fprintf(stderr, "[selftest] DQ8_GFX_NO_BLOCK_READS is set, so the block row readers cannot be "
+                             "checked; run without it\n");
+        return false;
+    }
+    std::vector<uint8_t> ours(512u * 4u), theirs(512u * 4u);
+    for (int round = 0; round < 3000; ++round)
+    {
+        const int mode = round % 3; // T8, CT32, Z32
+        const uint32_t bw = 1u + rng() % 16u;
+        const uint32_t base = rng() % 0x3000u;
+        const uint32_t x = rng() % 600u, y = rng() % 600u, count = 1u + rng() % 512u;
+        const uint32_t bytes = mode == 0 ? 1u : 4u;
+        if (mode == 0)
+        {
+            vram.readRowT8(base, bw, x, y, count, ours.data());
+            GSMem::ReadRowP8(actual.data(), base, bw, x, y, count, theirs.data());
+        }
+        else if (mode == 1)
+        {
+            vram.readRowCT32(base, bw, x, y, count, ours.data());
+            GSMem::ReadRowCT32(actual.data(), base, bw, x, y, count, theirs.data());
+        }
+        else
+        {
+            vram.readRowZ32(base, bw, x, y, count, ours.data());
+            GSMem::ReadRowZ32(actual.data(), base, bw, x, y, count, theirs.data());
+        }
+        bool same = std::memcmp(ours.data(), theirs.data(), size_t(count) * bytes) == 0;
+        for (uint32_t i = 0; same && i < count; ++i)
+        {
+            uint32_t value = 0u;
+            std::memcpy(&value, ours.data() + size_t(i) * bytes, bytes);
+            const uint32_t expected = mode == 0   ? GSMem::ReadP8(actual.data(), base, bw, x + i, y)
+                                      : mode == 1 ? GSMem::ReadCT32(actual.data(), base, bw, x + i, y)
+                                                  : GSMem::ReadZ32(actual.data(), base, bw, x + i, y);
+            same = value == expected;
+        }
+        if (!same)
+        {
+            std::fprintf(stderr, "[selftest] %s row read differs: base=0x%x bw=%u (%u,%u) count %u\n",
+                         mode == 0 ? "T8" : mode == 1 ? "CT32" : "Z32", base, bw, x, y, count);
+            return false;
+        }
+    }
+    std::printf("[selftest] GsVram T8/CT32/Z32 row readers match GSMem over 3000 rows\n");
     return true;
 }
 #endif

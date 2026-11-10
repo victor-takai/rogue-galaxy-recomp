@@ -139,6 +139,14 @@ public:
     // `count` PSMT4 indices of one row from (x, y), one per byte, as read()
     // returns them (Rogue Galaxy: added, for texture expansion).
     void readRowT4(uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t count, uint8_t *out) const;
+    // `count` PSMT8 indices (a byte each), or PSMCT32 or PSMZ32 pixels (four
+    // bytes each), of one row from (x, y): the bytes GSMem's ReadRowP8,
+    // ReadRowCT32 and ReadRowZ32 give, read a block's row at a time (Rogue
+    // Galaxy: added; those look up a table and copy one pixel at a time).
+    // DQ8_GFX_NO_BLOCK_READS=1 hands them to GSMem's.
+    void readRowT8(uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t count, uint8_t *out) const;
+    void readRowCT32(uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t count, uint8_t *out) const;
+    void readRowZ32(uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t count, uint8_t *out) const;
     // PSMT8 or PSMT4 texture of width x height texels as the GS blocks that hold it (256 bytes each, rows of
     // blocks in order), appended to out: the bytes PCSX2 hashes to name a replacement.
     void appendBlocks(bool four, uint32_t base, uint32_t bw, uint32_t width, uint32_t height, std::vector<uint8_t> &out) const;

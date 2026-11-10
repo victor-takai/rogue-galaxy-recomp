@@ -71,6 +71,14 @@ commit of this folder is upstream as is, so `git log -p` on it shows them.
   PSMT4 and from 0.53 to 0.05 for PSMT8; CT32 and Z32 2.5x. Only rows
   narrower than one group fall back to texel-by-texel writes.
   `-DDQ8_GS_VRAM_SCALAR` builds the portable kernels, same bytes.
+  `readRowT8`, `readRowCT32` and `readRowZ32` read the same layout back a
+  block's row at a time (a PSMT8 group's 16 texels from four 8-byte
+  pieces, a 32-bit group's 8 pixels as four 8-byte copies), where GSMem's
+  row readers look up and copy each pixel; texture expansion and the
+  target patches use them. In Rogue Galaxy's plaza after the Juraika boss
+  the worker's share of wall went from 82% to 78% at 4x with the native
+  renderer on and from 79% to 74% with it off, byte-identical frames.
+  `DQ8_GFX_NO_BLOCK_READS=1` reads through GSMem's, as before.
 - `gs/gs_transfer.cpp`: host-to-local PSMT8, PSMT4, PSMCT32 and PSMZ32
   transfers write runs instead of one dispatched `write()` per pixel.
 - `sdlgpu_textures.cpp`: PSMT4 textures expand through the palette

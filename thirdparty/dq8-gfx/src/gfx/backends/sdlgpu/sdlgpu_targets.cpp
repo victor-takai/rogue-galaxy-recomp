@@ -1287,7 +1287,7 @@ bool GsTargetCache::refresh(GsSurface &surface, std::string &error) {
         uint8_t *row =
             m_staging.data() + static_cast<size_t>(y - region.y0) * regionWidth * 4u;
         if (surface.psm == GS_PSM_CT32 || surface.psm == GS_PSM_CT24) {
-            GSMem::ReadRowCT32(m_vram.data(), surface.base, surface.bufferWidth,
+            m_vram.readRowCT32(surface.base, surface.bufferWidth,
                                region.x0, y, regionWidth, row);
             if (surface.psm == GS_PSM_CT24) {
                 for (uint32_t x = 0; x < regionWidth; ++x)
@@ -1676,7 +1676,7 @@ bool GsTargetCache::patchNative(GsSurface &surface, const GsRegion &region, std:
     auto *mapped = static_cast<uint8_t *>(SDL_MapGPUTransferBuffer(device, upload, false));
     if (!mapped) return fail("SDL_MapGPUTransferBuffer");
     for (uint32_t y = region.y0; y < region.y1; ++y)
-        GSMem::ReadRowCT32(m_vram.data(), surface.base, surface.bufferWidth, region.x0, y, width,
+        m_vram.readRowCT32(surface.base, surface.bufferWidth, region.x0, y, width,
                            mapped + size_t(y - region.y0) * width * 4u);
     SDL_UnmapGPUTransferBuffer(device, upload);
     SDL_GPUCommandBuffer *commands = m_device.pendingCommands(error, "patch target (native)");
@@ -1766,12 +1766,12 @@ bool GsTargetCache::applyCpuPatches(GsSurface &surface, std::string &error) {
         for (uint32_t y = region.y0; y < region.y1; ++y) {
             uint8_t *out = mapped + offset + size_t(y - region.y0) * scale * width * scale * 4u;
             if (scale == 1u) {
-                GSMem::ReadRowCT32(m_vram.data(), surface.base, surface.bufferWidth,
+                m_vram.readRowCT32(surface.base, surface.bufferWidth,
                                    region.x0, y, width, out);
                 continue;
             }
             row.resize(width);
-            GSMem::ReadRowCT32(m_vram.data(), surface.base, surface.bufferWidth,
+            m_vram.readRowCT32(surface.base, surface.bufferWidth,
                                region.x0, y, width, reinterpret_cast<uint8_t *>(row.data()));
             // Expanded aside and only written out: upload buffers are
             // write-combined, so copying a row back out of one is very slow.
