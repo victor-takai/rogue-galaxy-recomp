@@ -400,8 +400,10 @@ Five more fix results:
   shared pages with were due whole: at 4x the worker's share of wall went
   from 91-92% to 83-87% with the native renderer on and from 84% to 80%
   with it off, byte-identical frames at 1x, 3x and 4x. The stats line
-  counts the `upload merges` left; `DQ8_GFX_NO_WHOLE_UPLOAD_SKIP=1` merges
-  into every one, as before.
+  counts the surfaces still merged into (`upload merges`; a merge can add
+  an empty region); `DQ8_GFX_NO_WHOLE_UPLOAD_SKIP=1` merges into every
+  one, as before, while the walk stays over the shared pages (the same
+  regions).
 
 Native strips (Rogue Galaxy: added). `SdlGpuBackend::SubmitNativeMesh`
 takes a `GSNativeMesh` (a strip a VU1 program would have drawn, as its

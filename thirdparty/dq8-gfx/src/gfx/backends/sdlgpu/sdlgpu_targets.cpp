@@ -530,7 +530,8 @@ GsSurface *GsTargetCache::findSampleSource(uint32_t base, uint32_t psm,
 namespace {
 // A surface already due for a whole upload gains nothing from merging more
 // into it: regionForPages never leaves the surface (Rogue Galaxy: added).
-// DQ8_GFX_NO_WHOLE_UPLOAD_SKIP=1 merges anyway, as before.
+// DQ8_GFX_NO_WHOLE_UPLOAD_SKIP=1 merges anyway, as before (markDrawn still
+// walks only the pages both surfaces share, which gives the same regions).
 bool dueWhole(const GsSurface &surface) {
     static const bool skip = std::getenv("DQ8_GFX_NO_WHOLE_UPLOAD_SKIP") == nullptr;
     return skip && surface.needsUpload.contains(surface.wholeRegion());

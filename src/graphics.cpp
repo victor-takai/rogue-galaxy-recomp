@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -933,7 +934,10 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
             {
                 const char *digits = end + 1;
                 ok = *digits >= '0' && *digits <= '9';
+                errno = 0;
                 from = std::strtoull(digits, &end, 10);
+                // A read past 2^64 would come back as the largest one.
+                ok = ok && errno != ERANGE;
             }
             ok = ok && (*end == '\0' || *end == ',') && (steps.empty() || from > steps.back().from);
             if (!ok)
