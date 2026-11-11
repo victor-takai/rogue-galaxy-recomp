@@ -117,7 +117,7 @@ The numbers are against the game's own, 1.0x.
 
 | Option | |
 |---|---|
-| Native renderer | Off by default. For development: the work on drawing the game with the PC's renderer, instead of through the emulation of the PS2's graphics chip, goes behind it. It changes nothing yet. Takes effect at the next start. |
+| Native renderer | Off by default. For development: the work on drawing the game with the PC's renderer, instead of through the emulation of the PS2's graphics chip, goes behind it. For now it draws the models that way (the game's VU1 programs computed natively and drawn as meshes on the graphics card); the rest still goes through the emulation. Takes effect at the next start. |
 
 **Developers**
 

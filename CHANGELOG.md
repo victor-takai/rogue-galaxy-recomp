@@ -77,6 +77,16 @@
   Juraika, runs faster at high internal resolutions: from about 40 to
   about 51 fps at 4x on the PC it was measured on, with the same picture
   ([#17](https://github.com/victor-takai/rogue-galaxy-recomp/issues/17)).
+- The game no longer hangs on entering the Insectron or the Factory: it
+  could not open the parts of its code it reads from the disc's second
+  layer.
+- The game's code takes a little less of the processor: a call from one
+  of its functions to another goes straight there, without a lookup, and
+  its plain arithmetic no longer notes where in the code it is.
+- Native renderer (Game > Native renderer, off by default, for
+  development) is no longer empty: with it on, the models are drawn by the
+  PC's renderer instead of through the emulation of the PS2's graphics
+  chip. The rest still goes through the emulation.
 
 ## 0.2.0 (pre-release)
 
