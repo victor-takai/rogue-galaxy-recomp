@@ -64,6 +64,8 @@
 - The frame-rate counter (F3) and the fast-forward badge stay in the
   window's corners with the picture at 4:3 too, as the notifications do;
   they sat in the picture's corners, inside the bars.
+- Much of the menu text that came out dull grey (the load screen, the
+  Settings rows, the item descriptions) is bright, as on the PS2.
 - Water, a sword on a character's back and other things no longer show
   through the ground and through bodies after a visit to the Revelation
   screens

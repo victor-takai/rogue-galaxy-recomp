@@ -204,6 +204,7 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `DQ8_GFX_GPU_TIMES=1` | Label the backend's GPU work and print `[gputime]` lines every two seconds (GPU ms and count a second per label, heaviest first); Vulkan only, about a tenth of the frame at 8x |
 | `DQ8_GFX_NO_DUAL_SOURCE=1` | No dual-source blending: the source-alpha blends go back to the alpha replay (two passes), for comparing frames or a driver without `dualSrcBlend` |
 | `DQ8_GFX_NO_DESTINATION_COPY=1` | No shader that reads the destination from a snapshot: the draws that need it keep their approximation |
+| `DQ8_GFX_NO_TEXTURED_OVERONE=1` | A modulated, textured source-alpha blend whose vertex alpha passes 0x80 keeps the attachment's clamped blend instead of the destination copy (the menus' text reads grey again); `0` or empty leaves it on |
 | `DQ8_GFX_SUBMIT_DRAWS=N` | A flush of the queued draws submits them once this many are recorded (96 unless set; 0 submits at every flush) |
 | `DQ8_GFX_PRESENT_FROM_MEMORY=1`, `DQ8_GFX_DISABLE_GPU_COMPOSE=1` | Present from GS local memory, as the software backend reads it; compose the display on the CPU. Both tell a wrong picture from a wrong readback |
 | `DQ8_GFX_TRACE_BATCHES=1` | A line per draw call: its target, pipeline state and geometry |
