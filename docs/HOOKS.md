@@ -82,8 +82,14 @@ void install(PS2Runtime &runtime)
   `config/SCUS_974.90/functions_main.csv`. RGDecomp's C source tells what a
   function does ([MAPS.md](MAPS.md)).
 - The overlay arena (0x004E9E80 to 0x00528200) holds whichever `BIN/*.BIN`
-  overlay is resident, and its table entries are that overlay's. This page is
-  about the main executable's functions.
+  overlay is resident, and its table entries are that overlay's. To hook one
+  of an overlay's functions, `rg::overlay::hookFunction`
+  (`src/overlay/overlay_manager.h`) takes the overlay's name ("insmenu",
+  "insect"... as in `config/SCUS_974.90/overlays.toml`) and works as the one
+  above; the hook runs only while that overlay is resident. A main-executable
+  function called from an overlay is told apart by the return address and
+  `rg::overlay::residentName()` (`src/insectron_layouts.cpp`). Names and
+  addresses are in `functions_<overlay>.csv`.
 
 ## The three shapes of a hook
 
