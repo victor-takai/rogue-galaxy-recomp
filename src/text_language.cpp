@@ -765,8 +765,6 @@ uint32_t findWidget(const uint8_t *rdram, uint32_t ui, uint16_t id)
     return 0u;
 }
 
-int europeanColumn();
-
 void afterSubLayout(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t list)
 {
     if (europeanColumn() < 0)
@@ -829,14 +827,6 @@ int16_t readHalf(const uint8_t *rdram, uint32_t address)
 void writeHalf(uint8_t *rdram, uint32_t address, int16_t value)
 {
     std::memcpy(rdram + (address & 0x1FFFFFFFu), &value, sizeof(value));
-}
-
-// French 0 to Italian 3, or -1 in English (and while the language's files
-// are not known usable, when the game reads the English ones).
-int europeanColumn()
-{
-    const int language = g_language.load(std::memory_order_relaxed);
-    return g_active && g_text.loaded && g_text.ok && language >= 1 && language <= 4 ? language - 1 : -1;
 }
 
 // The item commands' lists (Use, Equip, Discard...), six of them: their
@@ -2031,6 +2021,12 @@ void resGroupStackInit(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 
 } // namespace
 
+int europeanColumn()
+{
+    const int language = g_language.load(std::memory_order_relaxed);
+    return g_active && g_text.loaded && g_text.ok && language >= 1 && language <= 4 ? language - 1 : -1;
+}
+
 void setPreferred(int choice)
 {
     g_preferred.store(choice, std::memory_order_relaxed);
@@ -2257,6 +2253,10 @@ void install(PS2Runtime &runtime)
     {
         std::fprintf(stderr, "[rg] the name entry keeps the US command column\n");
     }
+    // Last: three of its hooks wrap ones above (UiLayoutWindowFrame and
+    // UiSetSpriteW, the cage's; UiMoveWidgetUniform, the name entry's), as the
+    // original they call.
+    installInsectronLayouts(runtime);
 }
 
 } // namespace rg::textlanguage
