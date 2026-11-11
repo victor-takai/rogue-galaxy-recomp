@@ -636,6 +636,12 @@ native::Id declare(State &s, uint32_t base, uint32_t width, uint32_t height, uin
         else if (base != s.sceneBase)
             record.role = native::TargetRole::Offscreen;
     }
+    // The scene's own buffer, named some other way (a full-screen effect takes
+    // the frame it draws into from a descriptor), is still the scene. It got a
+    // new id at each such name and the next frame named it back: a new GPU
+    // target every frame, never released, and the effect's draws in it lost.
+    if (record.role != native::TargetRole::SceneColor && s.sceneBaseKnown && base == s.sceneBase)
+        return kSceneTarget;
     record.width = static_cast<uint16_t>(std::min<uint32_t>(width, 4096u));
     record.height = static_cast<uint16_t>(std::min<uint32_t>(height, 4096u));
     record.format = (psm & 0x30u) == 0x30u ? native::PixelFormat::Depth32 : native::PixelFormat::Rgba8;
