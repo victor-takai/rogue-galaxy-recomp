@@ -55,6 +55,8 @@ Start with [NATIVE-RENDERER.md](NATIVE-RENDERER.md): it says where things
 stand and what each of the others is for.
 
 - [VU1-NATIVE.md](VU1-NATIVE.md): the VU1's 3D programs run as native code.
+- [NATIVE-PIPELINE.md](NATIVE-PIPELINE.md): the whole frame drawn with no
+  GS (`RG_NATIVE_PIPELINE=1`).
 - [VU1-RECON.md](VU1-RECON.md): groundwork for temporal upscaling (object
   identity, jitter, cameras).
 - [GS-AUDIT.md](GS-AUDIT.md): where a frame's GPU time goes, and what was
