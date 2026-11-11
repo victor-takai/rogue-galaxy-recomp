@@ -41,7 +41,18 @@ bool installed(int language);
 // menu) when its files exist in disc/EU.
 void chooseAtBoot(uint8_t *rdram, PS2Runtime &runtime);
 
+// The European language the text is in, as a column of the tables of European
+// sizes: 0 French, 1 German, 2 Spanish, 3 Italian; -1 in English (and while
+// the language's files are not known usable, when the game reads the English
+// ones).
+int europeanColumn();
+
 // After loadELF(): the hooks.
 void install(PS2Runtime &runtime);
+
+// The European sizes of the Insectron screens (insectron_layouts.cpp): the
+// capture notices and the overlays' menus. install() calls it, last; a second
+// call would hook its own hooks.
+void installInsectronLayouts(PS2Runtime &runtime);
 
 } // namespace rg::textlanguage

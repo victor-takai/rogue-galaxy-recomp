@@ -91,6 +91,7 @@ add_executable(roguegalaxy
     native_renderer.cpp
     opening.cpp
     text_language.cpp
+    insectron_layouts.cpp
     voice_language.cpp
     widescreen.cpp
     hud_size.cpp
