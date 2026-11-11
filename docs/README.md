@@ -55,6 +55,9 @@ Start with [NATIVE-RENDERER.md](NATIVE-RENDERER.md): it says where things
 stand and what each of the others is for.
 
 - [VU1-NATIVE.md](VU1-NATIVE.md): the VU1's 3D programs run as native code.
+- [NATIVE-CPU.md](NATIVE-CPU.md): the game's code translated by our own
+  translator, without CPU emulation (`RG_NATIVE_CPU=1`); its goal in
+  [NATIVE-CPU-GOAL.md](NATIVE-CPU-GOAL.md).
 - [VU1-RECON.md](VU1-RECON.md): groundwork for temporal upscaling (object
   identity, jitter, cameras).
 - [GS-AUDIT.md](GS-AUDIT.md): where a frame's GPU time goes, and what was

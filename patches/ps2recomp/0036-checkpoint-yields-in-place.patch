@@ -1,0 +1,246 @@
+--- a/ps2xRuntime/include/runtime/ee_scheduler.h
++++ b/ps2xRuntime/include/runtime/ee_scheduler.h
+@@ -127,11 +127,20 @@
+     EeWaitState wait{};
+     std::function<void(R5900Context &)> resumeCompletion;
+     std::vector<GuestInvocation> invocations;
+-    // Host stack this thread's guest code runs on, created on first dispatch.
+-    // While inGuestCall is set the stack is suspended part way through a guest
++    // Host stacks this thread's guest code runs on, created on first use:
++    // [0] the thread's own, [n] its n-th nested invocation (an interrupt
++    // handler or callback runs on a stack of its own, so it can start while
++    // the code it interrupted is suspended part way through a call). Bit n
++    // of inGuestCallMask: fibers[n] is suspended part way through a guest
+     // call and must be resumed, not re-entered from the saved pc.
+-    std::unique_ptr<EeFiber> fiber;
+-    bool inGuestCall = false;
++    std::vector<std::unique_ptr<EeFiber>> fibers;
++    uint64_t inGuestCallMask = 0;
++
++    [[nodiscard]] size_t level() const noexcept { return invocations.size(); }
++    [[nodiscard]] bool inGuestCallAt(size_t n) const noexcept
++    {
++        return n < 64u && ((inGuestCallMask >> n) & 1u) != 0u;
++    }
+     // EeScheduler::guestUnwindSerial() when this thread last started a guest
+     // unwind (Rogue Galaxy: added; see noteGuestUnwind).
+     uint64_t lastUnwindSerial = 0;
+@@ -369,6 +378,14 @@
+     int rotateReadyQueue(int priority, bool interruptSafe);
+     int releaseWait(int id, bool interruptSafe);
+     void transferIfRequested(bool interruptSafe);
++    // A checkpoint that came due in guest code: with RG_NATIVE_CPU=1, suspend
++    // the running fiber here and return true once the scheduler resumes it,
++    // so the caller carries on instead of unwinding. False (unwind as before)
++    // off a fiber, inside an interrupt handler, on a stop, or with the flag
++    // off.
++    bool yieldInPlace() noexcept;
++    // RG_NATIVE_CPU=1: the native CPU contract's runtime half (docs/NATIVE-CPU.md).
++    static const bool s_nativeCpu;
+ 
+     int createSemaphore(int initCount, int maxCount, uint32_t attr, uint32_t option);
+     int deleteSemaphore(int id, bool interruptSafe);
+--- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
++++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+@@ -378,10 +378,32 @@
+         GuestThread *running = currentThread();
+         assert(running != nullptr);
+ 
++        // Invocations nest onto the running thread, so a callback storm stacks
++        // them faster than they retire -- DQ8's movie streaming reached depth 13
++        // and exhausted the stack pool. Past this the rest simply stay queued.
++        constexpr size_t kMaxInvocationDepth = 4u;
++
++        // A thread suspended part way through a call at a checkpoint
++        // (RG_NATIVE_CPU) still takes its interrupts there: the invocation
++        // runs on the next level's own fiber, and the suspended call resumes
++        // once it returns, as unwinding at the checkpoint used to allow.
++        if (running->inGuestCallAt(running->level()) && !m_pendingInvocations.empty() &&
++            running->invocations.size() < kMaxInvocationDepth)
++        {
++            GuestInvocation invocation = std::move(m_pendingInvocations.front());
++            m_pendingInvocations.pop_front();
++            if (getRegU32(&invocation.context, 29) == 0u)
++            {
++                SET_GPR_U32(&invocation.context, 29, invocationStackTop());
++            }
++            running->invocations.push_back(std::move(invocation));
++            continue;
++        }
++
+         // Suspended part way through a guest call: its stack is still live, so
+         // resume it rather than dispatching the saved pc, which points into the
+         // middle of a function the fiber is already executing.
+-        if (running->inGuestCall)
++        if (running->inGuestCallAt(running->level()))
+         {
+             g_eeRunLoopResumeCount.fetch_add(1u, std::memory_order_relaxed);
+             {
+@@ -483,10 +505,6 @@
+             continue;
+         }
+ 
+-        // Invocations nest onto the running thread, so a callback storm stacks
+-        // them faster than they retire -- DQ8's movie streaming reached depth 13
+-        // and exhausted the stack pool. Past this the rest simply stay queued.
+-        constexpr size_t kMaxInvocationDepth = 4u;
+         if (!m_pendingInvocations.empty() &&
+             running->invocations.size() < kMaxInvocationDepth)
+         {
+@@ -836,6 +854,31 @@
+     return false;
+ }
+ 
++const bool EeScheduler::s_nativeCpu = [] {
++    const char *value = std::getenv("RG_NATIVE_CPU");
++    const bool on = value && std::strcmp(value, "0") != 0;
++    if (on)
++        std::fprintf(stderr, "[ee] RG_NATIVE_CPU: checkpoints yield in place\n");
++    return on;
++}();
++
++std::atomic<uint64_t> g_eeYieldInPlaceCount{0};
++
++bool EeScheduler::yieldInPlace() noexcept
++{
++    // Inside an interrupt handler the EE does not switch threads, and
++    // transferIfRequested keeps it from suspending there too: unwind, as
++    // before. On a stop the run loop is leaving; unwinding lets the stacks end.
++    if (!s_nativeCpu || m_activeFiber == nullptr || m_insideInterrupt ||
++        m_stopRequested.load(std::memory_order_acquire))
++    {
++        return false;
++    }
++    g_eeYieldInPlaceCount.fetch_add(1u, std::memory_order_relaxed);
++    m_activeFiber->suspend();
++    return true;
++}
++
+ void EeScheduler::noteGuestUnwind() noexcept
+ {
+     ++m_unwindSerial;
+@@ -2307,7 +2350,14 @@
+ 
+ void EeScheduler::enterGuest(GuestThread &thread)
+ {
+-    if (!thread.fiber)
++    const size_t level = thread.level();
++    assert(level < 64u && "invocations nest past the call mask");
++    if (thread.fibers.size() <= level)
++    {
++        thread.fibers.resize(level + 1u);
++    }
++    std::unique_ptr<EeFiber> &fiber = thread.fibers[level];
++    if (!fiber)
+     {
+         // Sized for deeply nested guest call chains; mapped lazily, so the
+         // resident cost is only the pages a thread actually touches.
+@@ -2317,10 +2367,10 @@
+             const size_t kb = parsed > 0 ? static_cast<size_t>(parsed) : 8192u;
+             return kb * 1024u;
+         }();
+-        thread.fiber = std::make_unique<EeFiber>();
+-        if (!thread.fiber->create(&EeScheduler::fiberEntry, this, stackBytes))
++        fiber = std::make_unique<EeFiber>();
++        if (!fiber->create(&EeScheduler::fiberEntry, this, stackBytes))
+         {
+-            thread.fiber.reset();
++            fiber.reset();
+             throw std::runtime_error("EE scheduler could not allocate a guest fiber stack");
+         }
+     }
+@@ -2328,16 +2378,27 @@
+     assert(m_activeFiber == nullptr && "guest fibers must not nest");
+     g_eeEnterGuestCount.fetch_add(1u, std::memory_order_relaxed);
+     EeFiber *previous = m_activeFiber;
+-    m_activeFiber = thread.fiber.get();
++    m_activeFiber = fiber.get();
+     m_dispatchedThreadId = thread.id;
+-    thread.inGuestCall = true;
++    const uint64_t bit = uint64_t{1} << level;
++    if ((thread.inGuestCallMask & bit) != 0u)
++    {
++        // Resuming a suspended call: runPendingGuestCall set this when the
++        // call began, and other dispatches have changed it since.
++        m_insideInterrupt = level > 0u && thread.invocations[level - 1u].kind == GuestInvocationKind::Interrupt;
++    }
++    thread.inGuestCallMask |= bit;
+     m_activeFiber->resume();
+     m_activeFiber = previous;
+     // Cleared by the fiber when a dispatch finishes; still set means it
+     // suspended part way through and its stack is waiting to be resumed.
+     if (m_dispatchedThreadId == 0)
+     {
+-        thread.inGuestCall = false;
++        thread.inGuestCallMask &= ~bit;
++    }
++    else
++    {
++        m_insideInterrupt = false;
+     }
+     // `thread` may have deleted itself; now that its fiber is suspended, the
+     // record can go.
+@@ -2358,6 +2419,17 @@
+ 
+ void EeScheduler::makeDormant(GuestThread &item)
+ {
++    // Its suspended calls are over: a later StartThread must begin on a fresh
++    // stack, not resume one of them. The fiber this runs on (a thread ending
++    // itself) unwinds normally and is reused.
++    for (size_t n = 0; n < item.fibers.size(); ++n)
++    {
++        if (item.inGuestCallAt(n) && item.fibers[n].get() != m_activeFiber)
++        {
++            item.fibers[n].reset();
++            item.inGuestCallMask &= ~(uint64_t{1} << n);
++        }
++    }
+     removeReady(item);
+     removeFromWaitObject(item);
+     item.status = EeThreadStatus::Dormant;
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -1522,7 +1522,8 @@
+     // Every inter-function transfer is also a deterministic EE safe point.
+     // Backward edges inside generated functions use eeCheckpointDue(), while
+     // this charge bounds straight-line call chains that have no local loop.
+-    if (m_eeScheduler && m_eeScheduler->checkpointDue(EeScheduler::kGuestDispatchCycles))
++    if (m_eeScheduler && m_eeScheduler->checkpointDue(EeScheduler::kGuestDispatchCycles) &&
++        !m_eeScheduler->yieldInPlace())
+     {
+         m_eeScheduler->noteGuestUnwind();
+         return false;
+@@ -1595,7 +1596,8 @@
+ 
+     // dispatchGuestBranch's call path, without the table lookup.
+     ctx->pc = targetPc;
+-    if (m_eeScheduler && m_eeScheduler->checkpointDue(EeScheduler::kGuestDispatchCycles))
++    if (m_eeScheduler && m_eeScheduler->checkpointDue(EeScheduler::kGuestDispatchCycles) &&
++        !m_eeScheduler->yieldInPlace())
+     {
+         m_eeScheduler->noteGuestUnwind();
+         return false;
+@@ -2444,8 +2446,10 @@
+ 
+ bool PS2Runtime::eeCheckpointDue(uint32_t cycles) noexcept
+ {
+-    // The generated code returns to the scheduler on true.
+-    if (m_eeScheduler->checkpointDue(cycles))
++    // The generated code returns to the scheduler on true. With
++    // RG_NATIVE_CPU the thread is suspended here instead, and goes on from
++    // the back edge when the scheduler resumes it.
++    if (m_eeScheduler->checkpointDue(cycles) && !m_eeScheduler->yieldInPlace())
+     {
+         m_eeScheduler->noteGuestUnwind();
+         return true;
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -1839,7 +1839,7 @@
+             // guest code (a test) gets them queued instead.
+             EeScheduler &scheduler = runtime->eeScheduler();
+             const GuestThread *thread = scheduler.currentThread();
+-            const bool inGuest = thread && thread->inGuestCall;
++            const bool inGuest = thread && thread->inGuestCallAt(thread->level());
+             const uint32_t stackTop = inGuest ? scheduler.invocationStackTop() : 0u;
+             std::vector<GuestInvocation> invocations;
+             for (const MpegStreamCallbackEvent &event : events)
