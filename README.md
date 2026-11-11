@@ -59,6 +59,25 @@ To update later, double-click `Update.bat`.
 The full guide, with the undub, the European texts, updating, saves from
 PCSX2 and uninstalling, is in [docs/INSTALL.md](docs/INSTALL.md).
 
+## Install (Linux and Steam Deck)
+
+Experimental. You need about 20 GB free, an internet connection, your own
+disc image (as above) and, for a plain Linux PC, a GPU with Vulkan. The
+Steam Deck needs nothing else: SteamOS has no compiler, so the installer
+builds in a container (distrobox) it sets up itself.
+
+1. Get the source (`git clone --recurse-submodules <this repo>`, or the
+   source archive of a release) into a folder of your home.
+2. Run `./install.sh` and give it your disc image (`--iso FILE`). It takes
+   10 to 30 minutes.
+3. Play with `./rogue-galaxy.sh`, or from the application menu.
+
+On a Steam Deck, play in game mode: in desktop mode add
+`rogue-galaxy.sh` to Steam as a non-Steam game (Games > Add a Non-Steam
+Game), then switch to game mode. Back + Start opens the game's menu (F1).
+The log is `build/last-run.log`. More in
+[`docs/BUILDING.md`](docs/BUILDING.md#linux-and-steam-deck).
+
 ## Controls
 
 A gamepad, or the keyboard and mouse: the sword on the left click, the

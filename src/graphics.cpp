@@ -82,6 +82,27 @@ std::string env(const char *name, const char *fallback)
     return (value && *value) ? value : fallback;
 }
 
+// A Steam Deck: Steam sets SteamDeck=1 in Game Mode (natively and under
+// Proton); desktop mode does not, but the machine says what it is.
+bool onSteamDeck()
+{
+    if (env("SteamDeck", "0") == "1")
+    {
+        return true;
+    }
+#if defined(__linux__)
+    std::FILE *file = std::fopen("/sys/class/dmi/id/product_name", "r");
+    if (file)
+    {
+        char name[64] = {};
+        std::fgets(name, sizeof name, file);
+        std::fclose(file);
+        return std::strncmp(name, "Jupiter", 7) == 0 || std::strncmp(name, "Galileo", 7) == 0;
+    }
+#endif
+    return false;
+}
+
 #if defined(RG_HAS_SDLGPU)
 bool g_hasMenu = false;
 dq8::ui::Overlay *g_menu = nullptr;
@@ -893,8 +914,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     dq8::ui::HostServices host;
     host.version = RG_APP_VERSION;
     host.revision = RG_REVISION;
-    // Steam sets SteamDeck=1 on the Deck, natively and under Proton.
-    host.steamDeck = env("SteamDeck", "0") == "1";
+    host.steamDeck = onSteamDeck();
     // RG_MUTE=1 keeps the game silent whatever the menu's volume says.
     const bool mute = env("RG_MUTE", "0") != "0";
     host.setVolume = [mute](float volume) { ps2_native_iop::setVolume(mute ? 0.0f : volume); };
@@ -1221,15 +1241,27 @@ Setup::Setup(PS2Runtime &runtime)
         {
             std::fprintf(stderr, "[rg] could not read %s; using default settings\n", settingsPath.c_str());
         }
-        // A Steam Deck (Steam sets SteamDeck=1, natively and under Proton)
-        // starts in fullscreen: its Game Mode shows a window letterboxed.
-        if (settings.windowWidth < 320 && env("SteamDeck", "0") == "1")
+        // A Steam Deck starts in fullscreen (its Game Mode shows a window
+        // letterboxed, and a window of another shape turns the widescreen
+        // off), whatever an earlier run saved; RG_WINDOWED=1 keeps the
+        // saved window. Its first run also starts at the native scale: the
+        // 1280x800 screen shows nothing of a 2x one, and the APU is the
+        // limit in battle.
+        if (onSteamDeck())
         {
-            settings.fullscreen = true;
+            std::error_code none;
+            if (!std::filesystem::exists(settingsPath, none))
+            {
+                settings.resolutionScale = 1u;
+            }
+            if (env("RG_WINDOWED", "0") != "1")
+            {
+                settings.fullscreen = true;
+            }
         }
         // Steam keeps the Deck's Steam button: View + Menu is the only way to
         // the game's menu there, so it cannot be left off.
-        if (env("SteamDeck", "0") == "1")
+        if (onSteamDeck())
         {
             settings.backStartOpensMenu = true;
         }
