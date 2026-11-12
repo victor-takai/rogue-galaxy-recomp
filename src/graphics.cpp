@@ -648,7 +648,17 @@ bool presentNative(void *userData, bool newTick)
         return false;
     auto *backend = static_cast<dq8::gfx::SdlGpuBackend *>(userData);
     backend->serveNativeReads();
-    if (!newTick)
+    // A flip returns from its vsync wait at the same tick this thread sees,
+    // so looking only at the tick loses the race about one frame in nine on
+    // the Steam Deck: the flip lands a moment later, waits for the next tick
+    // and is replaced there, unseen. A flip is shown as soon as it lands, on
+    // any pass of the presenter loop. RG_NATIVE_PRESENT_TICK=1 goes back to
+    // the tick.
+    static const bool onlyAtTick = [] {
+        const char *value = std::getenv("RG_NATIVE_PRESENT_TICK");
+        return value && *value && *value != '0';
+    }();
+    if (onlyAtTick && !newTick)
         return true;
     using Clock = std::chrono::steady_clock;
     static uint64_t shownFlip = 0u;
@@ -660,7 +670,9 @@ bool presentNative(void *userData, bool newTick)
         shownFlip = flips;
         flipAt = now;
     }
-    else if (now - flipAt < std::chrono::milliseconds(200))
+    // Between ticks only a new flip is shown; at a tick, a paused game's
+    // last frame is shown again after 200 ms, as before.
+    else if (!newTick || now - flipAt < std::chrono::milliseconds(200))
         return true;
     const PresentationFrame frame = backend->presentNativeFrame();
     if (frame.mode == GSPresentationMode::HostPixels)

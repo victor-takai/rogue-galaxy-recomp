@@ -76,6 +76,8 @@
   which now names the keys kept for shortcuts, the empty Textures page and
   the free camera, which Start also turns off. F7, F9 and F10, which write
   diagnostics to the log, can no longer be bound in Controls.
+- Much of the menu text that came out dull grey (the load screen, the
+  Settings rows, the item descriptions) is bright, as on the PS2.
 - Water, a sword on a character's back and other things no longer show
   through the ground and through bodies after a visit to the Revelation
   screens
