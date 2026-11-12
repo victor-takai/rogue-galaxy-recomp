@@ -66,8 +66,8 @@
   they sat in the picture's corners, inside the bars.
 - The F1 menu's icons sit level with their text: in the notifications,
   the windows' titles and the pause banner they sat a few pixels high. The
-  controller, the gear, the undo arrow and the check are drawn anew, the
-  controller and the gear as they look.
+  controller, the gear, the keyboard, the undo arrow and the check are
+  drawn anew, the controller and the gear as they look.
 - Some of the F1 menu's names say better what they are: Controller's
   buttons is now Buttons in the game's text, under Convenience; Show the
   loading recap at once is Quick loading recap, as on the game's Settings

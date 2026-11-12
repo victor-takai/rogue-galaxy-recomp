@@ -1,7 +1,8 @@
-The menu's controller, undo and check icons (src/ui/ui_glyphs.cpp, Icon::Controls,
-Icon::Reset, Icon::Check) follow the shapes of Lucide's gamepad-2, rotate-ccw and
-check icons (https://lucide.dev). Lucide's license follows; its check icon is
-derived from the Feather project, under the MIT license after it.
+The menu's controller, keyboard, undo and check icons (src/ui/ui_glyphs.cpp,
+Icon::Controls, Icon::Keyboard, Icon::Reset, Icon::Check) follow the shapes of
+Lucide's gamepad-2, keyboard, rotate-ccw and check icons (https://lucide.dev).
+Lucide's license follows; its check icon is derived from the Feather project,
+under the MIT license after it.
 
 ISC License
 

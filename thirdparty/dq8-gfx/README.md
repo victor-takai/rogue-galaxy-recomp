@@ -45,7 +45,8 @@ be bound to a pad input, as the menu's own keys cannot, the binding prompt
 names them all, and `Overlay::capturingBinding` tells the host when the
 menu is waiting for a key to bind. An icon beside text is centred on that
 text (`iconRoom`, `drawIconBeside`) and on a pixel's centre; the
-controller, undo and check icons follow Lucide's (`LICENSE-lucide.txt`),
+controller, keyboard, undo and check icons follow Lucide's
+(`LICENSE-lucide.txt`),
 and `RG_UI_SCRIPT`'s `icons` shows every icon for a screenshot. The window opens with its last size, place
 and maximized state (`[window]` `x`, `y`, `maximized`;
 `SdlGpuWindowPlacement`). Display > Borders fills the window beside a

@@ -122,8 +122,8 @@ committed.
 - [Dear ImGui](https://github.com/ocornut/imgui) by Omar Cornut (MIT), which
   the menu is drawn with, and its Roboto Medium font (Apache 2.0).
 - [Lucide](https://lucide.dev) (ISC; its check from Feather, MIT), whose
-  gamepad-2, rotate-ccw and check icons the menu's controller, undo and
-  check follow (`thirdparty/dq8-gfx/LICENSE-lucide.txt`).
+  gamepad-2, keyboard, rotate-ccw and check icons the menu's controller,
+  keyboard, undo and check follow (`thirdparty/dq8-gfx/LICENSE-lucide.txt`).
 - [RGDecomp](https://github.com/Dorgengoa/RGDecomp) (CC0), the function maps
   and names for this build (`config/SCUS_974.90/functions_*.csv` derive from
   it).

@@ -459,9 +459,9 @@ float chipFont(float height) { return std::max(10.0f, height * 0.52f); }
 
 // An icon's stroke built from lines, arcs and curves on the 24-unit grid the
 // common outline icon sets draw on, centred on 12 and 22 units to the icon's
-// size. The controller, undo and check follow Lucide's gamepad-2, rotate-ccw
-// and check (https://lucide.dev; ISC and, for check, Feather's MIT license:
-// LICENSE-lucide.txt at this library's root).
+// size. The controller, keyboard, undo and check follow Lucide's gamepad-2,
+// keyboard, rotate-ccw and check (https://lucide.dev; ISC and, for check,
+// Feather's MIT license: LICENSE-lucide.txt at this library's root).
 // No point is added twice: a repeated point is a zero-length segment, which
 // bulges a thick polyline's join.
 struct Outline {
@@ -510,9 +510,9 @@ struct Outline {
 const char *iconName(Icon icon) {
     // In Icon's order, one for each.
     static constexpr const char *kNames[] = {
-        "display", "sound",  "sound-off", "controls", "interface", "crown", "camera",  "pause",
-        "play",    "keyboard", "info",    "chart",    "close",     "folder", "link",   "speed",
-        "check",   "warning", "reset",    "disc",     "wrench",    "gear",   "copy"};
+        "display", "sound", "controls", "interface", "camera", "pause", "play",  "keyboard", "info",
+        "chart",   "close", "folder",   "link",      "speed",  "check", "warning", "reset", "disc",
+        "gear",    "copy"};
     static_assert(std::size(kNames) == kIconCount, "a name for every icon, in Icon's order");
     const int index = static_cast<int>(icon);
     return index >= 0 && index < kIconCount ? kNames[index] : "";
@@ -540,20 +540,14 @@ void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
         line(at(0.0f, 0.18f), at(0.0f, 0.33f), t);
         line(at(-0.2f, 0.35f), at(0.2f, 0.35f), t);
         break;
-    case Icon::Sound:
-    case Icon::SoundOff: {
+    case Icon::Sound: {
         const ImVec2 body[] = {at(-0.44f, -0.12f), at(-0.26f, -0.12f), at(-0.04f, -0.32f),
                                at(-0.04f, 0.32f), at(-0.26f, 0.12f), at(-0.44f, 0.12f)};
         list->AddConvexPolyFilled(body, 6, color);
-        if (kind == Icon::Sound) {
-            list->PathArcTo(at(-0.04f, 0.0f), s * 0.2f, -0.8f, 0.8f);
-            list->PathStroke(color, t);
-            list->PathArcTo(at(-0.04f, 0.0f), s * 0.36f, -0.8f, 0.8f);
-            list->PathStroke(color, t);
-        } else {
-            line(at(0.12f, -0.14f), at(0.4f, 0.14f), t);
-            line(at(0.12f, 0.14f), at(0.4f, -0.14f), t);
-        }
+        list->PathArcTo(at(-0.04f, 0.0f), s * 0.2f, -0.8f, 0.8f);
+        list->PathStroke(color, t);
+        list->PathArcTo(at(-0.04f, 0.0f), s * 0.36f, -0.8f, 0.8f);
+        list->PathStroke(color, t);
         break;
     }
     case Icon::Controls: {
@@ -586,18 +580,6 @@ void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
             list->AddCircleFilled(at(knob, y), s * 0.09f, color);
         }
         break;
-    case Icon::Crown: {
-        const ImVec2 spikes[3][3] = {{at(-0.4f, 0.14f), at(-0.42f, -0.26f), at(-0.1f, 0.14f)},
-                                     {at(-0.2f, 0.14f), at(0.0f, -0.36f), at(0.2f, 0.14f)},
-                                     {at(0.1f, 0.14f), at(0.42f, -0.26f), at(0.4f, 0.14f)}};
-        for (const auto &spike : spikes)
-            list->AddTriangleFilled(spike[0], spike[1], spike[2], color);
-        list->AddRectFilled(at(-0.4f, 0.08f), at(0.4f, 0.3f), color, s * 0.04f);
-        for (const ImVec2 tip : {at(-0.42f, -0.28f), at(0.0f, -0.38f), at(0.42f, -0.28f)})
-            list->AddCircleFilled(tip, s * 0.065f, color);
-        list->AddCircleFilled(at(0.0f, 0.19f), s * 0.05f, IM_COL32(200, 40, 60, 255));
-        break;
-    }
     case Icon::Camera:
         list->AddRect(at(-0.44f, -0.2f), at(0.44f, 0.3f), color, s * 0.08f, t);
         list->AddRectFilled(at(-0.16f, -0.32f), at(0.14f, -0.2f), color, s * 0.04f);
@@ -614,14 +596,18 @@ void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
         list->AddTriangleFilled(at(-0.42f, -0.28f), at(0.0f, 0.0f), at(-0.42f, 0.28f), color);
         list->AddTriangleFilled(at(0.0f, -0.28f), at(0.42f, 0.0f), at(0.0f, 0.28f), color);
         break;
-    case Icon::Keyboard:
-        list->AddRect(at(-0.46f, -0.26f), at(0.46f, 0.26f), color, s * 0.08f, t);
-        for (int row = 0; row < 2; ++row)
-            for (int key = 0; key < 5; ++key)
-                list->AddRectFilled(at(-0.33f + key * 0.165f - 0.04f, -0.13f + row * 0.13f - 0.035f),
-                                    at(-0.33f + key * 0.165f + 0.04f, -0.13f + row * 0.13f + 0.035f), color);
-        line(at(-0.2f, 0.14f), at(0.2f, 0.14f), t);
+    case Icon::Keyboard: {
+        // A keyboard: four keys, three below them, the space bar. (Two rows
+        // of five before, which ran together below 20 pixels.)
+        const Outline o(c, s);
+        list->AddRect(o.at(2.0f, 4.0f), o.at(22.0f, 20.0f), color, 2.0f * o.unit, t);
+        for (const float x : {6.0f, 10.0f, 14.0f, 18.0f})
+            list->AddCircleFilled(o.at(x, 8.0f), t * 0.6f, color);
+        for (const float x : {8.0f, 12.0f, 16.0f})
+            list->AddCircleFilled(o.at(x, 12.0f), t * 0.6f, color);
+        line(o.at(7.0f, 16.0f), o.at(17.0f, 16.0f), t);
         break;
+    }
     case Icon::Info:
         list->AddCircle(c, s * 0.4f, color, 0, t);
         list->AddCircleFilled(at(0.0f, -0.17f), s * 0.05f, color);
@@ -681,11 +667,6 @@ void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
         list->AddCircle(c, s * 0.11f, color, 16, t);
         list->PathArcTo(c, s * 0.27f, -2.5f, -1.4f);
         list->PathStroke(color, t * 0.8f);
-        break;
-    case Icon::Wrench:
-        line(at(-0.36f, 0.36f), at(0.06f, -0.06f), t * 1.7f);
-        list->PathArcTo(at(0.17f, -0.17f), s * 0.2f, 0.4f, 5.1f);
-        list->PathStroke(color, t * 1.3f);
         break;
     case Icon::Gear: {
         // A cog, filled: a ring (its hole left open, so it shows whatever is

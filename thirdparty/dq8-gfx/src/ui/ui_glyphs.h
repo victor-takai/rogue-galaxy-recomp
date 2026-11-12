@@ -11,8 +11,8 @@
 namespace dq8::ui {
 
 enum class Icon : uint8_t {
-    Display, Sound, SoundOff, Controls, Interface, Crown, Camera, Pause, Play,
-    Keyboard, Info, Chart, Close, Folder, Link, Speed, Check, Warning, Reset, Disc, Wrench, Gear, Copy,
+    Display, Sound, Controls, Interface, Camera, Pause, Play, Keyboard, Info, Chart, Close, Folder, Link,
+    Speed, Check, Warning, Reset, Disc, Gear, Copy,
     Count // how many there are; not an icon
 };
 
