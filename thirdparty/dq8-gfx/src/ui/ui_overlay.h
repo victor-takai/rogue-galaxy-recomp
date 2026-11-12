@@ -8,6 +8,8 @@
 #include "ui/ui_multiplier.h"
 #include "ui/ui_settings.h"
 
+#include <SDL3/SDL_scancode.h>
+
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -107,6 +109,15 @@ struct HostServices {
     // only way to the menu there, so it cannot be turned off, and the menu
     // names the Deck's buttons (Rogue Galaxy: added).
     bool steamDeck = false;
+    // The game's own keys and what each does (Rogue Galaxy: added): never
+    // bound in Controls, named in the binding prompt, and, `listed`, shown in
+    // the Shortcuts window after F4 (the diagnostics keys are not).
+    struct Shortcut {
+        SDL_Scancode key = SDL_SCANCODE_UNKNOWN;
+        std::string what;
+        bool listed = true;
+    };
+    std::vector<Shortcut> gameShortcuts;
 };
 
 // Game: Rogue Galaxy's own switches (added).
@@ -254,6 +265,7 @@ private:
     void drawSpeedBadge();
     void drawPauseBanner();
     void drawToasts();
+    void drawIconSheet();
     void updateCursor();
     void sampleFrameRate();
     void collectSavedScreenshots();
@@ -310,6 +322,8 @@ private:
     bool m_aboutOpen = false;
     bool m_shortcutsOpen = false;
     bool m_statsOpen = false;
+    // RG_UI_SCRIPT's "icons": every icon on screen, for a screenshot.
+    bool m_iconSheet = false;
     std::string m_showMenu;
     bool m_windowFocused = true;
     bool m_userPaused = false;

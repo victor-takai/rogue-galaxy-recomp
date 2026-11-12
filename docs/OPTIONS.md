@@ -2,25 +2,26 @@
 
 <p align="center"><img src="images/menu-game.jpg" width="70%" alt="The F1 menu's Game page"></p>
 
-**F1** opens a menu bar at the top of the window: Rogue Galaxy (About,
-Quit), Game (pause, fast-forward, mute, screenshots), Settings, View
-(fullscreen, the frame-rate counter) and Help. The Guide button, or
-Back+Start, opens the Settings window at once; L1 and R1 turn its pages.
+**F1** opens the top bar, along the top of the window: Rogue Galaxy
+(About, Shortcuts, Quit), Game (pause, fast-forward, mute, screenshots),
+Settings, View (fullscreen, the frame-rate counter, the renderer
+statistics) and Help. The Guide button, or Back + Start, opens the
+Settings window at once; L1 and R1 turn its pages.
 
 With only a controller (the menu names its buttons as the controller does:
 A and ✕ are the same button, B and ○, X and ▢, Y and △):
 
 - In the page list, A or Right goes into the page; moving along the list
   shows each page.
-- B comes back one level at a time: out of a slider, a list or the menu
+- B comes back one level at a time: out of a slider, a list or the top
   bar, then from the page to the page list, and from the page list to the
   game.
-- Y reaches the menu bar at the top. L1 and R1 turn the pages, the left
-  stick moves like the D-pad and the right stick scrolls.
+- Y reaches the top bar. L1 and R1 turn the pages, the left stick moves
+  like the D-pad and the right stick scrolls.
 - A strip along the bottom of the window names the buttons for where the
   cursor is.
-- "Quit game", at the end of the page list, asks first, as does the menu
-  bar's Quit.
+- "Quit game", at the end of the page list, asks first, as does Quit in
+  the top bar.
 - On Controls, X clears a binding. While one is being set, a tap of B binds
   B and holding it cancels.
 
@@ -46,7 +47,8 @@ Settings has seven pages, written here as F1 > Settings > Game and so on:
 
 An option that does nothing as things stand stays on its page, greyed
 out, with a line under it saying what would make it work: Mouse
-sensitivity until Mouse camera is on, the undub until `Install-Undub.bat`
+sensitivity and Invert mouse up and down until Mouse camera is on, the
+undub until `Install-Undub.bat`
 has read your Japanese disc, Borders while the picture fills the window,
 a language of Text whose files are missing.
 
@@ -57,7 +59,7 @@ a language of Text whose files are missing.
 | F4 | Fast-forward |
 | F6 | Free camera |
 | F11 or Alt+Enter | Fullscreen |
-| F12 | Screenshot |
+| F12 | Take screenshot |
 | Shift+F12 | Screenshot with the menu |
 
 ## Game options
@@ -77,24 +79,24 @@ F1 > Settings > Game, in these sections:
 | Faster camera rotation | The camera turns twice as fast. |
 | Mouse camera | On by default. The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right looks right and up looks up, whatever the game's camera options. The tilt stays where the mouse leaves it; locked on a target in battle, the camera only turns, as with the stick. Once you press a key of the game's or click, the mouse stays in the window with the cursor hidden; F1, the pause (F2), Alt+Tab or five seconds on the controller alone let it go. Playing on a controller only, the cursor is never taken. |
 | Mouse sensitivity | 0.25x to 4.0x; at 1.0x an inch at 1,600 dpi turns about 100 degrees. |
-| Invert mouse vertical | Off by default. Moving the mouse up looks down. |
+| Invert mouse up and down | Off by default. Moving the mouse up looks down. |
 | Draw distance | 1.0x to 4.0x the game's, from the next map loaded. |
-| Controller's buttons | The buttons in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, RB, LT and RT, or on the keyboard and mouse the keys (a letter or digit, TAB, ESC and the like, the space bar) and mouse buttons, as bound in Controls. On by default. |
 | Free camera (F6) | The party stands still and the controller moves the camera. Start or F6 to leave. |
 
 **Convenience**
 
 | Option | |
 |---|---|
+| Buttons in the game's text | The buttons in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, RB, LT and RT, or on the keyboard and mouse the keys (a letter or digit, TAB, ESC and the like, the space bar) and mouse buttons, as bound in Controls. On by default. |
 | Skip the opening | Straight to the title screen. |
-| Show the loading recap at once | The story so far appears whole, and you can go on as soon as it has loaded. |
+| Quick loading recap | The story so far appears whole, and you can go on as soon as it has loaded. |
 | Instant text | Dialogue a page at a time instead of letter by letter. |
 | Chests on the map | Unopened chests show on the map in the parts explored. |
+| Fast transporters | Transporter warps play up to twice as fast. |
+| Check for new versions | At each start, asks GitHub for this project's releases and says when a newer one is out (Rogue Galaxy > About links to it). On by default. |
 | Full bag to storage | An item found when the bag has no room for it goes to the transporter's item storage, instead of the overflow you have to sort out (or losing it when that is full too). Shops and the Factory still need room in the bag. |
 | Item limit 99 | Every item that stacks can be carried up to 99 in the bag; the game holds some (healing items, boosts) to 20, 30 or 50. |
 | Seventh bag page | The bag holds 280 items instead of 240; the transporter's storage keeps its 320. A save made with it loads without it too, the seventh page's items kept out of sight until it is back on. From the next start. |
-| Fast transporters | Transporter warps play up to twice as fast. |
-| Check for new versions | At each start, asks GitHub for this project's releases and says when a newer one is out (Rogue Galaxy > About links to it). On by default. |
 
 **Battles and rewards**
 
@@ -145,7 +147,7 @@ Most of the same options are on the game's Settings screen (System >
 Settings in the main menu): L1 and R1 turn the page, and a number's - and
 + buttons lower and raise it. With the text in French, German, Spanish or
 Italian, the options are named in that language there too. Widescreen,
-Controller's buttons, the mouse camera's three options, Check for new
+Buttons in the game's text, the mouse camera's three options, Check for new
 versions, the three Director's Cut options, Native renderer, the text's
 language, the undub, the texture packs and Display > Borders are in F1
 alone.

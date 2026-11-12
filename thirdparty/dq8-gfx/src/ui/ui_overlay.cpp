@@ -27,12 +27,53 @@ constexpr const char *kQuitShortcut = "Alt+F4";
 constexpr const char *kProjectUrl = "https://github.com/victor-takai/rogue-galaxy-recomp";
 constexpr const char *kIssuesUrl = "https://github.com/victor-takai/rogue-galaxy-recomp/issues";
 
-// Function keys the menu owns, and F6, the game's free camera (Rogue Galaxy:
-// added); binding one would fight the shortcut.
-bool reservedKey(SDL_Scancode scancode) {
-    return scancode == SDL_SCANCODE_F1 || scancode == SDL_SCANCODE_F2 || scancode == SDL_SCANCODE_F3 ||
-           scancode == SDL_SCANCODE_F4 || scancode == SDL_SCANCODE_F6 || scancode == SDL_SCANCODE_F11 ||
-           scancode == SDL_SCANCODE_F12;
+// Function keys the menu owns; with the game's own (HostServices::
+// gameShortcuts: Rogue Galaxy's F6, the free camera), never bound: binding
+// one would fight the shortcut.
+constexpr SDL_Scancode kMenuKeys[] = {SDL_SCANCODE_F1, SDL_SCANCODE_F2,  SDL_SCANCODE_F3,
+                                      SDL_SCANCODE_F4, SDL_SCANCODE_F11, SDL_SCANCODE_F12};
+
+bool reservedKey(SDL_Scancode scancode, const std::vector<HostServices::Shortcut> &game) {
+    return std::find(std::begin(kMenuKeys), std::end(kMenuKeys), scancode) != std::end(kMenuKeys) ||
+           std::any_of(game.begin(), game.end(),
+                       [&](const HostServices::Shortcut &shortcut) { return shortcut.key == scancode; });
+}
+
+// The reserved keys as the binding prompt names them, runs of function keys
+// shortened: "F1 to F4, F6, F11 and F12".
+std::string reservedKeysText(const std::vector<HostServices::Shortcut> &game) {
+    std::vector<int> functions;
+    std::vector<std::string> others;
+    const auto add = [&](SDL_Scancode key) {
+        if (key >= SDL_SCANCODE_F1 && key <= SDL_SCANCODE_F12)
+            functions.push_back(static_cast<int>(key - SDL_SCANCODE_F1) + 1);
+        else
+            others.push_back(SDL_GetScancodeName(key));
+    };
+    for (const SDL_Scancode key : kMenuKeys)
+        add(key);
+    for (const HostServices::Shortcut &shortcut : game)
+        add(shortcut.key);
+    std::sort(functions.begin(), functions.end());
+    functions.erase(std::unique(functions.begin(), functions.end()), functions.end());
+    std::vector<std::string> parts;
+    for (size_t first = 0; first < functions.size();) {
+        size_t last = first;
+        while (last + 1 < functions.size() && functions[last + 1] == functions[last] + 1)
+            ++last;
+        if (last - first >= 2) {
+            parts.push_back("F" + std::to_string(functions[first]) + " to F" + std::to_string(functions[last]));
+        } else {
+            for (size_t index = first; index <= last; ++index)
+                parts.push_back("F" + std::to_string(functions[index]));
+        }
+        first = last + 1;
+    }
+    parts.insert(parts.end(), others.begin(), others.end());
+    std::string text;
+    for (size_t index = 0; index < parts.size(); ++index)
+        text += (index == 0 ? "" : index + 1 == parts.size() ? " and " : ", ") + parts[index];
+    return text;
 }
 
 std::string timestamp() {
@@ -104,7 +145,7 @@ bool Overlay::initialize(SDL_Window *window, SDL_GPUTextureFormat format, std::s
     // Guide is often the system's (Steam, the Xbox Game Bar), so Back + Start
     // is named first.
     if (m_host.steamDeck)
-        notify("Press View + Menu for the game's menu", Icon::Info, 6.0);
+        notify("Press View + Menu for the menu", Icon::Info, 6.0);
     else if (m_settings.backStartOpensMenu)
         notify("Press F1, or Back + Start on a controller, for the menu", Icon::Info, 6.0);
     else
@@ -195,7 +236,7 @@ bool Overlay::wantsFrames() {
     const bool scriptWaiting = std::any_of(m_script.begin(), m_script.end(),
                                            [](const ScriptStep &step) { return !step.done && step.seconds >= 0.0; });
     return m_menuOpen || m_capture.active || !m_toasts.empty() || m_settings.showFps || m_statsOpen ||
-           pausing() || scriptWaiting || !m_context->InputEventsQueue.empty();
+           m_iconSheet || pausing() || scriptWaiting || !m_context->InputEventsQueue.empty();
 }
 
 void Overlay::setMenuOpen(bool open) {
@@ -469,8 +510,8 @@ bool Overlay::captureEvent(const SDL_Event &event) {
     };
     if (m_capture.keyboard) {
         if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
-            if (reservedKey(event.key.scancode)) {
-                notify(std::string(SDL_GetScancodeName(event.key.scancode)) + " is kept for the menu",
+            if (reservedKey(event.key.scancode, m_host.gameShortcuts)) {
+                notify(std::string(SDL_GetScancodeName(event.key.scancode)) + " is kept for a shortcut",
                        Icon::Warning);
                 return true;
             }
@@ -804,6 +845,7 @@ void Overlay::drawFrame() {
     drawSpeedBadge();
     drawPauseBanner();
     drawToasts();
+    drawIconSheet();
     updateCursor();
     saveIfDirty(false);
 }
@@ -838,7 +880,8 @@ void Overlay::drawMenuBar() {
         if (beginMenu("Rogue Galaxy")) {
             if (menuItem("About Rogue Galaxy Recompiled"))
                 m_aboutOpen = true;
-            if (menuItem("Keyboard shortcuts"))
+            // Named as the window it opens, which lists the controller too.
+            if (menuItem("Shortcuts"))
                 m_shortcutsOpen = true;
             ImGui::Separator();
             if (menuItem("Quit", kQuitShortcut))
@@ -873,7 +916,7 @@ void Overlay::drawMenuBar() {
             ImGui::Separator();
             if (menuItem("Take screenshot", "F12"))
                 takeScreenshot(false);
-            if (menuItem("Screenshot with menu", "Shift+F12"))
+            if (menuItem("Screenshot with the menu", "Shift+F12"))
                 takeScreenshot(true);
             if (menuItem("Open screenshots folder")) {
                 std::error_code error;
@@ -902,7 +945,7 @@ void Overlay::drawMenuBar() {
             ImGui::EndMenu();
         }
         if (beginMenu("Help")) {
-            if (menuItem("Keyboard shortcuts"))
+            if (menuItem("Shortcuts"))
                 m_shortcutsOpen = true;
             if (menuItem("Project page"))
                 SDL_OpenURL(kProjectUrl);
@@ -1035,9 +1078,13 @@ void Overlay::drawCapturePrompt() {
             ImGui::Text("Press %s for %s", m_capture.keyboard ? "a key" : "a button",
                         gfx::padInputName(m_capture.input));
             ImGui::PopFont();
-            if (m_capture.keyboard)
-                mutedText("%s", "Any key works, even Esc; a mouse button outside this box, or the wheel.");
-            else
+            if (m_capture.keyboard) {
+                // Wrapped, so the prompt keeps a reading width at any menu size.
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + em(32.0f));
+                mutedText("Any key, Esc included, but %s; a mouse button outside this box, or the wheel.",
+                          reservedKeysText(m_host.gameShortcuts).c_str());
+                ImGui::PopTextWrapPos();
+            } else
                 mutedText("On the controller. Hold %s or press Esc to cancel.",
                           padButtonName(SDL_GAMEPAD_BUTTON_EAST).c_str());
             ImGui::EndGroup();
@@ -1157,9 +1204,10 @@ void Overlay::drawSpeedBadge() {
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
     if (beginWindow("##speed", nullptr, flags)) {
         ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
-        icon(Icon::Speed, em(1.0f), palette::kGold);
+        const IconRoom room = iconRoom(em(1.0f));
         ImGui::SameLine(0.0f, em(0.45f));
         ImGui::TextUnformatted(speedLabel(m_settings.fastForwardSpeed).c_str());
+        drawIconBeside(room, Icon::Speed, palette::kGold);
     }
     ImGui::End();
     ImGui::PopStyleVar();
@@ -1179,16 +1227,17 @@ void Overlay::drawPauseBanner() {
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
     if (beginWindow("##paused", nullptr, flags)) {
-        icon(Icon::Pause, em(1.6f), palette::kGold);
+        const IconRoom room = iconRoom(em(1.6f));
         ImGui::SameLine(0.0f, em(0.8f));
         ImGui::BeginGroup();
         ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.35f);
         ImGui::TextUnformatted("Paused");
         ImGui::PopFont();
-        mutedText("%s", background && !m_userPaused ? "Until the window is focused again"
-                        : padInUse()                ? "Menu > Game > Pause resumes"
+        mutedText("%s", background && !m_userPaused ? "Until the game's window is active again"
+                        : padInUse()                ? "Open the menu: Game > Pause in the top bar resumes"
                                                     : "Press F2 to resume");
         ImGui::EndGroup();
+        drawIconBeside(room, Icon::Pause, palette::kGold);
     }
     ImGui::End();
     ImGui::PopStyleVar();
@@ -1220,15 +1269,54 @@ void Overlay::drawToasts() {
             // Messages stay above the windows they may be talking about.
             ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
             decorateWindow(alpha);
-            icon(toast.icon, em(1.15f), withAlpha(palette::kGold, alpha));
+            const IconRoom room = iconRoom(em(1.15f));
             ImGui::SameLine(0.0f, em(0.6f));
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(toast.text.c_str());
+            drawIconBeside(room, toast.icon, withAlpha(palette::kGold, alpha));
             y += ImGui::GetWindowHeight() + em(0.5f);
         }
         ImGui::End();
         ImGui::PopStyleVar(2);
     }
+}
+
+// Every icon at the sizes the menu draws them (a button's, a notice's, a
+// window title's, the About window's), with its name: RG_UI_SCRIPT's
+// "icons", for a screenshot when an icon changes.
+void Overlay::drawIconSheet() {
+    if (!m_iconSheet)
+        return;
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(1.2f), em(1.0f)));
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoFocusOnAppearing;
+    if (beginWindow("##icons", nullptr, flags)) {
+        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+        constexpr int kColumns = 6;
+        if (ImGui::BeginTable("##sheet", kColumns, ImGuiTableFlags_None)) {
+            ImDrawList *list = ImGui::GetWindowDrawList();
+            for (int index = 0; index < kIconCount; ++index) {
+                ImGui::TableNextColumn();
+                const Icon kind = static_cast<Icon>(index);
+                const ImVec2 at = ImGui::GetCursorScreenPos();
+                const float row = em(3.0f);
+                float x = at.x;
+                for (const float size : {em(0.95f), em(1.15f), em(1.4f), em(3.0f)}) {
+                    drawIcon(list, kind, ImVec2(x + size * 0.5f, at.y + row * 0.5f), size, palette::kGold);
+                    x += size + em(0.5f);
+                }
+                ImGui::Dummy(ImVec2(x - at.x, row));
+                mutedText("%s", iconName(kind));
+            }
+            ImGui::EndTable();
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 void Overlay::updateCursor() {

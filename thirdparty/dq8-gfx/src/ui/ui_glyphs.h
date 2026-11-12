@@ -11,13 +11,34 @@
 namespace dq8::ui {
 
 enum class Icon : uint8_t {
-    Display, Sound, SoundOff, Controls, Interface, Crown, Camera, Pause, Play,
-    Keyboard, Info, Chart, Close, Folder, Link, Speed, Check, Warning, Reset, Disc, Wrench, Gear, Copy
+    Display, Sound, Controls, Interface, Camera, Pause, Play, Keyboard, Info, Chart, Close, Folder, Link,
+    Speed, Check, Warning, Reset, Disc, Gear, Copy,
+    Count // how many there are; not an icon
 };
 
+// How many icons there are, and each one's name (RG_UI_SCRIPT's notify
+// icon=, its icon sheet).
+constexpr int kIconCount = static_cast<int>(Icon::Count);
+const char *iconName(Icon icon);
+
 void drawIcon(ImDrawList *list, Icon icon, ImVec2 center, float size, ImU32 color);
-// Lays out an icon-sized item and draws the icon in it.
-void icon(Icon icon, float size, ImU32 color);
+// A point moved to the centre of the screen pixel it is in, where drawIcon
+// puts an icon's centre.
+ImVec2 pixelCentre(ImVec2 point);
+// An icon before text on the same line, centred on that text: iconRoom lays
+// out the icon's room and returns it; once the text (or a group of lines) is
+// submitted beside it, drawIconBeside draws the icon there, centred on that
+// last item's height. The text decides the height: framed text
+// (AlignTextToFramePadding) sits FramePadding.y below the line's top, and an
+// icon drawn at the top looked too high beside it.
+struct IconRoom {
+    ImVec2 pos;
+    float size = 0.0f;
+};
+IconRoom iconRoom(float size);
+void drawIconBeside(const IconRoom &room, Icon icon, ImU32 color);
+// The vertical middle of the item just submitted, in screen space.
+float lastItemMiddle();
 
 // A PS2 input as the pad itself marks it.
 void drawPadGlyph(ImDrawList *list, gfx::PadInput input, ImVec2 center, float size);

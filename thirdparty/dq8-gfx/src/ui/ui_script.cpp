@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 namespace dq8::ui {
 namespace {
@@ -162,7 +163,26 @@ void Overlay::runStep(const ScriptStep &step, uint64_t frame) {
     } else if (command == "screenshot") {
         takeScreenshot(first == "menu");
     } else if (command == "notify") {
-        notify(joined(step.arguments));
+        // "notify [icon=NAME] text", NAME as iconName() gives it (controls,
+        // camera, warning...): the notices the menu shows with those icons,
+        // without the device.
+        std::vector<std::string> words = step.arguments;
+        Icon kind = Icon::Info;
+        if (!words.empty() && words.front().rfind("icon=", 0) == 0) {
+            const std::string name = words.front().substr(5);
+            int index = 0;
+            while (index < kIconCount && name != iconName(static_cast<Icon>(index)))
+                ++index;
+            if (index < kIconCount)
+                kind = static_cast<Icon>(index);
+            else
+                std::fprintf(stderr, "[ui] RG_UI_SCRIPT: no icon '%s', the notice gets info\n", name.c_str());
+            words.erase(words.begin());
+        }
+        notify(joined(words), kind);
+    } else if (command == "icons") {
+        // Every icon, for a screenshot ("icons off" closes it).
+        m_iconSheet = on;
     } else if (command == "quit") {
         SDL_Event quit{};
         quit.type = SDL_EVENT_QUIT;

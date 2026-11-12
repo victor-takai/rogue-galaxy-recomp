@@ -53,7 +53,7 @@
   console's pace again.
 - An option that does nothing as things stand is greyed out in the F1
   menu, with a line under it saying what would make it work: Mouse
-  sensitivity and Invert mouse vertical without Mouse camera, Widescreen
+  sensitivity and Invert mouse up and down without Mouse camera, Widescreen
   while the picture is shown at 4:3, Borders while the picture fills the
   window, the Director's Cut options and the undub before
   `Install-Undub.bat`, Text before `Install-European.bat` (and a language
@@ -64,6 +64,18 @@
 - The frame-rate counter (F3) and the fast-forward badge stay in the
   window's corners with the picture at 4:3 too, as the notifications do;
   they sat in the picture's corners, inside the bars.
+- The F1 menu's icons sit level with their text: in the notifications,
+  the windows' titles and the pause banner they sat a few pixels high. The
+  controller, the gear, the keyboard, the undo arrow and the check are
+  drawn anew, the controller and the gear as they look.
+- Some of the F1 menu's names say better what they are: Controller's
+  buttons is now Buttons in the game's text, under Convenience; Show the
+  loading recap at once is Quick loading recap, as on the game's Settings
+  screen; Keyboard shortcuts is Shortcuts, and that window now lists F6.
+  Texts that had gone wrong were corrected, among them setting a key,
+  which now names the keys kept for shortcuts, the empty Textures page and
+  the free camera, which Start also turns off. F7, F9 and F10, which write
+  diagnostics to the log, can no longer be bound in Controls.
 - Much of the menu text that came out dull grey (the load screen, the
   Settings rows, the item descriptions) is bright, as on the PS2.
 - Water, a sword on a character's back and other things no longer show

@@ -91,14 +91,14 @@ Most of these set an option of the F1 menu for one run, without saving it.
 | `RG_MUTE=1` | No sound output (the IOP still runs) |
 | `RG_WIDESCREEN=1` | The game drawn for a wide screen of the window's shape (the menu's "Widescreen"; `src/widescreen.cpp`) |
 | `RG_MINIMAP_SIZE=N`, `RG_COMPASS_SIZE=N` | The field's minimap and compass, percent of the game's size, 50 to 100 (the menu's "Minimap size" and "Compass size"; `src/hud_size.h`) |
-| `RG_BUTTONS=xbox` | The game's text shows an Xbox controller's buttons whatever is connected (`src/button_glyphs.h`; the menu's "Controller's buttons" follows the controller in use); `RG_GAIJI_DUMP=FILE` writes the picture of special characters they are drawn in (gaiji2.img) as loaded |
+| `RG_BUTTONS=xbox` | The game's text shows an Xbox controller's buttons whatever is connected (`src/button_glyphs.h`; the menu's "Buttons in the game's text" follows the controller in use); `RG_GAIJI_DUMP=FILE` writes the picture of special characters they are drawn in (gaiji2.img) as loaded |
 | `RG_SKIP_OPENING=1` | The logos at boot give way to the title screen (the menu's "Skip the opening") |
 | `RG_FIELD_OF_VIEW=N` | The camera's field of view in the field and in battle, degrees across a 4:3 picture (the menu's "Field of view"; the game's is 52) |
 | `RG_CAMERA_DISTANCE=N` | The camera's distance from the party, percent of the game's (the menu's "Camera distance") |
 | `RG_FASTER_CAMERA=1` | The right stick turns the camera twice as fast (the menu's "Faster camera rotation") |
 | `RG_MOUSE_CAMERA=1` | The mouse turns and tilts the camera (the menu's "Mouse camera", `src/mouse_camera.h`) |
 | `RG_MOUSE_SENSITIVITY=N` | The mouse camera's sensitivity, 25 to 400 percent or 0.25 to 4 (the menu's "Mouse sensitivity") |
-| `RG_MOUSE_INVERT=1` | Moving the mouse up looks down (the menu's "Invert mouse vertical") |
+| `RG_MOUSE_INVERT=1` | Moving the mouse up looks down (the menu's "Invert mouse up and down") |
 | `RG_DRAW_DISTANCE=N` | How far the scenery and objects are drawn, percent of the game's (the menu's "Draw distance") |
 | `RG_ENCOUNTER_RATE=N` | Random battles, percent of the game's rate; 0 turns them off (the menu's "Encounter rate") |
 | `RG_BATTLE_EXPERIENCE=N` | A won battle's experience, percent of the game's (the menu's "Experience from battles") |
@@ -112,7 +112,7 @@ Most of these set an option of the F1 menu for one run, without saving it.
 | `RG_DIRECTOR_CUT_PARTY_AI=1` | The same release's party AI scripts (`chara\spt\c001.stb` to `c009`); `0` off (the menu's "Director's Cut party AI"), logged the same way |
 | `RG_FREE_CAMERA=1` | Starts with the free camera on (the menu's "Free camera"; `src/free_camera.h`) |
 | `RG_INSTANT_TEXT=1` | Text in the message windows a page at a time (the menu's "Instant text"; `src/instant_text.h`) |
-| `RG_INSTANT_RECAP=1` | The loading screen's story so far appears whole at once, then Press X (the menu's "Show the loading recap at once") |
+| `RG_INSTANT_RECAP=1` | The loading screen's story so far appears whole at once, then Press X (the menu's "Quick loading recap") |
 | `RG_VOICE_LANG=JA` | Voices (and the movies that differ) from `disc/JA`, whatever the menu's "Undub (Japanese voices)" says; any language of the game's table works for the voice token (`src/voice_language.h`). Logs `[rg] voice <path>` for each voice asked |
 | `RG_TEXT_LANG=FR` | The text in that language (FR, DE, ES, IT; EN for the game's), whatever the menu's "Text" says; needs `disc/EU/<LANG>.idx` from `setup.py extract-european` (`src/text_language.h`). Logs `[rg] text in FR`, and `[rg] in English: <path>` for a file the language has none of |
 | `RG_TEXT_TRACE=1` | With a European text language: logs each archive lookup and each file served from `disc/EU/<LANG>.DAT` |
@@ -133,7 +133,7 @@ the project's fixes off to compare.
 
 | Variable | Effect |
 |---|---|
-| `RG_UI_SCRIPT=file\|text` | Drive the menu for tests and screenshots: `<guest frame> <command> [args]` entries, `;`-separated (see `thirdparty/dq8-gfx/src/ui/ui_script.cpp`) |
+| `RG_UI_SCRIPT=file\|text` | Drive the menu for tests and screenshots: `<guest frame> <command> [args]` entries, `;`-separated (see `thirdparty/dq8-gfx/src/ui/ui_script.cpp`); `notify icon=NAME text` shows a notice with that icon, `icons` every icon at the menu's sizes |
 | `RG_MOUSE_TEST=DX,DY,FROM,TO` | With the mouse camera on, DX and DY counts of mouse motion (right and down) at each camera's take while the game's pad reads are from FROM to TO, for a bench run without a mouse (`src/mouse_camera.h`): compare a frame against the same push of the right stick in `RG_INPUT` (68 counts a frame are a full push exploring, at 1.0x) |
 | `RG_INPUT="30:CROSS:150,..."` | Scripted pad input: seconds, buttons (`+`-joined; `LUP` etc. for the left stick, `RUP` etc. for the right), milliseconds; with `RG_INPUT_CLOCK=pad` both numbers count the game's pad reads, so a script replays alike at any host speed |
 | `RG_SPEED=N[@READ][,N@READ...]` | The game's speed, as the menu's fast-forward (`2` = F4 at its default, `0` unpaced), from the start or from that pad read (the clock `RG_INPUT_CLOCK=pad` counts, not vsyncs); a list changes it again at later reads, by growing reads (`0@8600,1@54000`: unpaced through a long stretch of scenes, normal again for what is measured); for scripted runs, whose hidden window never runs the menu or its `RG_UI_SCRIPT`. A scripted walk keeps its timing only at the speed it was written for, so start it after the input (`native-perf.sh`'s walk ends at pad read 3600: `@3700`). The log's `[speed]` lines, one a step, show what was parsed; a value that does not parse (or is not finite) is ignored there, not run unpaced. A step is taken at the first present after its read, so unpaced it lands a few reads late |
