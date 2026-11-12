@@ -139,7 +139,7 @@ void followQuickScenes()
 }
 
 // The game's text shows the buttons of the controller driving it (the menu's
-// "Controller's buttons").
+// "Buttons in the game's text").
 std::atomic<bool> g_controllerButtons{true};
 
 // What a controller calls the button a PlayStation button is bound to, as a
@@ -895,6 +895,13 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     host.revision = RG_REVISION;
     // Steam sets SteamDeck=1 on the Deck, natively and under Proton.
     host.steamDeck = env("SteamDeck", "0") == "1";
+    // The game's own keys (countMarkKeys), kept out of Controls: F6 listed
+    // beside the menu's in the Shortcuts window; the diagnostics keys, which
+    // act in every run, not.
+    host.gameShortcuts = {{SDL_SCANCODE_F6, "Free camera"},
+                          {SDL_SCANCODE_F7, "Frame capture and state report", false},
+                          {SDL_SCANCODE_F9, "A mark in the log", false},
+                          {SDL_SCANCODE_F10, "Stall report", false}};
     // RG_MUTE=1 keeps the game silent whatever the menu's volume says.
     const bool mute = env("RG_MUTE", "0") != "0";
     host.setVolume = [mute](float volume) { ps2_native_iop::setVolume(mute ? 0.0f : volume); };
@@ -977,12 +984,13 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "ratio on Auto the picture fills the window, whatever its shape, once a game is loaded.",
          false},
         {"minimap_size", "Minimap size",
-         "The map in the field's corner, against the game's size (1.0x), smaller toward its corner. The "
-         "transporter menu's map stays as it is.",
+         "The map in the corner while exploring, against the game's size (1.0x); made smaller, it keeps to its "
+         "corner. The transporter menu's map stays as it is.",
          false, 50, 100, 100, kTimes, 5},
         {"compass_size", "Compass size",
-         "The compass in the field's corner, against the game's size (1.0x), smaller toward its corner.", false, 50,
-         100, 100, kTimes, 5},
+         "The compass in the corner while exploring, against the game's size (1.0x); made smaller, it keeps to "
+         "its corner.",
+         false, 50, 100, 100, kTimes, 5},
         {"field_of_view", "Field of view",
          "How wide the camera sees while exploring and in battle, in degrees across a 4:3 picture (the game's is "
          "52); a wide picture adds to it. Scenes keep their own camera.",
@@ -996,32 +1004,32 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          false},
         {"mouse_camera", "Mouse camera",
          "The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right "
-         "looks right and up looks up, whatever the game's camera options. Locked on a target in battle it only "
-         "turns, as with the stick. Once you press a key or click, the mouse stays in the window with the cursor "
-         "hidden; F1, the pause (F2), Alt+Tab or a few seconds on the controller alone let it go.",
+         "looks right and up looks up, whatever the game's camera options. Locked on a target in battle, it only "
+         "turns, as with the stick. Once you press one of the game's keys or click, the mouse stays in the window "
+         "with the cursor hidden; F1, the pause (F2), Alt+Tab or five seconds on the controller alone let it go.",
          true},
-        {"mouse_sensitivity", "Mouse sensitivity", "How far the mouse turns the camera, against 1.0x.", false, 25,
-         400, 100, kTimes, 25},
-        {"mouse_invert_vertical", "Invert mouse vertical",
-         "Moving the mouse up tilts the camera the other way.", false},
+        {"mouse_sensitivity", "Mouse sensitivity",
+         "How far the mouse turns the camera: at 1.0x, an inch at 1,600 dpi turns it about 100 degrees.", false,
+         25, 400, 100, kTimes, 25},
+        {"mouse_invert_vertical", "Invert mouse up and down", "Moving the mouse up looks down.", false},
         {"draw_distance", "Draw distance",
          "How far away the scenery and the objects are still drawn, against the game's (1.0x), the fog thinned "
-         "in step. Most of Salgin has no limit to raise; the open areas gain more. From the next map loaded.",
+         "in step. Most of Salgin has no limit to raise; the open areas gain more. Takes effect from the next map loaded.",
          false, 100, 400, 100, kTimes, 25},
         {"free_camera", "Free camera (F6)",
          "The camera leaves the party, which stands still, and the controller moves it: the left stick moves the "
          "point it looks at (Square held, faster; L2 held, up and down), the right stick turns it around that "
-         "point and tilts it (R2 held, nearer and farther). Turn it off, or press F6, to play again. Off at every "
-         "start.",
+         "point and tilts it (R2 held, nearer and farther). Start or F6 turns it off, as this switch does, to "
+         "play again. Off at every start.",
          false, 0, 0, 0, "", 1, false},
-        {"controller_buttons", "Controller's buttons",
+        {"controller_buttons", "Buttons in the game's text",
          "The buttons shown in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, "
          "RB, LT and RT, or the keys and mouse buttons, as each button is bound in Controls. Off, or with a "
          "PlayStation or Nintendo controller, the game's PlayStation buttons.",
          true},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},
-        {"instant_loading_recap", "Show the loading recap at once",
+        {"instant_loading_recap", "Quick loading recap",
          "When a game loads, the story so far appears whole instead of line by line, and Press X comes as soon as "
          "it has loaded.",
          false},
@@ -1031,7 +1039,8 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          false},
         {"map_chests", "Chests on the map",
          "The chests not yet opened show on the maps in the parts you have explored, as the game shows them once "
-         "every save point of a planet is activated. Nothing is saved: the planet's own completion still comes.",
+         "every save point of a planet is activated. Only the map changes: nothing goes into your save, and "
+         "activating every save point still counts as before.",
          false},
         {"fast_transporter", "Fast transporters",
          "A transporter's warp plays at up to twice the speed. The music and the sounds keep their pace.", false},
@@ -1080,42 +1089,43 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "How fast the party's action gauge fills again in battle, against the game's (1.0x).",
          false, 25, 400, 100, kTimes, 25},
         {"director_cut_balance", "Director's Cut balance",
-         "Battles with the Japanese Director's Cut's numbers: smaller enemy groups, more money, some enemies "
+         "Battles with the numbers of the Japanese Director's Cut: smaller enemy groups, more money, some enemies "
          "weaker and the Area Masters stronger, bosses never knocked down. Needs your Japanese disc "
          "(Install-Undub.bat). Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"director_cut_enemies", "Director's Cut enemy behavior",
-         "The Japanese Director's Cut's enemy attacks and AI: enemies face you before they attack, some attack "
+         "The enemy attacks and AI of the Japanese Director's Cut: enemies face you before they attack, some attack "
          "from farther away. Needs your Japanese disc (Install-Undub.bat). Takes effect the next time the game "
          "starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"director_cut_party_ai", "Director's Cut party AI",
-         "The Japanese Director's Cut's ally AI: an ally low on health sometimes falls back to the leader and "
+         "The ally AI of the Japanese Director's Cut: an ally low on health sometimes falls back to the leader and "
          "guards. Needs your Japanese disc (Install-Undub.bat). Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"text_language", "Text",
-         "The game's text, menus and scenes, in one of the European release's languages, from your European disc "
-         "(SCES-54552): run Install-European.bat in the game's folder once and pick that disc's image. Without "
-         "it the text stays English. The voices stay as they are. Takes effect the next time the game starts.",
+         "The game's text, menus and scenes, in one of the European release's languages. Needs your European disc "
+         "(SCES-54552, Install-European.bat); without it the text stays English. The voices stay as they are. "
+         "Takes effect the next time the game starts.",
          false, 0, 4, 0, "", 1, true, true, "language",
          {"English", "Fran\xC3\xA7" "ais", "Deutsch", "Espa\xC3\xB1" "ol", "Italiano"}},
         {"japanese_voices", "Undub (Japanese voices)",
          "The voices in scenes and the movies come from your Japanese Director's Cut disc instead of the English "
-         "ones; the text stays as it is. It needs that disc's files: run Install-Undub.bat in the game's folder "
-         "once and pick your Japanese disc image. Without them the voices stay English. A few lines have no "
-         "Japanese voice and play silent. Takes effect the next time the game starts.",
+         "ones; the text stays as it is. Needs your Japanese disc (Install-Undub.bat); without it the voices "
+         "stay English. A few lines have no Japanese voice and play silent. Takes effect the next time the game "
+         "starts.",
          false, 0, 0, 0, "", 1, true, true, "language"},
         {"native_renderer", "Native renderer",
-         "Experimental, for development: the models and the post effects drawn by the PC's renderer instead of "
-         "through the emulation of the PS2's graphics chip, as that work lands; for now the models. Off, "
-         "everything goes through the emulation. Takes effect the next time the game starts.",
+         "Experimental, for development: the work on drawing the game with the PC's renderer, instead of through "
+         "the emulation of the PS2's graphics chip, goes behind it. For now, most of the work the PS2's vector "
+         "unit did on the models is done on the PC and its graphics card; the models are still drawn through the "
+         "emulation. Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"dev_tools", "Developer tools",
          "The tools the developers left in the game, switched off for release. Main menu: R3 shows every item's "
-         "icon, R1 + R3 a list of them, and Cross gives one of the one picked. Help pages and info list: R1 + "
-         "Select unlocks every entry. Bestiary: Select fills it. Revelation Flow: R2 + Triangle gives one of each "
-         "item the picked cell asks for. Paused in a scene: Triangle + R1 + R2 ends it, also one the game would "
-         "not let you skip, which can leave the story out of order.",
+         "icon, R1 + R3 a list of them, and Cross gives you one of the item picked. Help pages and info list: R1 "
+         "+ Select unlocks every entry. Bestiary: Select fills it. Revelation Flow: R2 + Triangle gives one of "
+         "each item the picked cell asks for. Paused in a scene: Triangle + R1 + R2 ends it, even one the game "
+         "does not let you skip; this can leave the story out of order.",
          false},
     };
     // One switch for each pack found, on a page of their own in the menu (F1 > Settings > Textures).
@@ -1127,16 +1137,17 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
             flatPacks.insert("texture_pack_" + pack.key);
         dq8::ui::GameOption option{"texture_pack_" + pack.key, "Pack: " + pack.name,
                                    "The game's art is drawn from this pack's " + std::to_string(pack.regions) +
-                                       " pictures, where it has them: 2D art above 1x, a PCSX2 pack's 3D at any "
-                                       "scale. Packs are read by name, a later one over an earlier one, textures\\hd "
-                                       "first.",
+                                       (pack.regions == 1u ? " picture" : " pictures") +
+                                       ", where it has them: 2D art above 1\xC3\x97, a PCSX2 pack's 3D at any "
+                                       "scale. Where packs share a picture, the one lower in this list wins.",
                                    pack.enabled};
         option.page = "textures";
         host.gameOptions.push_back(std::move(option));
     }
     host.gameSections = {
         {"sixty_fps", "Camera and view"},
-        {"skip_opening", "Convenience"},
+        // The buttons in the game's text open it: they are no camera option.
+        {"controller_buttons", "Convenience"},
         {"encounter_rate", "Battles and rewards"},
         {"native_renderer", "Rendering"},
         {"dev_tools", "Developers"},
@@ -1158,7 +1169,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         // The scale as Display shows it: one picked while paused counts.
         const uint32_t scale = g_menu ? g_menu->shownResolutionScale() : backend.activeResolutionScale();
         if (flatPacks.count(key) != 0u && scale <= 1u)
-            return "Its 2D art shows above 1x: raise Display > Internal resolution for this.";
+            return "Its 2D art shows above 1\xC3\x97: raise Display > Internal resolution for this.";
         return gameOptionBlocked(key, backend.displayOptions().aspect);
     };
     host.gameChoiceBlocked = &gameChoiceBlocked;

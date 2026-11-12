@@ -8,6 +8,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 #include <utility>
 #include <vector>
 
@@ -25,6 +26,15 @@ constexpr ImU32 kDim = IM_COL32(255, 255, 255, 64);
 enum Direction { kUp, kDown, kLeft, kRight };
 
 float stroke(float size) { return std::max(1.5f, size * 0.09f); }
+
+// A straight stroke from a to b. Not ImDrawList::AddLine, which moves both
+// ends half a point right and down (for lines on whole pixels) where circles
+// and fills stay put: the info sign's stem sat half a pixel off its dot, the
+// pad's cross off its ring.
+void strokeLine(ImDrawList *list, ImVec2 a, ImVec2 b, ImU32 color, float thickness) {
+    const ImVec2 ends[] = {a, b};
+    list->AddPolyline(ends, 2, color, thickness);
+}
 
 // Where the ink of a coverage profile starts and ends, in texels from its
 // first: the half-coverage crossings, between texel centres, so a flat top
@@ -175,8 +185,8 @@ void faceSymbol(ImDrawList *list, PadInput input, ImVec2 c, float size, ImU32 co
         break;
     case PadInput::Cross: {
         const float d = r * 0.36f;
-        list->AddLine(ImVec2(c.x - d, c.y - d), ImVec2(c.x + d, c.y + d), color, t);
-        list->AddLine(ImVec2(c.x - d, c.y + d), ImVec2(c.x + d, c.y - d), color, t);
+        strokeLine(list, ImVec2(c.x - d, c.y - d), ImVec2(c.x + d, c.y + d), color, t);
+        strokeLine(list, ImVec2(c.x - d, c.y + d), ImVec2(c.x + d, c.y - d), color, t);
         break;
     }
     case PadInput::Square: {
@@ -446,16 +456,89 @@ Chip describe(const PadBinding &binding, SDL_GamepadType type) {
 }
 
 float chipFont(float height) { return std::max(10.0f, height * 0.52f); }
+
+// An icon's stroke built from lines, arcs and curves on the 24-unit grid the
+// common outline icon sets draw on, centred on 12 and 22 units to the icon's
+// size. The controller, undo and check follow Lucide's gamepad-2, rotate-ccw
+// and check (https://lucide.dev; ISC and, for check, Feather's MIT license:
+// LICENSE-lucide.txt at this library's root).
+// No point is added twice: a repeated point is a zero-length segment, which
+// bulges a thick polyline's join.
+struct Outline {
+    ImVec2 centre;
+    float unit = 1.0f; // pixels per grid unit
+    // One buffer for every icon drawn on this thread, not one each frame.
+    std::vector<ImVec2> &points = buffer();
+
+    Outline(ImVec2 c, float size) : centre(c), unit(size / 22.0f) { points.clear(); }
+    static std::vector<ImVec2> &buffer() {
+        thread_local std::vector<ImVec2> scratch;
+        return scratch;
+    }
+    ImVec2 at(float x, float y) const { return ImVec2(centre.x + (x - 12.0f) * unit, centre.y + (y - 12.0f) * unit); }
+    void add(ImVec2 p) {
+        if (points.empty() || (p.x - points.back().x) * (p.x - points.back().x) +
+                                      (p.y - points.back().y) * (p.y - points.back().y) >
+                                  1e-4f)
+            points.push_back(p);
+    }
+    void to(float x, float y) { add(at(x, y)); }
+    // Angles as ImGui's: 0 to the right, growing clockwise on the screen.
+    void arc(float cx, float cy, float radius, float from, float to, int segments) {
+        const ImVec2 c = at(cx, cy);
+        for (int step = 0; step <= segments; ++step) {
+            const float a = from + (to - from) * static_cast<float>(step) / static_cast<float>(segments);
+            add(ImVec2(c.x + std::cos(a) * radius * unit, c.y + std::sin(a) * radius * unit));
+        }
+    }
+    // A cubic curve from the last point.
+    void curve(float x1, float y1, float x2, float y2, float x3, float y3, int segments) {
+        const ImVec2 p0 = points.back(), p1 = at(x1, y1), p2 = at(x2, y2), p3 = at(x3, y3);
+        for (int step = 1; step <= segments; ++step) {
+            const float k = static_cast<float>(step) / static_cast<float>(segments), m = 1.0f - k;
+            const float w0 = m * m * m, w1 = 3.0f * m * m * k, w2 = 3.0f * m * k * k, w3 = k * k * k;
+            add(ImVec2(w0 * p0.x + w1 * p1.x + w2 * p2.x + w3 * p3.x, w0 * p0.y + w1 * p1.y + w2 * p2.y + w3 * p3.y));
+        }
+    }
+    void stroke(ImDrawList *list, ImU32 color, float thickness, ImDrawFlags flags = 0) {
+        list->AddPolyline(points.data(), static_cast<int>(points.size()), color, thickness, flags);
+        points.clear();
+    }
+};
 } // namespace
 
+const char *iconName(Icon icon) {
+    // In Icon's order, one for each.
+    static constexpr const char *kNames[] = {
+        "display", "sound",  "sound-off", "controls", "interface", "crown", "camera",  "pause",
+        "play",    "keyboard", "info",    "chart",    "close",     "folder", "link",   "speed",
+        "check",   "warning", "reset",    "disc",     "wrench",    "gear",   "copy"};
+    static_assert(std::size(kNames) == kIconCount, "a name for every icon, in Icon's order");
+    const int index = static_cast<int>(icon);
+    return index >= 0 && index < kIconCount ? kNames[index] : "";
+}
+
+ImVec2 pixelCentre(ImVec2 point) {
+    // The menu works in points: a pixel is 1 / DisplayFramebufferScale of one
+    // where the window has more pixels than points (a high-density screen).
+    const ImVec2 density = ImGui::GetIO().DisplayFramebufferScale;
+    const float kx = density.x > 0.0f ? density.x : 1.0f, ky = density.y > 0.0f ? density.y : 1.0f;
+    return ImVec2((std::floor(point.x * kx) + 0.5f) / kx, (std::floor(point.y * ky) + 0.5f) / ky);
+}
+
 void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
+    // On a pixel's centre, so a shape drawn about the centre (the info sign's
+    // dot over its stem) gets the same edge on both sides; between pixels,
+    // one side's edge came out darker and the dot looked off its stem.
+    c = pixelCentre(c);
     const float s = size, t = stroke(size);
+    const auto line = [&](ImVec2 a, ImVec2 b, float thickness) { strokeLine(list, a, b, color, thickness); };
     const auto at = [&](float x, float y) { return ImVec2(c.x + x * s, c.y + y * s); };
     switch (kind) {
     case Icon::Display:
         list->AddRect(at(-0.45f, -0.36f), at(0.45f, 0.18f), color, s * 0.08f, t);
-        list->AddLine(at(0.0f, 0.18f), at(0.0f, 0.33f), color, t);
-        list->AddLine(at(-0.2f, 0.35f), at(0.2f, 0.35f), color, t);
+        line(at(0.0f, 0.18f), at(0.0f, 0.33f), t);
+        line(at(-0.2f, 0.35f), at(0.2f, 0.35f), t);
         break;
     case Icon::Sound:
     case Icon::SoundOff: {
@@ -468,23 +551,38 @@ void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
             list->PathArcTo(at(-0.04f, 0.0f), s * 0.36f, -0.8f, 0.8f);
             list->PathStroke(color, t);
         } else {
-            list->AddLine(at(0.12f, -0.14f), at(0.4f, 0.14f), color, t);
-            list->AddLine(at(0.12f, 0.14f), at(0.4f, -0.14f), color, t);
+            line(at(0.12f, -0.14f), at(0.4f, 0.14f), t);
+            line(at(0.12f, 0.14f), at(0.4f, -0.14f), t);
         }
         break;
     }
-    case Icon::Controls:
-        list->AddRect(at(-0.46f, -0.22f), at(0.46f, 0.2f), color, s * 0.2f, t);
-        list->AddLine(at(-0.3f, -0.01f), at(-0.12f, -0.01f), color, t);
-        list->AddLine(at(-0.21f, -0.1f), at(-0.21f, 0.08f), color, t);
-        list->AddCircleFilled(at(0.16f, 0.04f), s * 0.055f, color);
-        list->AddCircleFilled(at(0.28f, -0.07f), s * 0.055f, color);
+    case Icon::Controls: {
+        // A gamepad: a body that widens down to its grips, the grips its
+        // rounded lower corners with the bottom edge raised between them, the
+        // D-pad on the left and two face buttons on the right. (A flat
+        // rounded bar before, which read as no controller at all.)
+        Outline o(c, s);
+        o.arc(6.68f, 9.0f, 4.0f, -IM_PI * 0.5f, -3.039f, 6); // left shoulder
+        o.arc(5.0f, 16.0f, 3.0f, IM_PI, IM_PI * 0.5f, 6);    // left grip
+        o.curve(6.0f, 19.0f, 6.5f, 18.5f, 7.0f, 18.0f, 3);
+        o.arc(9.828f, 18.0f, 2.0f, -IM_PI * 0.75f, -IM_PI * 0.5f, 3);
+        o.arc(14.172f, 18.0f, 2.0f, -IM_PI * 0.5f, -IM_PI * 0.25f, 3);
+        o.to(17.0f, 18.0f);
+        o.curve(17.5f, 18.5f, 18.0f, 19.0f, 19.0f, 19.0f, 3);
+        o.arc(19.0f, 16.0f, 3.0f, IM_PI * 0.5f, 0.0f, 6);       // right grip
+        o.arc(17.32f, 9.0f, 4.0f, -0.1027f, -IM_PI * 0.5f, 6); // right shoulder
+        o.stroke(list, color, t, ImDrawFlags_Closed);
+        line(o.at(6.0f, 11.0f), o.at(10.0f, 11.0f), t);
+        line(o.at(8.0f, 9.0f), o.at(8.0f, 13.0f), t);
+        list->AddCircleFilled(o.at(15.0f, 12.0f), t * 0.6f, color);
+        list->AddCircleFilled(o.at(18.0f, 10.0f), t * 0.6f, color);
         break;
+    }
     case Icon::Interface:
         for (int row = 0; row < 3; ++row) {
             const float y = -0.26f + row * 0.26f;
             const float knob = row == 0 ? -0.14f : row == 1 ? 0.2f : -0.02f;
-            list->AddLine(at(-0.42f, y), at(0.42f, y), color, t);
+            line(at(-0.42f, y), at(0.42f, y), t);
             list->AddCircleFilled(at(knob, y), s * 0.09f, color);
         }
         break;
@@ -522,12 +620,12 @@ void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
             for (int key = 0; key < 5; ++key)
                 list->AddRectFilled(at(-0.33f + key * 0.165f - 0.04f, -0.13f + row * 0.13f - 0.035f),
                                     at(-0.33f + key * 0.165f + 0.04f, -0.13f + row * 0.13f + 0.035f), color);
-        list->AddLine(at(-0.2f, 0.14f), at(0.2f, 0.14f), color, t);
+        line(at(-0.2f, 0.14f), at(0.2f, 0.14f), t);
         break;
     case Icon::Info:
         list->AddCircle(c, s * 0.4f, color, 0, t);
         list->AddCircleFilled(at(0.0f, -0.17f), s * 0.05f, color);
-        list->AddLine(at(0.0f, -0.05f), at(0.0f, 0.22f), color, t);
+        line(at(0.0f, -0.05f), at(0.0f, 0.22f), t);
         break;
     case Icon::Chart:
         list->AddRectFilled(at(-0.38f, 0.0f), at(-0.18f, 0.34f), color, s * 0.03f);
@@ -535,8 +633,8 @@ void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
         list->AddRectFilled(at(0.18f, -0.12f), at(0.38f, 0.34f), color, s * 0.03f);
         break;
     case Icon::Close:
-        list->AddLine(at(-0.26f, -0.26f), at(0.26f, 0.26f), color, t * 1.2f);
-        list->AddLine(at(-0.26f, 0.26f), at(0.26f, -0.26f), color, t * 1.2f);
+        line(at(-0.26f, -0.26f), at(0.26f, 0.26f), t * 1.2f);
+        line(at(-0.26f, 0.26f), at(0.26f, -0.26f), t * 1.2f);
         break;
     case Icon::Folder:
         list->AddRectFilled(at(-0.44f, -0.3f), at(-0.08f, -0.14f), color, s * 0.05f);
@@ -544,24 +642,40 @@ void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
         break;
     case Icon::Link:
         list->AddRect(at(-0.38f, -0.26f), at(0.24f, 0.36f), color, s * 0.05f, t);
-        list->AddLine(at(-0.04f, 0.04f), at(0.4f, -0.4f), color, t);
-        list->AddLine(at(0.12f, -0.4f), at(0.4f, -0.4f), color, t);
-        list->AddLine(at(0.4f, -0.4f), at(0.4f, -0.12f), color, t);
+        line(at(-0.04f, 0.04f), at(0.4f, -0.4f), t);
+        line(at(0.12f, -0.4f), at(0.4f, -0.4f), t);
+        line(at(0.4f, -0.4f), at(0.4f, -0.12f), t);
         break;
-    case Icon::Check:
-        list->AddLine(at(-0.32f, 0.02f), at(-0.08f, 0.26f), color, t * 1.3f);
-        list->AddLine(at(-0.08f, 0.26f), at(0.34f, -0.24f), color, t * 1.3f);
+    case Icon::Check: {
+        // One stroke with its corner joined (two lines before, whose ends
+        // crossed at the corner and notched it).
+        Outline o(c, s);
+        o.to(4.0f, 12.0f);
+        o.to(9.0f, 17.0f);
+        o.to(20.0f, 6.0f);
+        o.stroke(list, color, t * 1.3f);
         break;
+    }
     case Icon::Warning:
         list->AddTriangle(at(0.0f, -0.4f), at(0.42f, 0.34f), at(-0.42f, 0.34f), color, t);
-        list->AddLine(at(0.0f, -0.12f), at(0.0f, 0.12f), color, t);
+        line(at(0.0f, -0.12f), at(0.0f, 0.12f), t);
         list->AddCircleFilled(at(0.0f, 0.23f), s * 0.045f, color);
         break;
-    case Icon::Reset:
-        list->PathArcTo(c, s * 0.32f, -2.6f, 2.1f);
-        list->PathStroke(color, t);
-        list->AddTriangleFilled(at(-0.42f, -0.36f), at(-0.12f, -0.26f), at(-0.36f, -0.06f), color);
+    case Icon::Reset: {
+        // Undo: most of a circle, from the left round by the bottom, the
+        // right and the top, then down to the arrow's point at its upper
+        // left, the arrow an L there along the way the stroke turns. (A
+        // triangle beside the arc before, pointing off it.)
+        Outline o(c, s);
+        o.arc(12.0f, 12.0f, 9.0f, IM_PI, -2.39f, 24);
+        o.to(3.0f, 8.0f);
+        o.stroke(list, color, t);
+        o.to(3.0f, 3.5f);
+        o.to(3.0f, 8.0f);
+        o.to(7.5f, 8.0f);
+        o.stroke(list, color, t);
         break;
+    }
     case Icon::Disc:
         list->AddCircle(c, s * 0.42f, color, 40, t);
         list->AddCircle(c, s * 0.11f, color, 16, t);
@@ -569,19 +683,32 @@ void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
         list->PathStroke(color, t * 0.8f);
         break;
     case Icon::Wrench:
-        list->AddLine(at(-0.36f, 0.36f), at(0.06f, -0.06f), color, t * 1.7f);
+        line(at(-0.36f, 0.36f), at(0.06f, -0.06f), t * 1.7f);
         list->PathArcTo(at(0.17f, -0.17f), s * 0.2f, 0.4f, 5.1f);
         list->PathStroke(color, t * 1.3f);
         break;
-    case Icon::Gear:
-        list->AddCircle(c, s * 0.24f, color, 28, t * 1.2f);
-        list->AddCircle(c, s * 0.08f, color, 12, t);
+    case Icon::Gear: {
+        // A cog, filled: a ring (its hole left open, so it shows whatever is
+        // behind) with eight teeth, one pointing up. (Thin spokes round a
+        // circle before, which read as a sun at the menu's sizes.)
+        constexpr float kHole = 0.14f, kRoot = 0.33f, kTip = 0.46f;
+        // The ring as one closed stroke round the middle radius, its last
+        // point a step short of the first (closed, not repeated).
+        constexpr int kSteps = 32;
+        list->PathArcTo(c, s * (kHole + kRoot) * 0.5f, 0.0f, IM_PI * 2.0f * (kSteps - 1) / kSteps, kSteps - 1);
+        list->PathStroke(color, s * (kRoot - kHole), ImDrawFlags_Closed);
         for (int tooth = 0; tooth < 8; ++tooth) {
-            const float a = static_cast<float>(tooth) * 0.785398f;
-            list->AddLine(ImVec2(c.x + std::cos(a) * s * 0.3f, c.y + std::sin(a) * s * 0.3f),
-                          ImVec2(c.x + std::cos(a) * s * 0.43f, c.y + std::sin(a) * s * 0.43f), color, t * 1.7f);
+            const float a = static_cast<float>(tooth) * IM_PI * 0.25f;
+            const float ux = std::cos(a), uy = std::sin(a);
+            const auto p = [&](float along, float across) {
+                return ImVec2(c.x + (ux * along - uy * across) * s, c.y + (uy * along + ux * across) * s);
+            };
+            const ImVec2 shape[] = {p(kRoot - 0.04f, -0.085f), p(kTip, -0.06f), p(kTip, 0.06f),
+                                    p(kRoot - 0.04f, 0.085f)};
+            list->AddConvexPolyFilled(shape, 4, color);
         }
         break;
+    }
     case Icon::Copy:
         // Two sheets; the back one's edges stop where the front one hides them.
         list->AddRect(at(-0.12f, -0.12f), at(0.38f, 0.4f), color, s * 0.06f, t);
@@ -592,13 +719,24 @@ void drawIcon(ImDrawList *list, Icon kind, ImVec2 c, float size, ImU32 color) {
         list->PathLineTo(at(0.12f, -0.12f));
         list->PathStroke(color, t);
         break;
+    case Icon::Count:
+        break;
     }
 }
 
-void icon(Icon kind, float size, ImU32 color) {
+IconRoom iconRoom(float size) {
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::Dummy(ImVec2(size, size));
-    drawIcon(ImGui::GetWindowDrawList(), kind, ImVec2(pos.x + size * 0.5f, pos.y + size * 0.5f), size, color);
+    return {pos, size};
+}
+
+float lastItemMiddle() { return (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f; }
+
+void drawIconBeside(const IconRoom &room, Icon kind, ImU32 color) {
+    const float half = room.size * 0.5f;
+    // Never above the room's top, beside an item shorter than the icon.
+    drawIcon(ImGui::GetWindowDrawList(), kind,
+             ImVec2(room.pos.x + half, std::max(lastItemMiddle(), room.pos.y + half)), room.size, color);
 }
 
 void drawPadGlyph(ImDrawList *list, PadInput input, ImVec2 c, float size) {

@@ -80,13 +80,14 @@ F11 or Alt+Enter toggles fullscreen. F12 takes a screenshot.
 
 ### The F1 menu
 
-**F1** (or the Guide button, or Back+Start) opens the menu: display, sound,
-controls, the game options, Language (the text's language, the undub) and
-Textures. Most game options are also on the game's own Settings screen
+**F1** opens the menu's top bar, and its Settings window (the Guide button
+or Back + Start opens it at once) has the pages: display, sound, controls,
+the game options, Language (the text's language, the undub), Textures and
+Interface. Most game options are also on the game's own Settings screen
 (System > Settings). Every option and where it is:
 [docs/OPTIONS.md](docs/OPTIONS.md).
 
-With a controller: ✕ opens a page, ○ goes back, △ reaches the menu bar,
+With a controller: ✕ opens a page, ○ goes back, △ reaches the top bar,
 L1 and R1 turn the pages.
 
 <p align="center"><img src="docs/images/menu-game.jpg" width="70%" alt="The F1 menu's Game page"></p>
@@ -120,6 +121,9 @@ committed.
   the SDL3 GPU GS backend and the in-game menu in `thirdparty/dq8-gfx`.
 - [Dear ImGui](https://github.com/ocornut/imgui) by Omar Cornut (MIT), which
   the menu is drawn with, and its Roboto Medium font (Apache 2.0).
+- [Lucide](https://lucide.dev) (ISC; its check from Feather, MIT), whose
+  gamepad-2, rotate-ccw and check icons the menu's controller, undo and
+  check follow (`thirdparty/dq8-gfx/LICENSE-lucide.txt`).
 - [RGDecomp](https://github.com/Dorgengoa/RGDecomp) (CC0), the function maps
   and names for this build (`config/SCUS_974.90/functions_*.csv` derive from
   it).

@@ -104,7 +104,7 @@ A number looks like this:
 ```
 
 **Where it shows.** The Game page lists the options in the table's order.
-`host.gameSections` starts a section at a key (`{"skip_opening",
+`host.gameSections` starts a section at a key (`{"controller_buttons",
 "Convenience"}`), so an option belongs to the section above it in the table.
 
 **What it calls.** One line in `applyGameOption` (switches) or

@@ -91,14 +91,14 @@ Most of these set an option of the F1 menu for one run, without saving it.
 | `RG_MUTE=1` | No sound output (the IOP still runs) |
 | `RG_WIDESCREEN=1` | The game drawn for a wide screen of the window's shape (the menu's "Widescreen"; `src/widescreen.cpp`) |
 | `RG_MINIMAP_SIZE=N`, `RG_COMPASS_SIZE=N` | The field's minimap and compass, percent of the game's size, 50 to 100 (the menu's "Minimap size" and "Compass size"; `src/hud_size.h`) |
-| `RG_BUTTONS=xbox` | The game's text shows an Xbox controller's buttons whatever is connected (`src/button_glyphs.h`; the menu's "Controller's buttons" follows the controller in use); `RG_GAIJI_DUMP=FILE` writes the picture of special characters they are drawn in (gaiji2.img) as loaded |
+| `RG_BUTTONS=xbox` | The game's text shows an Xbox controller's buttons whatever is connected (`src/button_glyphs.h`; the menu's "Buttons in the game's text" follows the controller in use); `RG_GAIJI_DUMP=FILE` writes the picture of special characters they are drawn in (gaiji2.img) as loaded |
 | `RG_SKIP_OPENING=1` | The logos at boot give way to the title screen (the menu's "Skip the opening") |
 | `RG_FIELD_OF_VIEW=N` | The camera's field of view in the field and in battle, degrees across a 4:3 picture (the menu's "Field of view"; the game's is 52) |
 | `RG_CAMERA_DISTANCE=N` | The camera's distance from the party, percent of the game's (the menu's "Camera distance") |
 | `RG_FASTER_CAMERA=1` | The right stick turns the camera twice as fast (the menu's "Faster camera rotation") |
 | `RG_MOUSE_CAMERA=1` | The mouse turns and tilts the camera (the menu's "Mouse camera", `src/mouse_camera.h`) |
 | `RG_MOUSE_SENSITIVITY=N` | The mouse camera's sensitivity, 25 to 400 percent or 0.25 to 4 (the menu's "Mouse sensitivity") |
-| `RG_MOUSE_INVERT=1` | Moving the mouse up looks down (the menu's "Invert mouse vertical") |
+| `RG_MOUSE_INVERT=1` | Moving the mouse up looks down (the menu's "Invert mouse up and down") |
 | `RG_DRAW_DISTANCE=N` | How far the scenery and objects are drawn, percent of the game's (the menu's "Draw distance") |
 | `RG_ENCOUNTER_RATE=N` | Random battles, percent of the game's rate; 0 turns them off (the menu's "Encounter rate") |
 | `RG_BATTLE_EXPERIENCE=N` | A won battle's experience, percent of the game's (the menu's "Experience from battles") |
@@ -112,7 +112,7 @@ Most of these set an option of the F1 menu for one run, without saving it.
 | `RG_DIRECTOR_CUT_PARTY_AI=1` | The same release's party AI scripts (`chara\spt\c001.stb` to `c009`); `0` off (the menu's "Director's Cut party AI"), logged the same way |
 | `RG_FREE_CAMERA=1` | Starts with the free camera on (the menu's "Free camera"; `src/free_camera.h`) |
 | `RG_INSTANT_TEXT=1` | Text in the message windows a page at a time (the menu's "Instant text"; `src/instant_text.h`) |
-| `RG_INSTANT_RECAP=1` | The loading screen's story so far appears whole at once, then Press X (the menu's "Show the loading recap at once") |
+| `RG_INSTANT_RECAP=1` | The loading screen's story so far appears whole at once, then Press X (the menu's "Quick loading recap") |
 | `RG_VOICE_LANG=JA` | Voices (and the movies that differ) from `disc/JA`, whatever the menu's "Undub (Japanese voices)" says; any language of the game's table works for the voice token (`src/voice_language.h`). Logs `[rg] voice <path>` for each voice asked |
 | `RG_TEXT_LANG=FR` | The text in that language (FR, DE, ES, IT; EN for the game's), whatever the menu's "Text" says; needs `disc/EU/<LANG>.idx` from `setup.py extract-european` (`src/text_language.h`). Logs `[rg] text in FR`, and `[rg] in English: <path>` for a file the language has none of |
 | `RG_TEXT_TRACE=1` | With a European text language: logs each archive lookup and each file served from `disc/EU/<LANG>.DAT` |

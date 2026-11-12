@@ -38,10 +38,15 @@ is not `remembered` stays out of the file and shows what
 `HostServices::gameOptionState` says; `Overlay::setGameOptionValue`,
 `setGameNumberValue` and `setSides` take a change made outside the menu
 (the game's own Settings screen) and keep it as the menu's own. A `restart` switch changed
-since the run started says in red that it waits for the next start. F6,
-the game's free camera, cannot be bound to a pad input, as the menu's own
-keys cannot, and `Overlay::capturingBinding` tells the host when the menu
-is waiting for a key to bind. The window opens with its last size, place
+since the run started says in red that it waits for the next start. The
+game's own keys (`HostServices::gameShortcuts`: F6, the free camera, shown
+in the Shortcuts window; F7, F9 and F10, the diagnostics keys, not) cannot
+be bound to a pad input, as the menu's own keys cannot, the binding prompt
+names them all, and `Overlay::capturingBinding` tells the host when the
+menu is waiting for a key to bind. An icon beside text is centred on that
+text (`iconRoom`, `drawIconBeside`) and on a pixel's centre; the
+controller, undo and check icons follow Lucide's (`LICENSE-lucide.txt`),
+and `RG_UI_SCRIPT`'s `icons` shows every icon for a screenshot. The window opens with its last size, place
 and maximized state (`[window]` `x`, `y`, `maximized`;
 `SdlGpuWindowPlacement`). Display > Borders fills the window beside a
 picture that leaves it uncovered (`SdlGpuSides`, `sides =` under
