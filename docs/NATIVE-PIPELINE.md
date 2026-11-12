@@ -2,8 +2,9 @@
 
 ## The goal
 
-With the native renderer flag on, the GS does not exist as a concept on the
-renderer's side. There is no GS local memory, no GS registers, no GS
+With the native pipeline on (`RG_NATIVE_PIPELINE=1`, under the F1 menu's
+"Native renderer" switch; the switch alone keeps the GS), the GS does not
+exist as a concept on the renderer's side. There is no GS local memory, no GS registers, no GS
 addresses or pages, no GIF packets, and no `GSRasterBackend`. The renderer
 gets scene data it understands: geometry with its transforms, cameras,
 textures and render targets by id, materials as plain enums, and effects

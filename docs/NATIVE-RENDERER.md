@@ -6,15 +6,20 @@ with a renderer that knows what it is drawing: models with their matrices,
 named effect buffers, and a 2D layer. Proposed 2026-10-28, for review; nothing
 here is implemented except where a section says so.
 
-## Status (2026-11-03)
+## Status (2026-11-11)
 
 The emulated GS path draws everything by default. Phase 1 is built for every
 VU1 program the recordings hold, behind `RG_VU1_NATIVE` (`src/vu1_native.h`),
-off unless set; `gpu` sends their chunks as meshes the GPU transforms. The
-F1 menu's "Native renderer" switch (the Game page's Rendering section;
-`native_renderer` in settings.ini, `RG_NATIVE_RENDERER=0` or `1` for a run;
+off unless set or the switch below is on; `gpu` sends their chunks as meshes
+the GPU transforms, which the GS backend still draws. The F1 menu's "Native
+renderer" switch (the Game page's Rendering section; `native_renderer` in
+settings.ini, `RG_NATIVE_RENDERER=0` or `1` for a run;
 `src/native_renderer.h`, `aaec68f`) is what the native side goes behind as
-it lands; nothing reads it yet, and `RG_VU1_NATIVE` does not follow it.
+it lands. With it on, `RG_VU1_NATIVE` defaults to `gpu` (the chunks slot E
+clips stay on the VU1 unless `RG_VU1_CLIP_ON_GPU=1` or the pipeline is on),
+the VU0's matrix program runs natively (`RG_VU0_NATIVE`), and
+`RG_NATIVE_PIPELINE=1` draws the whole frame with no GS
+([NATIVE-PIPELINE.md](NATIVE-PIPELINE.md)).
 Notes marked *Status* below say where the code went another way than this
 plan.
 
@@ -24,6 +29,9 @@ The renderer documents:
   to 6, for a renderer that knows what it draws in place of the GS emulation.
 - [VU1-NATIVE.md](VU1-NATIVE.md): how a VU1 program moves off the VU1 (the
   oracle loop, the pieces, VU1 data memory), what is done, and its speed.
+- [NATIVE-PIPELINE.md](NATIVE-PIPELINE.md): the native pipeline
+  (`RG_NATIVE_PIPELINE=1`), the whole frame drawn with no GS: where the
+  line is, the records, what is in so far, and how to run it.
 - [VU1-RECON.md](VU1-RECON.md): what VU1 data memory gives a temporal
   upscaler: the capture, object identity, jitter and cameras; the
   motion-vector pass is not built.
@@ -224,9 +232,10 @@ fully playable. `RG_RENDER=gs` keeps the whole GS path selectable until phase
 time, and a debug key flips them live on the same frame.
 
 *Status:* neither `RG_RENDER` nor `RG_NATIVE` was built. The switch for a
-run is `RG_NATIVE_RENDERER` (the F1 "Native renderer"), which nothing reads
-yet; the VU1 programs have their own modes in `RG_VU1_NATIVE` (`0`, `check`,
-`1`, `skip`, `gpu`).
+run is `RG_NATIVE_RENDERER` (the F1 "Native renderer"); the VU1 programs
+have their own modes in `RG_VU1_NATIVE` (`0`, `check`, `1`, `skip`, `gpu`;
+`gpu` by default with the switch on), and the whole frame without the GS is
+`RG_NATIVE_PIPELINE=1`.
 
 **Reference scenes:** Salgin's first scene, the town square (`TOWN=1
 walk.sh`), a forced battle (battle bench), the boss gate, an event with an

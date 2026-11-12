@@ -42,8 +42,9 @@ from the player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
     emulation of the PS2's graphics chip
     ([NATIVE-RENDERER.md](NATIVE-RENDERER.md)). Off by default, for
     development: the VU1 programs done natively (`RG_VU1_NATIVE`,
-    [VU1-NATIVE.md](VU1-NATIVE.md)) and the menu's "Native renderer"
-    switch, which nothing reads yet.
+    [VU1-NATIVE.md](VU1-NATIVE.md)), which the menu's "Native renderer"
+    switch turns on, and the native pipeline behind it
+    (`RG_NATIVE_PIPELINE=1`, [NATIVE-PIPELINE.md](NATIVE-PIPELINE.md)).
   - A native Linux build, for Linux PCs and the Steam Deck (the Windows
     build through Proton is prepared but untested:
     [BUILDING.md](BUILDING.md#steam-deck-untested)).
