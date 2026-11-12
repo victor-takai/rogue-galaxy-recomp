@@ -11,6 +11,8 @@ What each page here is for, by who it is for. New to the project? Start with
   updating, saves from PCSX2 and uninstalling.
 - [OPTIONS.md](OPTIONS.md): the F1 menu and every game option, with where to
   find each one.
+- [DIRECTORS-CUT.md](DIRECTORS-CUT.md): what the Japanese Director's Cut
+  changed in battles, which three options bring to the US release.
 - [DISC.md](DISC.md): which disc images work, and how they are checked and
   extracted.
 - [TEXTURE_PACKS.md](TEXTURE_PACKS.md): putting texture packs in, and making

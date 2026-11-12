@@ -2,16 +2,42 @@
 
 ## Unreleased
 
+## 0.3.0 (pre-release)
+
+What the Japanese Director's Cut changed in battles, as options; the
+European texts (experimental); the mouse camera and new keyboard and mouse
+controls; and fixes. No game data is included.
+
+**Requires:** Windows 10/11 (64-bit), about 16 GB free, and your own image
+of Rogue Galaxy (USA, SCUS-97490).
+
+### Install
+
+1. Download **RogueGalaxy-0.3.0.zip** (not "Source code").
+2. Extract it to a short path, such as `C:\`: it holds the folder
+   `RogueGalaxy`.
+3. Run `Install.bat` and pick your disc image.
+4. Wait about 20 minutes on a fast PC (up to an hour on a slower one), then
+   play with `Rogue Galaxy.exe`.
+
+### Update from 0.2.0
+
+Run `Update.bat` in your game folder. This version changes how the game's
+code is translated, so the update takes about as long as the first
+install. Your saves (`disc\mc0`), settings, textures and the undub stay
+([INSTALL.md](docs/INSTALL.md#update); from 0.1.0,
+[by hand](docs/INSTALL.md#from-010)).
+
 ### New
 
 - What the Japanese Director's Cut changed in battles, which the US
   release did not get, as three options (Game, off by default, from the
-  next start):
-  - Director's Cut balance: smaller groups of enemies, more money from
-    many of them, the Rosencaster and Starship Factory enemies weaker, the
-    Area Masters stronger, bosses never knocked down;
-  - Director's Cut enemy behavior: the enemies' attacks and AI;
-  - Director's Cut party AI: allies low on health fall back and guard.
+  next start): Director's Cut balance (smaller groups of enemies, more
+  money from many of them, the Rosencaster and Starship Factory enemies
+  weaker, the Area Masters stronger, bosses never knocked down by
+  ordinary hits), Director's Cut enemy behavior (the enemies' attacks and
+  AI) and Director's Cut party AI (allies low on health fall back and
+  guard). What each one changes: [DIRECTORS-CUT.md](docs/DIRECTORS-CUT.md).
   All of it comes from your own Japanese Director's Cut disc:
   `Install-Undub.bat` reads it. With the undub already installed, the
   update reads it from the image it came from, if that is still where it
@@ -100,6 +126,28 @@
   vector unit did on the models is done on the PC and its graphics card.
   The models are still drawn through the emulation of the PS2's graphics
   chip.
+
+### Known issues
+
+- Only the USA version is supported: the Japanese and European discs add
+  to it (voices, texts, the Director's Cut's battles), never replace it.
+- It has not been played from start to finish; most of the testing covers
+  the early game.
+- From chapter 8 the game no longer hangs (above), but no testing has
+  reached chapter 8: the fix has not been seen in play.
+- The heaviest scenes can dip below 60 fps, more so at high internal
+  resolutions: Zerard's central plaza runs at about 51 fps at 4x (above).
+- A black screen after the boss at the end of Juraika was reported once
+  ([#17](https://github.com/victor-takai/rogue-galaxy-recomp/issues/17)) and
+  has not been seen again. If it happens to you, the log
+  (`build\last-run.log`) helps.
+- The European texts are experimental: a few lines stay English, and most
+  of the story has not been seen in them.
+- The Director's Cut options have been played only in the early game.
+- In widescreen, menus and text are stretched.
+- The Steam Deck, through Proton, is prepared but untested.
+- An antivirus may block the compiler during the install: restore it and
+  run `Install.bat` again.
 
 ## 0.2.0 (pre-release)
 

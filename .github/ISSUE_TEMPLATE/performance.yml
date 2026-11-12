@@ -35,7 +35,7 @@ body:
     attributes:
       label: Version
       description: F1 > Rogue Galaxy > About, or "built from main at" and the commit.
-      placeholder: 0.2.0 (abc1234)
+      placeholder: 0.3.0 (abc1234)
     validations:
       required: true
 

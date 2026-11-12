@@ -10,7 +10,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(RogueGalaxyRecomp
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Rogue Galaxy (PS2) static recompilation"
     LANGUAGES C CXX)
 

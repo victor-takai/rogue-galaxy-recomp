@@ -12,7 +12,7 @@ heaviest field scene measured, a boss gate, holds 50 to 60, limited by the
 VU1 programs.
 Known gaps: a rare hang after the Story loading screen (below; possibly
 the checkpoint unwind that patch 0010 fixed, not confirmed). Each release
-(0.2.0 the latest) is the source with an installer that builds the game
+(0.3.0 the latest) is the source with an installer that builds the game
 from the player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
 
 | Phase | Goal | State |
@@ -24,14 +24,20 @@ from the player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
 | 4 | Field, battle, movies, sound | done |
 | 5 | Performance, widescreen, 60 fps, launcher | 60 fps mode by default (50-60 in the heaviest scenes), launcher, in-game menu, widescreen option, installer (0.1.0), `Update.bat` (0.2.0) |
 
-## Where things stand (2026-11-03)
+## Where things stand (2026-11-12)
 
 - The whole game plays: field, battles, movies, sound. The 60 fps mode is
   on by default (Game > 60 frames per second); widescreen up to 32:9 and
   up to 8x internal resolution are menu options ([OPTIONS.md](OPTIONS.md)).
-- Release 0.2.0 is out. Since 0.1.0 (`Install.bat`), it brought, in
-  [`CHANGELOG.md`](../CHANGELOG.md): `Update.bat`, the undub from the
-  player's own Japanese disc (`Install-Undub.bat`, F1 > Settings > Language; see
+- Release 0.3.0 is out. Since 0.2.0, it brought, in
+  [`CHANGELOG.md`](../CHANGELOG.md): what the Japanese Director's Cut
+  changed in battles, as three options read from the player's own
+  Japanese disc ([DIRECTORS-CUT.md](DIRECTORS-CUT.md)), the European texts
+  (experimental, `Install-European.bat`), the mouse camera and new
+  keyboard and mouse controls, and a fix for the hang from chapter 8 on
+  (not yet seen in play).
+  0.2.0 had brought `Update.bat`, the undub from the player's own Japanese
+  disc (`Install-Undub.bat`, F1 > Settings > Language; see
   [dialogue.md](dialogue.md)), texture packs
   ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)), the Xbox buttons in the text,
   the inventory options and the F1 menu with only a controller.
@@ -50,9 +56,9 @@ from the player's disc (`Install.bat`; [`CHANGELOG.md`](../CHANGELOG.md)).
     [BUILDING.md](BUILDING.md#steam-deck-untested)).
   - The European release's languages, read from the player's own disc of
     that version ([#42](https://github.com/victor-takai/rogue-galaxy-recomp/pull/42)):
-    they work, marked experimental, and are not yet in a release; played
-    in Spanish and tested in all four up to the first scenes, the rest of
-    the story still to be seen in them.
+    in 0.3.0, marked experimental; played in Spanish and tested in all
+    four up to the first scenes, the rest of the story still to be seen in
+    them.
 - Taken out at the user's request: the menus in 4:3 on a wide screen
   (2026-10-28, never committed), Save anywhere and Sharp letters
   (2026-10-30, 3b09797; the sources are at b55f0ea).

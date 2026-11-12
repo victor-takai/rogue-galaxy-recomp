@@ -51,6 +51,11 @@ Director's Cut (SCPS-17013).
 The text stays in its language: English, or one of the
 [European texts](#european-texts-optional) with the Japanese voices.
 
+`Install-Undub.bat` also reads what the Director's Cut changed in
+battles, which the US release did not get. Three options in
+F1 > Settings > Game turn it on, each part on its own
+([DIRECTORS-CUT.md](DIRECTORS-CUT.md)). The voices can stay English.
+
 ## European texts (optional)
 
 The text in French, German, Spanish or Italian. You need your own image of
@@ -71,13 +76,6 @@ something looks wrong (text, a menu, the picture), open an
 [issue](https://github.com/victor-takai/rogue-galaxy-recomp/issues) with a
 screenshot and the game's log. Picking English again brings the game back as
 it was.
-
-The same step reads what the Director's Cut changed in battles, which the
-US release did not get: smaller groups of enemies, more money, some enemies
-weaker and others stronger, and that release's enemy attacks and AI. Three
-options in F1 > Settings > Game turn it on, each part on its own:
-[Director's Cut balance, enemy behavior and party AI](OPTIONS.md#game-options).
-The voices can stay English.
 
 ## Update
 
