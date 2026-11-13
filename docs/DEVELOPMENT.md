@@ -204,6 +204,7 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `DQ8_GFX_EFFECT_SCALE=N` | Scale of the blur buffers (0x2C40 and 0x3800, at most 256 pixels wide; `DQ8_GFX_EFFECT_BASES` for others): 2 unless set, 0 for the scene's scale. At 8x they would be 1536x1536; at 2 the frame differs from the scene's scale by 814 of 229,376 pixels at 3x, none by more than 8 levels |
 | `DQ8_GFX_GPU_TIMES=1` | Label the backend's GPU work and print `[gputime]` lines every two seconds (GPU ms and count a second per label, heaviest first); Vulkan only, about a tenth of the frame at 8x |
 | `DQ8_GFX_NO_DUAL_SOURCE=1` | No dual-source blending: the source-alpha blends go back to the alpha replay (two passes), for comparing frames or a driver without `dualSrcBlend` |
+| `RG_PRESENT_LATEST=1` | Flip pacing holds only the newest flip and the presenter waits for it, as before the newest-finished rule (`src/flip_pacing.cpp`): a worker a frame behind can then hold the display at half rate; `0` or empty leaves the rule on |
 | `DQ8_GFX_NO_DESTINATION_COPY=1` | No shader that reads the destination from a snapshot: the draws that need it keep their approximation |
 | `DQ8_GFX_NO_TEXTURED_OVERONE=1` | A modulated, textured source-alpha blend whose vertex alpha passes 0x80 keeps the attachment's clamped blend instead of the destination copy (the menus' text reads grey again); `0` or empty leaves it on |
 | `DQ8_GFX_SUBMIT_DRAWS=N` | A flush of the queued draws submits them once this many are recorded (96 unless set; 0 submits at every flush) |

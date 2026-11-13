@@ -1,0 +1,46 @@
+diff --git a/ps2xRuntime/include/runtime/gs/gs_backend.h b/ps2xRuntime/include/runtime/gs/gs_backend.h
+index f1660e0..ee47edd 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_backend.h
+@@ -69,6 +69,10 @@ public:
+     virtual bool QueuesPreparedPresentation() const { return false; }
+     virtual GSPresentationTicket PreparePresentation(const GSPresentationRequest &) { return {}; }
+     virtual PresentationFrame DisplayPreparedPresentation(const GSPresentationTicket &) { return {}; }
++    // Whether DisplayPreparedPresentation would take the ticket without
++    // waiting for its preparation: a backend that prepares in order elsewhere
++    // (the threaded one) says when it has run. Never blocks.
++    virtual bool IsPresentationReady(const GSPresentationTicket &) const { return true; }
+     // Shutdown must wake a producer blocked waiting for a free snapshot slot.
+     virtual void CancelPreparedPresentations() noexcept {}
+ };
+diff --git a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
+index 27c0456..4909737 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
+@@ -28,6 +28,7 @@ public:
+     bool QueuesPreparedPresentation() const override { return SupportsPreparedPresentation(); }
+     GSPresentationTicket PreparePresentation(const GSPresentationRequest &request) override;
+     PresentationFrame DisplayPreparedPresentation(const GSPresentationTicket &ticket) override;
++    bool IsPresentationReady(const GSPresentationTicket &ticket) const override;
+     void CancelPreparedPresentations() noexcept override;
+     bool ClearFramebuffer(const GSContext &context, uint32_t rgba) override;
+     uint32_t ConsumeLocalToHostBytes(uint8_t *dst, uint32_t size) override;
+diff --git a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+index 79087fd..d765785 100644
+--- a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+@@ -488,6 +488,14 @@ GSPresentationTicket GSThreadedBackend::PreparePresentation(const GSPresentation
+     m_impl->enqueue({Impl::Op::Prepare, Impl::Prepare{request, std::move(result)}}, true);
+     return ticket;
+ }
++bool GSThreadedBackend::IsPresentationReady(const GSPresentationTicket &ticket) const
++{
++    const auto *prepared = dynamic_cast<const Impl::PresentationTicket *>(ticket.get());
++    if (!prepared || prepared->owner != m_impl->identity)
++        return true;
++    std::lock_guard lock(prepared->result->mutex);
++    return prepared->result->completed;
++}
+ PresentationFrame GSThreadedBackend::DisplayPreparedPresentation(const GSPresentationTicket &ticket)
+ {
+     const auto *prepared = dynamic_cast<const Impl::PresentationTicket *>(ticket.get());
