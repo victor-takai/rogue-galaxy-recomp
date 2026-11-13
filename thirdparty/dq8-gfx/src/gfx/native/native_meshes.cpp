@@ -524,6 +524,7 @@ void Renderer::drawMeshes(SDL_GPUDevice *device, SDL_GPUCommandBuffer *commands,
         mu.size[2] = ownW;
         mu.size[3] = ownH;
         mu.blend[0] = m.shuffle == ChannelShuffle::GreenToAlpha ? 1.0f : 0.0f;
+        mu.blend[1] = m.linear ? 1.0f : 0.0f;
         mu.blend[2] = m.clampU ? 1.0f : 0.0f;
         mu.blend[3] = m.clampV ? 1.0f : 0.0f;
         mu.wrap[0] = m.wrapU;
@@ -578,6 +579,7 @@ void Renderer::drawMeshes(SDL_GPUDevice *device, SDL_GPUCommandBuffer *commands,
         du.target[0] = targetW;
         du.target[1] = targetH;
         du.target[2] = d.hasModel ? 0.0f : 1.0f; // fog per vertex
+        du.target[3] = 0.5f / float(std::max(scale, 1u)); // the sample offset
         std::memcpy(du.fog, d.fog, sizeof(du.fog));
 
         if (m.blending && (m.srcFactor == BlendFactor::Fixed || m.srcFactor == BlendFactor::InvFixed ||
