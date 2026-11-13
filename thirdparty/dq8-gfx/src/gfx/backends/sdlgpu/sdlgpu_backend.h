@@ -288,6 +288,9 @@ public:
     SdlPadInput &padInput();
     // Where the game picture was drawn at the last frame, in window pixels.
     SdlGpuRect displayRect() const;
+    // Whether the FSR 1 filter would act on the picture as it is now shown
+    // (Rogue Galaxy: added).
+    SdlGpuFsrState fsrState() const;
     // Delivers the next frame shown: the game picture as displayed, or the
     // whole window with the overlay.
     void requestCapture(bool withOverlay, SdlGpuCaptureCallback done);

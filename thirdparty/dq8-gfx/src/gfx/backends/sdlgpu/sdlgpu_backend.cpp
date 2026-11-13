@@ -1250,7 +1250,12 @@ struct SdlGpuBackend::Impl {
         uint32_t width = 0u, height = 0u;
         SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_INVALID;
     };
-    ScratchTexture sharpTexture, compositeTexture, captureTexture;
+    ScratchTexture sharpTexture, compositeTexture, captureTexture, fsrTexture;
+    // FSR 1 (Rogue Galaxy: added): whether the last picture was enlarged on
+    // both sides, and whether its passes failed (no SPIR-V, as on Metal),
+    // for the menu to say when it cannot act.
+    bool fsrEnlarged = false;
+    bool fsrUnavailable = false;
     // What fills the window beside the picture (Rogue Galaxy: added): the
     // picture halved down to a small copy for the blurred sides, and the
     // player's image, loaded each time that choice is made.
@@ -4233,6 +4238,37 @@ struct SdlGpuBackend::Impl {
         uint32_t width = from.width;
         uint32_t height = from.height;
         SDL_GPUFilter filter = SDL_GPU_FILTER_LINEAR;
+        // FSR 1 (Rogue Galaxy: added): EASU up to the window's size into a
+        // scratch, then RCAS from it into the window (at 0% sharpness EASU
+        // draws into the window and RCAS is skipped). Only when both sides
+        // are enlarged: EASU has no prefilter for a side it would shrink.
+        // Smooth otherwise, or when the passes cannot be made.
+        fsrEnlarged = rect.width > width && rect.height > height;
+        if (displayOptions.filter == SdlGpuFilter::Fsr && fsrEnlarged && !fsrUnavailable) {
+            const int percent = std::clamp(displayOptions.fsrSharpness, 0, 100);
+            const uint32_t region[4] = {from.x, from.y, from.width, from.height};
+            const uint32_t to[4] = {rect.x, rect.y, rect.width, rect.height};
+            const SDL_GPUTextureFormat windowFormat = SDL_GetGPUSwapchainTextureFormat(device.handle(), window);
+            std::string error;
+            bool drawn = false;
+            if (percent == 0) {
+                drawn = device.drawFsr(commands, target, windowFormat, to, loadOp, source, region, false, 0.0f, error);
+            } else if (ensureScratch(fsrTexture, rect.width, rect.height, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM)) {
+                // 1% is RCAS at 2 stops, 100% at 0 (the sharpest).
+                const float stops = float(100 - percent) / 49.5f;
+                const uint32_t whole[4] = {0u, 0u, rect.width, rect.height};
+                drawn = device.drawFsr(commands, fsrTexture.texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, whole,
+                                       SDL_GPU_LOADOP_DONT_CARE, source, region, false, 0.0f, error) &&
+                        device.drawFsr(commands, target, windowFormat, to, loadOp, fsrTexture.texture, whole, true,
+                                       stops, error);
+            } else {
+                error = "no scratch texture for EASU";
+            }
+            if (drawn)
+                return;
+            fsrUnavailable = true;
+            std::fprintf(stderr, "[present] FSR 1 unavailable, smooth instead: %s\n", error.c_str());
+        }
         if (displayOptions.filter == SdlGpuFilter::Nearest) {
             filter = SDL_GPU_FILTER_NEAREST;
         } else if (displayOptions.filter == SdlGpuFilter::Sharp) {
@@ -5189,7 +5225,7 @@ SdlGpuBackend::~SdlGpuBackend() {
         if (m_impl->presentUpload)
             SDL_ReleaseGPUTexture(m_impl->device.handle(), m_impl->presentUpload);
         for (auto *scratch : {&m_impl->sharpTexture, &m_impl->compositeTexture, &m_impl->captureTexture,
-                              &m_impl->roundTrip.copy})
+                              &m_impl->fsrTexture, &m_impl->roundTrip.copy})
             m_impl->releaseScratch(*scratch);
         for (auto &level : m_impl->blurLevels)
             m_impl->releaseScratch(level);
@@ -5758,6 +5794,13 @@ SdlPadInput &SdlGpuBackend::padInput() {
 
 SdlGpuRect SdlGpuBackend::displayRect() const {
     return m_impl->lastRect;
+}
+
+SdlGpuFsrState SdlGpuBackend::fsrState() const {
+    if (m_impl->fsrUnavailable ||
+        (SDL_GetGPUShaderFormats(m_impl->device.handle()) & SDL_GPU_SHADERFORMAT_SPIRV) == 0)
+        return SdlGpuFsrState::Unsupported;
+    return m_impl->fsrEnlarged ? SdlGpuFsrState::Acts : SdlGpuFsrState::NotEnlarged;
 }
 
 void SdlGpuBackend::requestCapture(bool withOverlay, SdlGpuCaptureCallback done) {
