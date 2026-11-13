@@ -30,27 +30,15 @@ install. Your saves (`disc\mc0`), settings, textures and the undub stay
 
 ### New
 
-- What the Japanese Director's Cut changed in battles, which the US
-  release did not get, as three options (Game, off by default, from the
-  next start): Director's Cut balance (smaller groups of enemies, more
-  money from many of them, the Rosencaster and Starship Factory enemies
-  weaker, the Area Masters stronger, bosses never knocked down by
-  ordinary hits), Director's Cut enemy behavior (the enemies' attacks and
-  AI) and Director's Cut party AI (allies low on health fall back and
-  guard). What each one changes: [DIRECTORS-CUT.md](docs/DIRECTORS-CUT.md).
-  All of it comes from your own Japanese Director's Cut disc:
-  `Install-Undub.bat` reads it. With the undub already installed, the
-  update reads it from the image it came from, if that is still where it
-  was; otherwise run `Install-Undub.bat` again (the voices it copied stay).
-  The balance works with the European texts too, with their names: the
-  install that comes second makes that text's tables.
-- European texts (experimental): the menus, scenes and battles in French,
-  German, Spanish or Italian, from your own European disc (F1 > Settings >
-  Language > Text, from the next start). Run `Install-European.bat` first
-  and pick the disc image. The options on the game's own Settings screen
-  are named in that language too. The voices stay as they are. Played in
-  Spanish and tested in all four up to the first scenes; the rest of the
-  story has not been seen in them yet
+- Director's Cut balance, enemy behavior and party AI (Game, off by
+  default): what the Japanese Director's Cut changed in battles, which the
+  US release did not get, read from your own Japanese disc by
+  `Install-Undub.bat` ([DIRECTORS-CUT.md](docs/DIRECTORS-CUT.md)). With the
+  undub from 0.2.0, the update reads it from the same image; if the image
+  has moved, run `Install-Undub.bat` again.
+- European texts (experimental): French, German, Spanish or Italian, from
+  your own European disc. Run `Install-European.bat`, then pick the
+  language in F1 > Settings > Language > Text
   ([#3](https://github.com/victor-takai/rogue-galaxy-recomp/issues/3)).
 - Mouse camera (Game, on by default): the mouse turns and tilts the
   camera, exploring, in battle and in the first-person view, with its own
@@ -125,7 +113,7 @@ install. Your saves (`disc\mc0`), settings, textures and the undub stay
   development) is no longer empty: with it on, most of the work the PS2's
   vector unit did on the models is done on the PC and its graphics card.
   The models are still drawn through the emulation of the PS2's graphics
-  chip.
+  chip. By notavolleyball-dev, with fixes by azlekayn.
 
 ### Known issues
 
