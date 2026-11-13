@@ -17,14 +17,14 @@ image; nothing of the game is distributed.
 - In-game menu (F1)
 - [New game settings](docs/OPTIONS.md)
 - Japanese voices and movies (undub)
-- The Japanese Director's Cut's battle balance, enemy behavior and party
-  AI, as options
+- [The Japanese Director's Cut's](docs/DIRECTORS-CUT.md) battle balance,
+  enemy behavior and party AI, as options
 - Text in French, German, Spanish or Italian (experimental)
 - [Texture packs](docs/TEXTURE_PACKS.md), PCSX2's included
 
 ## What to expect
 
-This is an early pre-release (0.2.0). The whole game plays, but:
+This is an early pre-release (0.3.0). The whole game plays, but:
 
 - **It has not been played from start to finish.** Most testing covers the
   early game; later chapters, the Factory and Insectron are unchecked.

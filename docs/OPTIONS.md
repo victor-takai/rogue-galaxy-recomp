@@ -111,9 +111,9 @@ The numbers are against the game's own, 1.0x.
 | Weapon growth | 1.0x to 10.0x: each battle fills a weapon's gauge (15 to full), then its attributes, by 1 point, or more. |
 | Shop prices | 0.1x to 2.0x. |
 | Action gauge speed | 0.25x to 4.0x. |
-| Director's Cut balance | Off by default. Battles with the numbers of the Japanese Director's Cut (SCPS-17013): 85 of the 374 enemy groups are smaller (the Cactulus group in Rosa comes 2 to 3 instead of 4 to 5), 75 enemies leave about 1.5 times the money, some enemies are weaker and the 10 Area Masters stronger, bigger enemies are harder to knock down and bosses never are. Experience, the party, the weapons and the damage formula stay the same. Works with the European texts too. Needs your Japanese disc: run `Install-Undub.bat` (it serves all three Director's Cut options). Takes effect at the next start. |
-| Director's Cut enemy behavior | Off by default. The enemies' attacks and AI of the same release: enemies face you before they attack, some attack from farther away, and the party's jump attacks home in on flying enemies knocked out of the air. Works with or without the balance. Needs the same disc. Takes effect at the next start. |
-| Director's Cut party AI | Off by default. The allies' AI of the same release: an ally low on health sometimes falls back to the leader and guards. Needs the same disc. Takes effect at the next start. |
+| Director's Cut balance | Off by default. Turns on the battle balance of the Japanese Director's Cut (SCPS-17013); what it changes: [DIRECTORS-CUT.md](DIRECTORS-CUT.md#balance). Needs your Japanese disc: run `Install-Undub.bat` (it serves all three Director's Cut options). Takes effect at the next start. |
+| Director's Cut enemy behavior | Off by default. Turns on the enemies' attacks and AI of the same release ([DIRECTORS-CUT.md](DIRECTORS-CUT.md#enemy-behavior)), with or without the balance. Needs the same disc. Takes effect at the next start. |
+| Director's Cut party AI | Off by default. Turns on the allies' AI of the same release ([DIRECTORS-CUT.md](DIRECTORS-CUT.md#party-ai)). Needs the same disc. Takes effect at the next start. |
 
 **Rendering**
 
