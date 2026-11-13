@@ -15,7 +15,8 @@
 #
 # Update.bat runs a copy of itself from the temp folder and passes the game's
 # folder as -Root, since the update replaces the one in the folder.
-# -NoBuild stops after the files are replaced (tests).
+# -NoBuild stops after the files are replaced (tests). Started by a launcher
+# with no window to show in, it opens one (launchers.ps1).
 # Windows PowerShell 5.1, so no newer syntax; plain ASCII.
 
 param(
@@ -26,8 +27,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Started with no arguments but the folder, which Update.bat always passes:
+# as a launcher's Play starts it (launchers.ps1).
+$NoArguments = (@($PSBoundParameters.Keys | Where-Object { $_ -ne "Root" }).Count -eq 0)
+. (Join-Path $PSScriptRoot "short-name.ps1")
+. (Join-Path $PSScriptRoot "launchers.ps1")
 if (-not $Root) { $Root = Join-Path $PSScriptRoot "..\.." }
 $Root = (Resolve-Path -LiteralPath $Root).Path.TrimEnd("\")
+# The folder the files are written through: $Root, or its short name while
+# they are replaced (Main; short-name.ps1), for the framework's deepest paths.
+$FileRoot = $Root
 $System32 = Join-Path $env:SystemRoot "System32"
 # Newest first, pre-releases included, as the game's own check does (0.1.0
 # is one, which /releases/latest leaves out).
@@ -192,10 +201,10 @@ function Test-SameBytes([string]$Path, [byte[]]$Data) {
     }
 }
 
-# Writes $Data to $Relative under $Root unless the file there holds those
+# Writes $Data to $Relative under $FileRoot unless the file there holds those
 # bytes already; true when it wrote.
 function Write-IfChanged([string]$Relative, [byte[]]$Data) {
-    $target = Join-Path $Root $Relative
+    $target = Join-Path $FileRoot $Relative
     if ((Test-Path -LiteralPath $target -PathType Leaf) -and (Test-SameBytes $target $Data)) { return $false }
     $dir = Split-Path -Parent $target
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
@@ -225,9 +234,9 @@ function Get-PatchedFramework([System.IO.Compression.ZipArchive]$Archive) {
     }
     $prefix = $ZipFolder + $FrameworkFolder.Replace("\", "/")
     $patchPrefix = $ZipFolder + $PatchFolder
-    # Inside the folder, whose path Install.bat keeps short, for the
+    # Inside the folder, through its short name when it has one, for the
     # framework's deepest paths.
-    $stage = Join-Path $Root "build\update\framework"
+    $stage = Join-Path $FileRoot "build\update\framework"
     $tree = Join-Path $stage "PS2Recomp"
     $patchDir = Join-Path $stage "patches"
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
@@ -326,10 +335,10 @@ function Apply-Zip([string]$ZipPath) {
 function Remove-Stale([hashtable]$Delivered) {
     $removed = @()
     foreach ($folder in $CodeFolders) {
-        $dir = Join-Path $Root $folder
+        $dir = Join-Path $FileRoot $folder
         if (-not (Test-Path -LiteralPath $dir)) { continue }
         foreach ($file in @(Get-ChildItem -LiteralPath $dir -File -Recurse -Force)) {
-            $relative = $file.FullName.Substring($Root.Length + 1)
+            $relative = $file.FullName.Substring($FileRoot.Length + 1)
             if ($Delivered.ContainsKey($relative.ToLowerInvariant())) { continue }
             if ($relative -match "\\__pycache__\\|\.pyc$|\\\.rg-patches-applied$") { continue }
             Remove-Item -LiteralPath $file.FullName -Force
@@ -340,6 +349,10 @@ function Remove-Stale([hashtable]$Delivered) {
 }
 
 function Main {
+    if ($NoArguments) {
+        $code = Invoke-OwnWindow (Join-Path $Root "Update.bat")
+        if ($null -ne $code) { exit $code }
+    }
     try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
     try { Start-Transcript -LiteralPath (Join-Path $Root "update.log") -Force | Out-Null } catch { }
     Write-Host "Rogue Galaxy Recompiled: update" -ForegroundColor Green
@@ -393,9 +406,33 @@ function Main {
     }
 
     Write-Step "Replacing what changed"
-    $result = Apply-Zip $zipPath
-    Write-Host "  $($result.Revision): $($result.Written) file(s) written"
-    $removed = @(Remove-Stale $result.Delivered)
+    # Nothing else works in the folder from here (launchers.ps1), until
+    # install.ps1 takes over below.
+    $lock = Lock-Folder $Root
+    if ($lock -is [string]) {
+        Stop-Update "An install or update is already running in this folder, in another window. Let it end there."
+    }
+    # Through the short name the build will see the folder by, for the
+    # framework's deepest paths; without one the rebuild could not go on
+    # either, so nothing is written.
+    $shortName = ""
+    if (Test-NeedsShortName $Root) {
+        $shortName = Use-ShortName $Root
+        if (-not $shortName) {
+            Stop-Update ("Windows did not let the update make $(Get-ShortName $Root), the short name the build tools see " +
+                "this folder by. Nothing was changed. Move this folder to a short path without spaces, such as " +
+                "C:\RogueGalaxy, and run Install.bat there.")
+        }
+        $script:FileRoot = $shortName
+    }
+    try {
+        $result = Apply-Zip $zipPath
+        Write-Host "  $($result.Revision): $($result.Written) file(s) written"
+        $removed = @(Remove-Stale $result.Delivered)
+    } finally {
+        $script:FileRoot = $Root
+        Remove-ShortName $shortName
+    }
     if ($removed.Count -gt 0) {
         Write-Host "  $($removed.Count) file(s) the new version no longer has, removed:"
         foreach ($name in $removed) { Write-Host "    $name" }
@@ -406,7 +443,9 @@ function Main {
     }
 
     Write-Step "Rebuilding"
-    $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $Root "tools\install\install.ps1"), "-Updating")
+    # install.ps1 takes the lock itself.
+    if ($lock) { $lock.Dispose() }
+    $arguments =@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $Root "tools\install\install.ps1"), "-Updating")
     if ($Yes) { $arguments += "-Yes" }
     & (Join-Path $System32 "WindowsPowerShell\v1.0\powershell.exe") @arguments
     if ($LASTEXITCODE -ne 0) {

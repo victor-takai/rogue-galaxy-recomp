@@ -10,7 +10,10 @@ On Windows, double-click `Rogue Galaxy.exe`, which the build puts in the
 repository's folder: it starts the built game on `disc/SCUS_974.90`, writes
 the game's log to `build/last-run.log` (the run before survives as
 `build/last-run.prev.log`) and opens no terminal; a game that ends with an
-error shows the log's last lines in a message box. `debug\RogueGalaxy.bat`
+error shows the log's last lines in a message box. While the game is not
+built it offers to run `Install.bat` instead (the installer builds it
+first, as soon as the compiler is downloaded), and while `Install.bat` or
+`Update.bat` runs in the folder it says so and starts nothing. `debug\RogueGalaxy.bat`
 does the same in a terminal, which it keeps open until the game closes. The
 log still goes to `build/last-run.log`, not to the terminal: to follow it as
 it is written, run `Get-Content -Wait build\last-run.log` in a second one.
@@ -73,8 +76,8 @@ and the first few of those get a `[gfx] depth lost, then tested` line
 
 ## Variables
 
-They come in three groups: the menu's options for one run, the tools for
-diagnosis, and the renderer's internals.
+They come in four groups: the menu's options for one run, the tools for
+diagnosis, the renderer's internals, and the install scripts.
 
 ### Player options
 
@@ -214,3 +217,12 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `DQ8_GS_UPLOAD_TRACE=N` | Every N uploads to GS memory, how they are fed (the payload a call) |
 | `DQ8_GFX_FLUSH_ON_TRANSFER`, `DQ8_GFX_NO_CLAIM`, `DQ8_GFX_NO_PASSIVE_DEPTH`, `DQ8_GFX_PATCH_CT32_ONLY`, `DQ8_GFX_NO_COVERED_RELEASE`, `DQ8_GFX_NO_GPU_PADDING`, `DQ8_GFX_CYCLE_SNAPSHOTS`, `DQ8_GFX_NO_ROUND_TRIP`, `DQ8_GFX_CPU_LOCAL_COPY`, `DQ8_GFX_NO_UNCHANGED_SKIP`, `DQ8_GFX_NO_EMPTY_SPRITES`, `DQ8_GFX_NO_WHOLE_UPLOAD_SKIP`, `DQ8_GFX_NO_BLOCK_READS` | Each, when set, puts one of the backend's optimizations back to its old behaviour, for comparing frames (the comment by each `getenv` in `thirdparty/dq8-gfx/src/gfx/backends/sdlgpu/` and `gs/gs_vram.cpp` says which) |
 | `DQ8_GFX_SCREENSHOT_DIR`, `DQ8_GFX_SCREENSHOT_EVERY` | Framework: write every Nth frame as PPM |
+
+### Install scripts
+
+The scripts behind `Install.bat`, `Update.bat`, `Install-European.bat` and
+`Install-Undub.bat` (`tools/install/`).
+
+| Variable | Effect |
+|---|---|
+| `RG_OWN_WINDOW=1` | Never open a window of their own. Started with no input, no output and no arguments, as a launcher's Play starts them, they run their batch file again in a new window and wait for it (`tools/install/launchers.ps1`); a script that runs them so, without `-Yes` or `-Iso`, sets this to keep them in its own output. The new window sets it too |

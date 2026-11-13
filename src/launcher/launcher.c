@@ -12,6 +12,12 @@
 // file's do. The debug\ launchers keep the batch file and its terminal
 // (it was beside this one until the first release, 0.1.0).
 //
+// The installer builds this program before the game (install.ps1,
+// Build-Launcher), so a launcher that starts the folder's first program, as
+// QuiverLauncher's Play does, finds it even when an install stopped halfway:
+// while the game is not built, it offers to run Install.bat, which goes on
+// from where it stopped.
+//
 // Plain C linked statically: it starts from the repository's folder, away
 // from the DLLs the build puts beside the game.
 #include <windows.h>
@@ -33,6 +39,23 @@ static void stop(const wchar_t *message)
 {
     // In front: the game's window has gone, and this program has none.
     MessageBoxW(NULL, message, kTitle, MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST);
+}
+
+static BOOL CALLBACK closeWindow(HWND window, LPARAM unused)
+{
+    (void)unused;
+    PostMessageW(window, WM_CLOSE, 0, 0);
+    return TRUE;
+}
+
+// The timer's end: closes this thread's windows, the message box.
+static VOID CALLBACK closeBoxes(HWND window, UINT message, UINT_PTR timer, DWORD time)
+{
+    (void)window;
+    (void)message;
+    (void)time;
+    KillTimer(NULL, timer);
+    EnumThreadWindows(GetCurrentThreadId(), closeWindow, 0);
 }
 
 // The command line after this program's own name, skipped as the C runtime
@@ -64,6 +87,44 @@ static const wchar_t *arguments(void)
         ++line;
     }
     return line;
+}
+
+// Starts folder\Install.bat in a console window of its own, and does not wait
+// for it: the game's build writes this program's file again, which Windows
+// does not allow while it runs. cmd.exe by name: a batch file opened through
+// its file type opens in an editor on a PC set up that way.
+static int runInstall(const wchar_t *folder)
+{
+    static wchar_t shell[MAX_PATH];
+    static wchar_t command[32768 + MAX_PATH + 32];
+    const UINT length = GetSystemDirectoryW(shell, MAX_PATH - 16);
+    if (length == 0 || length >= MAX_PATH - 16)
+    {
+        stop(L"Could not find cmd.exe.");
+        return 1;
+    }
+    wcscat(shell, L"\\cmd.exe");
+    // cmd.exe drops the outer quotes and runs "folder\Install.bat".
+    if (swprintf(command, sizeof(command) / sizeof(command[0]), L"\"%ls\" /d /c \"\"%ls\\Install.bat\"\"", shell,
+                 folder) < 0)
+    {
+        stop(L"This folder's path is too long to run Install.bat from.");
+        return 1;
+    }
+    STARTUPINFOW startup = {0};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION install = {0};
+    if (!CreateProcessW(shell, command, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, folder, &startup, &install))
+    {
+        wchar_t message[128];
+        swprintf(message, sizeof(message) / sizeof(message[0]), L"Install.bat could not be started (error %lu).",
+                 (unsigned long)GetLastError());
+        stop(message);
+        return 1;
+    }
+    CloseHandle(install.hThread);
+    CloseHandle(install.hProcess);
+    return 0;
 }
 
 // The game ended with `code`: the end of its log, in a message box.
@@ -182,10 +243,41 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR commandLine, in
         return 0;
     }
 
+    // Install.bat or Update.bat working in this folder: they hold
+    // build\install.lock as this program holds its own, and the game may be
+    // half built. The message closes itself: while this program runs, the
+    // build cannot write its file again.
+    const HANDLE installing =
+        CreateFileW(L"build\\install.lock", GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (installing != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(installing);
+    }
+    else if (GetLastError() == ERROR_SHARING_VIOLATION)
+    {
+        SetTimer(NULL, 0, 15000, closeBoxes);
+        MessageBoxW(NULL,
+                    L"An install or update is running in this folder, in a window of its own. "
+                    L"Start the game when it ends.",
+                    kTitle, MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+        return 0;
+    }
+
     if (GetFileAttributesW(kGame) == INVALID_FILE_ATTRIBUTES)
     {
-        stop(L"The game is not built yet: run Install.bat, or see docs\\BUILDING.md.");
-        return 1;
+        if (GetFileAttributesW(L"Install.bat") == INVALID_FILE_ATTRIBUTES)
+        {
+            stop(L"The game is not built yet: see docs\\BUILDING.md.");
+            return 1;
+        }
+        if (MessageBoxW(NULL,
+                        L"The game is not built in this folder yet, or its install stopped halfway.\n\n"
+                        L"Run Install.bat now? It goes on from where it stopped, in a window of its own.",
+                        kTitle, MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND) != IDYES)
+        {
+            return 1;
+        }
+        return runInstall(folder);
     }
     if (GetFileAttributesW(kDisc) == INVALID_FILE_ATTRIBUTES)
     {

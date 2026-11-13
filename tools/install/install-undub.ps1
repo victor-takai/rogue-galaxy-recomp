@@ -4,7 +4,8 @@
 # Japanese disc image, the Director's Cut (SCPS-17013), into disc\JA, and that
 # release's battle changes into disc\JA\balance. Run again, it copies
 # only what is missing. It uses the Python that Install.bat downloaded into
-# toolchain\, so Install.bat has to have run first. Afterwards, in the game's
+# toolchain\, so Install.bat has to have run first: before the game is
+# installed, it runs Install.bat's install instead. Afterwards, in the game's
 # menu (F1): Settings > Language > Undub, Settings > Game > Director's Cut
 # balance, enemy behavior and party AI.
 #
@@ -18,7 +19,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "launchers.ps1")
 $Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
+
+# Started with no arguments: as a launcher's Play starts it.
+if ($PSBoundParameters.Count -eq 0) {
+    $code = Invoke-OwnWindow (Join-Path $Root "Install-Undub.bat")
+    if ($null -ne $code) { exit $code }
+}
 
 function Stop-Undub([string]$Text) {
     Write-Host ""
@@ -42,6 +50,7 @@ function Select-DiscImage {
 }
 
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+Invoke-InstallFirst $Root "Install-Undub.bat" "the Japanese voices"
 Write-Host "Rogue Galaxy Recompiled: Japanese voices (undub)" -ForegroundColor Green
 Write-Host "Takes the voices and movies from your own Japanese disc into this folder:"
 Write-Host "  $Root"
