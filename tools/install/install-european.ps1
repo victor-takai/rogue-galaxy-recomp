@@ -3,7 +3,8 @@
 # Builds the texts of the player's own European disc image (SCES-54552:
 # French, German, Spanish, Italian) into the US game's files, in disc\EU
 # (about 80 MB a language). It uses the Python that Install.bat downloaded into
-# toolchain\, so Install.bat has to have run first. Afterwards: Settings >
+# toolchain\, so Install.bat has to have run first: before the game is
+# installed, it runs Install.bat's install instead. Afterwards: Settings >
 # Language > Text in the game's menu (F1).
 #
 #   Install-European.bat                   (or drop the European .iso onto it)
@@ -16,7 +17,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "launchers.ps1")
 $Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
+
+# Started with no arguments: as a launcher's Play starts it.
+if ($PSBoundParameters.Count -eq 0) {
+    $code = Invoke-OwnWindow (Join-Path $Root "Install-European.bat")
+    if ($null -ne $code) { exit $code }
+}
 
 function Stop-European([string]$Text) {
     Write-Host ""
@@ -40,6 +48,7 @@ function Select-DiscImage {
 }
 
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+Invoke-InstallFirst $Root "Install-European.bat" "the European texts"
 Write-Host "Rogue Galaxy Recompiled: European texts (French, German, Spanish, Italian)" -ForegroundColor Green
 Write-Host "Builds the texts of your own European disc into this folder:"
 Write-Host "  $Root"

@@ -5,14 +5,23 @@
 # each archive must match its SHA-256 below), asks for the disc image, and
 # runs `python setup.py install`: verify the image, extract it, build the
 # recompiler, recompile, build the game. Everything it writes stays in this
-# folder; run it again after a failure and what is done is skipped.
+# folder; run it again after a failure and what is done is skipped. The
+# folder can be anywhere but in OneDrive or on a network share: a long path,
+# or one with spaces or accented letters, is built through a short name for
+# it (short-name.ps1).
 #
 #   Install.bat                         (or drop the .iso onto it)
 #   Install.bat -Iso "D:\Rogue Galaxy (USA).iso"
 #   Install.bat -UseToolsOnPath         (developers: the toolchain already on PATH)
-#   Install.bat -Yes                    (no questions: a short path is used if needed,
-#                                        no shortcut is made and the game is not started)
+#   Install.bat -Yes                    (no questions: a copy is made if the folder cannot hold
+#                                        the build, no shortcut is made and the game is not started)
 #   Install.bat -Updating               (from Update.bat: rebuilds what changed, no shortcut question)
+#
+# Started by a launcher with no window to show in, it opens one
+# (launchers.ps1). "Rogue Galaxy.exe" is built as soon as the compiler is
+# here, before the game, and offers to run Install.bat while the game is not
+# built (Build-Launcher). One install or update runs at a time in a folder
+# (Lock-Folder, in launchers.ps1).
 #
 # Windows PowerShell 5.1, so no newer syntax; plain ASCII, which 5.1 reads
 # without a byte order mark.
@@ -25,34 +34,39 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Started with no arguments: as a launcher's Play starts it (launchers.ps1).
+$NoArguments = ($PSBoundParameters.Count -eq 0)
+. (Join-Path $PSScriptRoot "short-name.ps1")
+. (Join-Path $PSScriptRoot "launchers.ps1")
 $Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
+# What the build sees: $Root, or its short name (Main sets both).
+$BuildRoot = $Root
 $ToolDir = Join-Path $Root "toolchain"
+# The same, as the player sees it: $ToolDir becomes the short name's.
+$ShownToolDir = $ToolDir
 $Downloads = Join-Path $ToolDir "downloads"
 $System32 = Join-Path $env:SystemRoot "System32"
 
 # The tools the build was tested with (docs/BUILDING.md). A new pin needs
 # its archive's SHA-256 from the release page: GitHub shows each asset's.
+# The compiler and Python come first: Build-Launcher needs them.
 $Tools = @(
-    @{ Name = "git"; Label = "Git 2.56.0 (MinGit)"; Exe = "cmd\git.exe"; Ext = ".zip"; MB = 38
-       Url = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip"
-       Sha256 = "da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be" },
+    @{ Name = "llvm-mingw"; Label = "LLVM 22.1.8 (llvm-mingw 20260616)"; Exe = "bin\clang.exe"; Ext = ".zip"; MB = 179
+       Url = "https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/llvm-mingw-20260616-ucrt-x86_64.zip"
+       Sha256 = "b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35" },
     @{ Name = "python"; Label = "Python 3.12.13"; Exe = "python.exe"; Ext = ".tar.gz"; MB = 44
        Url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260807/cpython-3.12.13%2B20260807-x86_64-pc-windows-msvc-install_only.tar.gz"
        Sha256 = "6cf2be701aa7e9470454c9c86285c1bcc1832518d63e39c3e34e9d8ea1cbb99f" },
+    @{ Name = "git"; Label = "Git 2.56.0 (MinGit)"; Exe = "cmd\git.exe"; Ext = ".zip"; MB = 38
+       Url = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip"
+       Sha256 = "da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be" },
     @{ Name = "cmake"; Label = "CMake 3.31.12"; Exe = "bin\cmake.exe"; Ext = ".zip"; MB = 45
        Url = "https://github.com/Kitware/CMake/releases/download/v3.31.12/cmake-3.31.12-windows-x86_64.zip"
        Sha256 = "0c4baa40f28b3f8225eb3fdf6946c987b4fe901403b4eaf2fbbd9378100aaa0c" },
     @{ Name = "ninja"; Label = "Ninja 1.13.2"; Exe = "ninja.exe"; Ext = ".zip"; MB = 1
        Url = "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip"
-       Sha256 = "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65" },
-    @{ Name = "llvm-mingw"; Label = "LLVM 22.1.8 (llvm-mingw 20260616)"; Exe = "bin\clang.exe"; Ext = ".zip"; MB = 179
-       Url = "https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/llvm-mingw-20260616-ucrt-x86_64.zip"
-       Sha256 = "b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35" }
+       Sha256 = "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65" }
 )
-
-# The deepest path the build writes is 185 characters below this folder
-# (in build\tools\_deps), and Windows tools stop at 259 in all.
-$MaxRootLength = 60
 
 function Write-Step([string]$Text) {
     Write-Host ""
@@ -71,7 +85,9 @@ function Confirm-Step([string]$Question) {
     return ($answer -eq "" -or $answer -match "^(y|yes|s|sim)$")
 }
 
-# Why this folder cannot hold the build, or "" when it can.
+# Why this folder cannot hold the game, or "" when it can. A long path, or
+# one with spaces or accented letters, can: the build goes through a short
+# name for it (short-name.ps1).
 function Get-PathProblem([string]$Path) {
     if ($Path.StartsWith("\\")) { return "it is on a network share" }
     foreach ($cloud in @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial)) {
@@ -79,11 +95,13 @@ function Get-PathProblem([string]$Path) {
             return "it is inside OneDrive, which would upload the 10 GB the build writes"
         }
     }
-    if ($Path.Length -gt $MaxRootLength) {
-        return "its path is too long for the build tools ($($Path.Length) characters; at most $MaxRootLength)"
-    }
-    if ($Path -match "[^A-Za-z0-9_.:\\-]") {
-        return "its path has spaces, accented letters or symbols, which the build tools mishandle"
+    # The game's runtime turns its folder's path into the system's code page
+    # (std::filesystem's narrow strings), and a letter the code page lacks
+    # stops it as it starts (2026-11-13: a folder named in Cyrillic and
+    # Japanese, code page 1252).
+    $ansi = [System.Text.Encoding]::Default
+    if ($ansi.GetString($ansi.GetBytes($Path)) -cne $Path) {
+        return "its path has letters this Windows' language settings cannot hold (code page $($ansi.CodePage)), which the game cannot open yet"
     }
     return ""
 }
@@ -102,16 +120,23 @@ function Move-ToShortPath([string]$Problem) {
     Write-Host ""
     Write-Host "This folder cannot hold the game's build: $Problem." -ForegroundColor Yellow
     Write-Host "  $Root"
+    # It is the copy already: nothing to offer.
+    if ($Root.TrimEnd("\") -eq $target) { return }
     $script = Join-Path $target "tools\install\install.ps1"
     if (Test-Path -LiteralPath $script) {
         if (-not (Confirm-Step "An earlier copy is in $target. Continue the install there?")) { return }
     } else {
         if ((Test-Path -LiteralPath $target) -and @(Get-ChildItem -LiteralPath $target -Force).Count -gt 0) {
-            Stop-Install "Move this folder to a short path without spaces, such as $target (which already holds other files), and run Install.bat there."
+            Stop-Install "Move this folder to a short path without spaces, outside OneDrive, such as $target (which already holds other files), and run Install.bat there."
         }
         if (-not (Confirm-Step "Copy it to $target and install there?")) { return }
         Write-Step "Copying to $target"
-        & (Join-Path $System32 "robocopy.exe") $Root $target /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Host
+        # The install goes on there: this folder's lock is no longer needed,
+        # and robocopy cannot read a file held unshared.
+        if ($script:InstallLock) { $script:InstallLock.Dispose(); $script:InstallLock = $null }
+        # Without this folder's short name: the copy's path needs none.
+        & (Join-Path $System32 "robocopy.exe") $Root $target /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP `
+            /XF (Join-Path $Root $ShortNameRecord) | Out-Host
         if ($LASTEXITCODE -ge 8) { Stop-Install "Copying to $target failed (robocopy code $LASTEXITCODE)." }
         Write-Host "Copied. The game will live in $target; this folder can be deleted afterwards."
     }
@@ -208,10 +233,35 @@ function Install-Tool([hashtable]$Tool) {
     if ($LASTEXITCODE -ne 0) { Stop-Install "Unpacking $($Tool.Label) failed. If an antivirus is running, it may be holding the files; run Install.bat again." }
     if (-not (Test-Path -LiteralPath (Join-Path $dir $Tool.Exe))) {
         Stop-Install ("$($Tool.Exe) is missing from $($Tool.Label) after unpacking. An antivirus may have removed it: " +
-            "restore it from the antivirus's quarantine (or allow the folder $ToolDir) and run Install.bat again.")
+            "restore it from the antivirus's quarantine (or allow the folder $ShownToolDir) and run Install.bat again.")
     }
     Set-Content -LiteralPath $stamp -Value $Tool.Sha256 -Encoding Ascii
     Invoke-Patiently "delete $file" { Remove-Item -LiteralPath $file -Force } -Optional
+}
+
+# Builds "Rogue Galaxy.exe" (src\launcher) with the compiler and Python, the
+# first tools, before the rest is downloaded; the game's build makes it
+# again later. Until then, a launcher that starts the folder's first program
+# (QuiverLauncher's Play) would find a build tool's, which does nothing; so
+# it finds this one, which offers Install.bat while the game is not built.
+# Nothing stops when this fails: the game's build makes it anyway.
+function Build-Launcher([string]$Python, [string]$Clang) {
+    $out = Join-Path $BuildRoot "Rogue Galaxy.exe"
+    if (Test-Path -LiteralPath $out) { return }
+    $source = Join-Path $BuildRoot "src\launcher"
+    $res = Join-Path $BuildRoot "build\launcher.res"
+    # Native programs' error output arrives as error records (see Main).
+    $ErrorActionPreference = "Continue"
+    try {
+        $null = & $Python -I (Join-Path $source "make_resources.py") (Join-Path $source "rogue-galaxy.ico") `
+            (Join-Path $source "launcher.manifest") $res 2>&1
+        if ($LASTEXITCODE -ne 0) { return }
+        $null = & $Clang -O2 -mwindows -static -o $out (Join-Path $source "launcher.c") $res 2>&1
+    } catch {
+    } finally {
+        Remove-Item -LiteralPath $res -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath $out)) { Write-Host "  Rogue Galaxy.exe: not built yet; the game's build makes it" }
+    }
 }
 
 # The build sees these tools and Windows only: compilers, Python or CMake
@@ -265,6 +315,10 @@ function Select-DiscImage {
 }
 
 function Main {
+    if ($NoArguments) {
+        $code = Invoke-OwnWindow (Join-Path $Root "Install.bat")
+        if ($null -ne $code) { exit $code }
+    }
     try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
     $version = "?"
     $project = Get-Content -LiteralPath (Join-Path $Root "CMakeLists.txt") -Raw -ErrorAction SilentlyContinue
@@ -282,7 +336,11 @@ function Main {
     $problem = Get-PathProblem $Root
     if ($problem) {
         Move-ToShortPath $problem
-        Stop-Install "Move this folder to a short path without spaces, such as C:\RogueGalaxy, and run Install.bat there."
+        Stop-Install "Move this folder to a folder such as C:\RogueGalaxy and run Install.bat there."
+    }
+    $script:InstallLock = Lock-Folder $Root
+    if ($script:InstallLock -is [string]) {
+        Stop-Install "An install or update is already running in this folder, in another window. Let it end there."
     }
 
     $hashes = Get-Content -LiteralPath (Join-Path $Root "config\SCUS_974.90\hashes.json") -Raw | ConvertFrom-Json
@@ -318,75 +376,109 @@ function Main {
         Write-Host "  $Iso"
     }
 
-    Write-Step "Build tools"
-    if ($UseToolsOnPath) {
-        foreach ($name in @("git", "python", "cmake", "ninja", "clang", "clang++")) {
-            if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { Stop-Install "-UseToolsOnPath: $name is not on PATH." }
+    # From here the build tools see the folder as $BuildRoot: its short name
+    # when it needs one, made now and removed when the build ends, however
+    # it ends (Stop-Install's exit runs the finally below too).
+    $shortName = ""
+    if (Test-NeedsShortName $Root) {
+        $shortName = Use-ShortName $Root
+        if (-not $shortName) {
+            Move-ToShortPath "its path is long or has spaces or accented letters, and Windows did not let the installer make $(Get-ShortName $Root), the short name the build tools would see it by"
+            Stop-Install "Move this folder to a short path without spaces, such as C:\RogueGalaxy, and run Install.bat there."
         }
-        $python = (Get-Command python).Source
-        # Windows' own python.exe may be the Store's stand-in.
-        & $python -c "import sys; sys.exit(sys.version_info < (3, 11))"
-        if ($LASTEXITCODE -ne 0) { Stop-Install "-UseToolsOnPath: $python is not Python 3.11 or later." }
-        Write-Host "  using the tools on PATH"
-    } else {
-        Write-Host "Downloaded into $ToolDir; nothing is installed in Windows."
-        New-Item -ItemType Directory -Force -Path $Downloads | Out-Null
-        foreach ($tool in $Tools) { Install-Tool $tool }
-        Invoke-Patiently "delete $Downloads" { if (Test-Path -LiteralPath $Downloads) { Remove-Item -LiteralPath $Downloads -Recurse -Force } } -Optional
-        $python = Join-Path $ToolDir "python\python.exe"
+        $script:BuildRoot = $shortName
+        $script:ToolDir = Join-Path $BuildRoot "toolchain"
+        $script:Downloads = Join-Path $ToolDir "downloads"
     }
-    Set-BuildEnvironment
-
-    if (-not (Test-Path -LiteralPath (Join-Path $Root "thirdparty\PS2Recomp\CMakeLists.txt")) -or
-        -not (Test-Path -LiteralPath (Join-Path $Root "thirdparty\imgui\imgui.h"))) {
-        if (-not (Test-Path -LiteralPath (Join-Path $Root ".git"))) {
-            Stop-Install ("thirdparty\PS2Recomp or thirdparty\imgui is empty. GitHub's ""Source code"" download leaves them out: " +
-                "download RogueGalaxy-$version.zip from the release page instead.")
-        }
-        Write-Step "The framework's source (git submodules)"
-        & git -C $Root submodule update --init --recursive
-        if ($LASTEXITCODE -ne 0) { Stop-Install "Fetching the git submodules failed." }
-    }
-
-    if ($Updating) {
-        Write-Step "Rebuilding what changed"
-        Write-Host "A few minutes when little changed; as long as the first install when the new version changed how the game's code is translated."
-    } else {
-        Write-Step "Building the game"
-        Write-Host "This takes about 20 minutes on a fast PC, up to an hour on a slower one; it can be left alone."
-    }
-    Write-Host "Clicking inside this window pauses it (the title then starts with ""Select""); press Esc to go on."
-    Write-Host "Everything shown here also goes to install.log."
-    $log = Join-Path $Root "install.log"
-    $arguments = @("-u", (Join-Path $Root "setup.py"), "install")
-    if ($Iso -and -not $extracted) { $arguments += @("--iso", $Iso) }
-    $writer = New-Object System.IO.StreamWriter($log, $false, (New-Object System.Text.UTF8Encoding($false)))
-    $writer.AutoFlush = $true
-    # Native programs' error output arrives as error records; with "Stop" the
-    # first of them would end the script.
-    $ErrorActionPreference = "Continue"
-    Push-Location -LiteralPath $Root
     try {
-        & $python @arguments 2>&1 | ForEach-Object {
-            $line = "$_"
-            $writer.WriteLine($line)
-            Write-Host $line
+        if ($shortName) {
+            Write-Host ""
+            Write-Host "The build tools see this folder by a short name while they run, ${shortName}:"
+            Write-Host "it leads to this folder, nothing is copied, and it is removed afterwards."
         }
-        $code = $LASTEXITCODE
+        Write-Step "Build tools"
+        # Before the tools run: Build-Launcher's compiler too.
+        Set-BuildEnvironment
+        if ($UseToolsOnPath) {
+            foreach ($name in @("git", "python", "cmake", "ninja", "clang", "clang++")) {
+                if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { Stop-Install "-UseToolsOnPath: $name is not on PATH." }
+            }
+            $python = (Get-Command python).Source
+            # Windows' own python.exe may be the Store's stand-in.
+            & $python -c "import sys; sys.exit(sys.version_info < (3, 11))"
+            if ($LASTEXITCODE -ne 0) { Stop-Install "-UseToolsOnPath: $python is not Python 3.11 or later." }
+            Write-Host "  using the tools on PATH"
+        } else {
+            Write-Host "Downloaded into $ShownToolDir; nothing is installed in Windows."
+            New-Item -ItemType Directory -Force -Path $Downloads | Out-Null
+            foreach ($tool in $Tools) {
+                Install-Tool $tool
+                if ($tool.Name -eq "python") {
+                    Build-Launcher (Join-Path $ToolDir "python\python.exe") (Join-Path $ToolDir "llvm-mingw\bin\clang.exe")
+                }
+            }
+            Invoke-Patiently "delete $Downloads" { if (Test-Path -LiteralPath $Downloads) { Remove-Item -LiteralPath $Downloads -Recurse -Force } } -Optional
+            $python = Join-Path $ToolDir "python\python.exe"
+        }
+
+        if (-not (Test-Path -LiteralPath (Join-Path $Root "thirdparty\PS2Recomp\CMakeLists.txt")) -or
+            -not (Test-Path -LiteralPath (Join-Path $Root "thirdparty\imgui\imgui.h"))) {
+            if (-not (Test-Path -LiteralPath (Join-Path $Root ".git"))) {
+                Stop-Install ("thirdparty\PS2Recomp or thirdparty\imgui is empty. GitHub's ""Source code"" download leaves them out: " +
+                    "download RogueGalaxy-$version.zip from the release page instead.")
+            }
+            Write-Step "The framework's source (git submodules)"
+            & git -C $BuildRoot submodule update --init --recursive
+            if ($LASTEXITCODE -ne 0) { Stop-Install "Fetching the git submodules failed." }
+        }
+
+        if ($Updating) {
+            Write-Step "Rebuilding what changed"
+            Write-Host "A few minutes when little changed; as long as the first install when the new version changed how the game's code is translated."
+        } else {
+            Write-Step "Building the game"
+            Write-Host "This takes about 20 minutes on a fast PC, up to an hour on a slower one; it can be left alone."
+        }
+        Write-Host "Clicking inside this window pauses it (the title then starts with ""Select""); press Esc to go on."
+        Write-Host "Everything shown here also goes to install.log."
+        $log = Join-Path $Root "install.log"
+        $arguments = @("-u", (Join-Path $BuildRoot "setup.py"), "install")
+        if ($Iso -and -not $extracted) { $arguments += @("--iso", $Iso) }
+        $writer = New-Object System.IO.StreamWriter($log, $false, (New-Object System.Text.UTF8Encoding($false)))
+        $writer.AutoFlush = $true
+        # Native programs' error output arrives as error records; with "Stop" the
+        # first of them would end the script.
+        $ErrorActionPreference = "Continue"
+        Push-Location -LiteralPath $BuildRoot
+        try {
+            & $python @arguments 2>&1 | ForEach-Object {
+                $line = "$_"
+                $writer.WriteLine($line)
+                Write-Host $line
+            }
+            $code = $LASTEXITCODE
+        } finally {
+            Pop-Location
+            $writer.Close()
+        }
+        $ErrorActionPreference = "Stop"
+        $game = Join-Path $Root "Rogue Galaxy.exe"
+        # The launcher is there early (Build-Launcher): the game itself says
+        # the build went through.
+        if ($code -ne 0 -or -not (Test-Path -LiteralPath $game) -or
+            -not (Test-Path -LiteralPath (Join-Path $Root "build\game\src\roguegalaxy.exe"))) {
+            $hint = ""
+            $text = Get-Content -LiteralPath $log -Raw
+            if ($text -match "No such file or directory|is not recognized|Access is denied") {
+                $hint = " A build tool went missing or was blocked: an antivirus may have quarantined it (restore it, or allow $ShownToolDir)."
+            }
+            Stop-Install "The install stopped (code $code).$hint The full output is in $log. Run Install.bat again to continue from where it stopped."
+        }
     } finally {
-        Pop-Location
-        $writer.Close()
+        Remove-ShortName $shortName
     }
-    $ErrorActionPreference = "Stop"
-    $game = Join-Path $Root "Rogue Galaxy.exe"
-    if ($code -ne 0 -or -not (Test-Path -LiteralPath $game)) {
-        $hint = ""
-        $text = Get-Content -LiteralPath $log -Raw
-        if ($text -match "No such file or directory|is not recognized|Access is denied") {
-            $hint = " A build tool went missing or was blocked: an antivirus may have quarantined it (restore it, or allow $ToolDir)."
-        }
-        Stop-Install "The install stopped (code $code).$hint The full output is in $log. Run Install.bat again to continue from where it stopped."
-    }
+    # Built: the game this script may start below must not find the lock.
+    if ($script:InstallLock) { $script:InstallLock.Dispose(); $script:InstallLock = $null }
 
     Write-Step "Done"
     Write-Host "The game is $game"

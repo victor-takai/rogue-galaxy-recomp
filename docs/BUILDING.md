@@ -114,6 +114,11 @@ What each step keeps:
   (delete the manifest to extract again), then runs `tools`, `recompile` and
   `build` as above. `Install.bat` also keeps the toolchain it downloaded
   while its hash matches the version pinned in `tools/install/install.ps1`.
+  In a folder with a long path, or with spaces or accented letters, it
+  builds through a short name (`build/short-name.txt`, a junction in
+  `C:\RogueGalaxyBuild` that it removes at the end), and the build's caches
+  name that path: build such a folder again with `Install.bat -Updating`,
+  which makes the junction again, not with `cmake --build` or `setup.py`.
 
 ## Linux
 
