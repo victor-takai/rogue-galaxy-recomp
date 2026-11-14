@@ -76,7 +76,10 @@ your disc into `build/vu-blocks-manifest`. A run with
 `PS2_VU_AOT_PROFILE=build/vu-blocks/NAME.txt` records the blocks the
 interpreter executes (both units; keep the lines starting with `0` for
 VU0 alone), and CMake compiles every `build/vu-blocks/*.txt` it finds too
-(as many shards at a time as memory allows: each takes 2.2 GB to compile); maintainers:
+(a shard for each distinct block, at least 128, counted at configure, or
+`-DRG_VU_AOT_SHARDS=N`; several at a time as memory and the processor
+allow: a four-word block takes up to about 0.5 GB and 18 s to compile);
+maintainers:
 `python setup.py vu-blocks-manifest` folds the recordings into the manifest.
 
 ## Rebuilding after a change

@@ -15,30 +15,16 @@ if(NOT SPIRV_REMAINDER EQUAL 0)
 endif()
 
 file(READ "${INPUT}" SPIRV_HEX HEX)
-string(REGEX MATCHALL "[0-9a-f][0-9a-f]" SPIRV_BYTES "${SPIRV_HEX}")
 
 # SPIR-V is a little-endian word stream; emit words rather than bytes so the
 # array is correctly aligned for the API without a memcpy at load time.
-set(WORDS "")
-list(LENGTH SPIRV_BYTES BYTE_COUNT)
-math(EXPR LAST_WORD "${BYTE_COUNT} / 4 - 1")
-foreach(INDEX RANGE ${LAST_WORD})
-    math(EXPR B0 "${INDEX} * 4")
-    math(EXPR B1 "${B0} + 1")
-    math(EXPR B2 "${B0} + 2")
-    math(EXPR B3 "${B0} + 3")
-    list(GET SPIRV_BYTES ${B0} BYTE0)
-    list(GET SPIRV_BYTES ${B1} BYTE1)
-    list(GET SPIRV_BYTES ${B2} BYTE2)
-    list(GET SPIRV_BYTES ${B3} BYTE3)
-    string(APPEND WORDS "0x${BYTE3}${BYTE2}${BYTE1}${BYTE0}u,")
-    math(EXPR NEWLINE "${INDEX} % 8")
-    if(NEWLINE EQUAL 7)
-        string(APPEND WORDS "\n    ")
-    else()
-        string(APPEND WORDS " ")
-    endif()
-endforeach()
+# Whole-string regexes, linear in the module's size (Rogue Galaxy: changed;
+# a list(GET) a byte was quadratic, 47 s for the largest shader on its own):
+# each word's bytes reversed, then a line break after every eighth word.
+set(H "[0-9a-f][0-9a-f]")
+string(REGEX REPLACE "(${H})(${H})(${H})(${H})" "0x\\4\\3\\2\\1u, " WORDS "${SPIRV_HEX}")
+set(W "0x[0-9a-f]+u, ")
+string(REGEX REPLACE "(${W}${W}${W}${W}${W}${W}${W}0x[0-9a-f]+u,) " "\\1\n    " WORDS "${WORDS}")
 
 get_filename_component(INPUT_NAME "${INPUT}" NAME)
 set(CONTENT "// Generated from ${INPUT_NAME}. Do not edit.\n")

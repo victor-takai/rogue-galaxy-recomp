@@ -60,27 +60,89 @@ message(STATUS "VU1 programs: ${rg_vu1_found}")
 # (PS2X_VU_AOT_IMAGES), from build/vu-blocks-manifest, which setup.py
 # recompile rebuilds from config/<version>/vu-blocks.txt and the user's
 # disc, and build/vu-blocks/*.txt, local recordings. Game code too: never
-# committed. A shard takes 2.2 GB and a minute to compile, the battle's 109
-# blocks 32 of them, 19 minutes one at a time; the rest of the build takes
-# 0.1-0.2 GB a job (2026-10-27). So one shard at a time per 7.5 GB of
-# memory, up to four (two at a time beside the rest of the build were once
-# killed for memory, 2026-10-19, with what else ran then unknown).
+# committed. A four-word block takes up to about 18 s and 0.5 GB to compile,
+# a single pair a twentieth of that, growing in a straight line with what a
+# shard holds (clang 22, 2026-11-13); patch 0038 puts the costliest first on
+# the lightest shard. So a shard for each distinct block the recordings
+# list, at least 128: the battle's 109 blocks get one each (0.65 GB, 20 s).
+# In 32 shards they had three to five (up to 2.6 GB and 200 s), four at a
+# time on 32 GB, and those four were the last eight minutes of a first
+# build. The count is taken at configure and only balances the shards:
+# blocks a recording adds later share the shards there are until the next
+# configure (`cmake -S . -B build/game`). The files are no configure input,
+# so one dated in the future cannot keep build.ninja regenerating (see
+# reset_future_times in setup.py). -DRG_VU_AOT_SHARDS=N sets another count.
 file(GLOB rg_vu_blocks CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/build/vu-blocks-manifest/*.txt"
     "${CMAKE_CURRENT_SOURCE_DIR}/build/vu-blocks/*.txt")
 list(SORT rg_vu_blocks)
 set(PS2X_VU_AOT_IMAGES "${rg_vu_blocks}" CACHE STRING
     "Local VU code images or block profiles to compile; never distributed" FORCE)
+# The records as compile_vu_blocks.py reads them: a unit and hex words,
+# split by any blanks, in either case.
+set(rg_vu_records)
+foreach(rg_file IN LISTS rg_vu_blocks)
+    file(STRINGS "${rg_file}" rg_lines REGEX "^[ \t]*[01][ \t]")
+    list(APPEND rg_vu_records ${rg_lines})
+endforeach()
+list(TRANSFORM rg_vu_records STRIP)
+list(TRANSFORM rg_vu_records REPLACE "[ \t]+" " ")
+list(TRANSFORM rg_vu_records TOLOWER)
+list(REMOVE_DUPLICATES rg_vu_records)
+list(LENGTH rg_vu_records rg_vu_count)
+set(RG_VU_AOT_SHARDS "" CACHE STRING
+    "VU block shards; empty for one for each distinct block, at least 128")
+if(RG_VU_AOT_SHARDS)
+    if(NOT RG_VU_AOT_SHARDS MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR "RG_VU_AOT_SHARDS must be a positive integer, or empty")
+    endif()
+    set(rg_vu_shards ${RG_VU_AOT_SHARDS})
+elseif(rg_vu_count GREATER 128)
+    set(rg_vu_shards ${rg_vu_count})
+else()
+    set(rg_vu_shards 128)
+endif()
+set(PS2X_VU_AOT_SHARDS ${rg_vu_shards} CACHE STRING "Number of independent VU AOT compilation units" FORCE)
+# Shards at a time: one per 2.5 GB of memory, about four times a one-block
+# shard's 0.65 GB (the old rule gave a 2.6 GB shard 7.5 GB; two at a time
+# beside the rest of the build were once killed for memory, 2026-10-19, with
+# what else ran then unknown), and at most half the hardware threads: these
+# compiles are heavy on memory and slow each other. A first build on 8
+# cores, 16 threads and 32 GB took 826 s with 4 at a time, 709 s with 6,
+# 612-653 s with 8 and 682 s with 12, where the 32 shards four at a time
+# took 738-774 s (llvm-mingw, 2026-11-14). The pool holds the runtime's
+# other units too, 0.3 GB or less each. A shard's share grows with the
+# blocks it gets and, as patch 0038 weighs them, with the longest block's
+# words squared: the format allows blocks of up to 32 words, but the
+# recorder writes four, so the longer ones are unmeasured.
+set(rg_vu_words 4)
+foreach(rg_record IN LISTS rg_vu_records)
+    string(REGEX MATCHALL " " rg_gaps "${rg_record}")
+    list(LENGTH rg_gaps rg_words)
+    if(rg_words GREATER rg_vu_words)
+        set(rg_vu_words ${rg_words})
+    endif()
+endforeach()
+math(EXPR rg_vu_weight
+    "(${rg_vu_count} + ${rg_vu_shards} - 1) / ${rg_vu_shards} * ((${rg_vu_words} * ${rg_vu_words} + 15) / 16)")
+if(rg_vu_weight LESS 1)
+    set(rg_vu_weight 1)
+endif()
 cmake_host_system_information(RESULT rg_memory_mib QUERY TOTAL_PHYSICAL_MEMORY)
-math(EXPR rg_vu_jobs "${rg_memory_mib} / 7680")
+cmake_host_system_information(RESULT rg_threads QUERY NUMBER_OF_LOGICAL_CORES)
+math(EXPR rg_vu_jobs "${rg_memory_mib} / (2560 * ${rg_vu_weight})")
+math(EXPR rg_vu_jobs_cpu "${rg_threads} / 2")
+if(rg_vu_jobs GREATER rg_vu_jobs_cpu)
+    set(rg_vu_jobs ${rg_vu_jobs_cpu})
+endif()
 if(rg_vu_jobs LESS 1)
     set(rg_vu_jobs 1)
-elseif(rg_vu_jobs GREATER 4)
-    set(rg_vu_jobs 4)
+elseif(rg_vu_jobs GREATER 16)
+    set(rg_vu_jobs 16)
 endif()
 set(PS2X_VU_AOT_COMPILE_JOBS "${rg_vu_jobs}" CACHE STRING
     "Maximum concurrent runtime compilations with VU AOT (Ninja)" FORCE)
-message(STATUS "VU blocks: ${rg_vu_blocks} (${rg_vu_jobs} shards at a time)")
+message(STATUS "VU blocks: ${rg_vu_blocks} (${rg_vu_shards} shards, ${rg_vu_jobs} at a time)")
 
 # Local changes to the pinned framework (patches/ps2recomp), applied to the
 # checkout once; `python setup.py tools` applies them too, before it builds

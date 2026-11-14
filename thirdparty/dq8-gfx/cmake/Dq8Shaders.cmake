@@ -5,6 +5,16 @@
 
 include_guard(GLOBAL)
 
+# The SPIR-V and header commands below, and the menu font's in CMakeLists.txt,
+# need only what they name (Rogue Galaxy: added). Otherwise, under Ninja, each
+# waits for every library its target links, the runtime with its compiled VU
+# blocks among them, and the shaders and all that includes them came last in a
+# first build. CMake 3.27 and later. The macOS MSL commands are as they were.
+set(DQ8_DEPENDS_EXPLICIT_ONLY)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.27)
+    set(DQ8_DEPENDS_EXPLICIT_ONLY DEPENDS_EXPLICIT_ONLY)
+endif()
+
 # Resolves the compiler once per configure, into global properties rather than
 # cache variables. A fetched glslang is referenced by generator expression, and
 # that target has to be created on every configure -- caching the expression
@@ -137,6 +147,7 @@ function(dq8_add_shader TARGET)
         COMMAND ${COMPILE_COMMAND}
         DEPENDS "${ARG_SOURCE}" ${COMPILER_DEPENDENCY}
         ${DEPFILE_ARG}
+        ${DQ8_DEPENDS_EXPLICIT_ONLY}
         COMMENT "Compiling shader ${STEM}"
         VERBATIM COMMAND_EXPAND_LISTS)
 
@@ -146,6 +157,7 @@ function(dq8_add_shader TARGET)
                 "-DINPUT=${SPIRV}" "-DOUTPUT=${HEADER}" "-DSYMBOL=${ARG_SYMBOL}"
                 -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Dq8EmbedSpirv.cmake"
         DEPENDS "${SPIRV}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Dq8EmbedSpirv.cmake"
+        ${DQ8_DEPENDS_EXPLICIT_ONLY}
         COMMENT "Embedding shader ${STEM}"
         VERBATIM)
 

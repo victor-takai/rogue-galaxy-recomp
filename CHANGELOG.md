@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- A first install compiles the game in about a fifth less time.
+
 ## 0.3.0 (pre-release)
 
 What the Japanese Director's Cut changed in battles, as options; the
