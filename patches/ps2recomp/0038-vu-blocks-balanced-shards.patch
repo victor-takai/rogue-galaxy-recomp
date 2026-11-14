@@ -1,0 +1,43 @@
+diff --git a/tools/compile_vu_blocks.py b/tools/compile_vu_blocks.py
+index bc4fbe3..0930840 100644
+--- a/tools/compile_vu_blocks.py
++++ b/tools/compile_vu_blocks.py
+@@ -2,6 +2,7 @@
+ """Emit native C++ VU block instantiations from user-supplied microcode images."""
+ 
+ import argparse
++import heapq
+ import struct
+ from pathlib import Path
+ 
+@@ -89,14 +90,28 @@ def main():
+     lines = ["// Generated from local microcode; do not distribute game data."]
+     externs = [lines[0]]
+     shards = [[lines[0], '#include "ps2_vu1_exec.inl"'] for _ in range(args.shards)]
+-    for index, (block, unit) in enumerate(sorted(blocks | pairs)):
++    instances = []
++    for block, unit in sorted(blocks | pairs):
+         values = ", ".join(f"0x{word:016x}ull" for word in block)
+         lines.append(f"{{Unit::VU{unit}, {{{values}}}, &runCompiledBlock<Unit::VU{unit}, {values}>, {len(block) * 8}u}},")
+         if args.shards:
+             instance = (f"bool VU1Interpreter::runCompiledBlock<VU1Interpreter::Unit::VU{unit}, {values}>"
+                         "(VU1Interpreter &, uint64_t);")
+             externs.append(f"extern template {instance}")
+-            shards[index % args.shards].append(f"template {instance}")
++            instances.append((len(block), instance))
++    # A shard's compile time and memory grow with what it instantiates, much
++    # faster than its words: a four-word block takes some twenty times a
++    # single pair (18 s and 0.5 GB against 0.9 s and 20 MB, clang 22), so a
++    # block weighs its words squared. The heaviest go first, each to the
++    # lightest shard, rather than in turn: in turn, one shard got five blocks
++    # and another two, and the build had to wait for the heaviest and budget
++    # memory for it. A heap of (load, shard) finds the lightest, the lowest
++    # numbered of equals, in log time: the shards grow with the blocks.
++    load = [(0, index) for index in range(args.shards)]
++    for words, instance in sorted(instances, key=lambda item: -item[0]):
++        weight, lightest = heapq.heappop(load)
++        heapq.heappush(load, (weight + words * words, lightest))
++        shards[lightest].append(f"template {instance}")
+     args.output.parent.mkdir(parents=True, exist_ok=True)
+     args.output.write_text("\n".join(lines) + "\n")
+     if args.shards:
