@@ -5,6 +5,7 @@
 ### Changed
 
 - A first install compiles the game in about a fifth less time.
+- A first install configures the game in about a minute and a half less.
 
 ## 0.3.0 (pre-release)
 
