@@ -10,6 +10,8 @@
   time, in a window of its own.
 - `Rogue Galaxy.exe` offers to run `Install.bat` while the game is not
   built, so an install that stopped halfway goes on from it.
+- A first install compiles the game in about a fifth less time.
+- A first install configures the game in about a minute and a half less.
 
 ## 0.3.0 (pre-release)
 
