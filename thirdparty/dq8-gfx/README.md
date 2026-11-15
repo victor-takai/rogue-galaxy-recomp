@@ -11,7 +11,7 @@ builds on the same PS2Recomp fork this project pins.
 |---|---|
 | `src/gfx/gs/`, `src/gfx/backends/sdlgpu/` | `src/gfx/gs/`, `src/gfx/backends/sdlgpu/`, with the changes below |
 | `src/ui/` | `src/ui/`, the in-game menu (Dear ImGui), with the changes below |
-| `cmake/Dq8Shaders.cmake`, `Dq8EmbedSpirv.cmake`, `Dq8EmbedText.cmake`, `Dq8EmbedBinary.cmake`, `Dq8HostSimd.cmake` | `cmake/`, unchanged |
+| `cmake/Dq8Shaders.cmake`, `Dq8EmbedSpirv.cmake`, `Dq8EmbedText.cmake`, `Dq8EmbedBinary.cmake`, `Dq8HostSimd.cmake` | `cmake/`; `Dq8Shaders.cmake` and `Dq8EmbedSpirv.cmake` with the changes below |
 | `CMakeLists.txt` | written for this project (DQ8's builds the same targets inside its own tree) |
 | `window_icon.cpp` | replaces `sdlgpu_window_icon.cpp`, which embeds DQ8's icon; sets none |
 
@@ -486,3 +486,13 @@ as a frame log numbers them. `DQ8_GFX_HIDDEN_WINDOW=1` creates the window
 hidden and never raises it, for scripted runs that should leave the desktop
 alone; the GS work is the same and `DQ8_GFX_SCREENSHOT_DIR` still writes
 frames.
+
+The build (Rogue Galaxy: changed). `Dq8EmbedSpirv.cmake` turns a module
+into words with two regexes over the whole file instead of a `list(GET)`
+per byte, which was quadratic: the largest draw shader took 47 s on its
+own, now 0.2 s, the header byte-identical. And the commands that compile
+the shaders to SPIR-V and embed them, and the menu font's, depend only on
+what they name (`DEPENDS_EXPLICIT_ONLY`, CMake 3.27; the macOS MSL ones
+are as they were): under Ninja each waited for every library its target
+links, here the runtime with its compiled VU blocks, so the shaders and
+all that includes them came last in a first build.

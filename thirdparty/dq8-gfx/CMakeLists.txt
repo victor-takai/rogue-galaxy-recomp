@@ -132,11 +132,13 @@ target_link_libraries(dq8_imgui PUBLIC SDL3::SDL3-static)
 # menu needs no files beside the executable.
 set(DQ8_UI_FONT "${DQ8_IMGUI_DIR}/misc/fonts/Roboto-Medium.ttf")
 set(DQ8_UI_FONT_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/ui_font_data.cpp")
+# Depending only on what it names, as the shaders do (cmake/Dq8Shaders.cmake).
 add_custom_command(
     OUTPUT "${DQ8_UI_FONT_SOURCE}"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${DQ8_UI_FONT}" "-DOUTPUT=${DQ8_UI_FONT_SOURCE}"
             -DSYMBOL=kUiFontData -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dq8EmbedBinary.cmake"
     DEPENDS "${DQ8_UI_FONT}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dq8EmbedBinary.cmake"
+    ${DQ8_DEPENDS_EXPLICIT_ONLY}
     COMMENT "Embedding the menu font"
     VERBATIM)
 
