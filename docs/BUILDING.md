@@ -10,6 +10,10 @@ C++20, and your own dump of the game ([`DISC.md`](DISC.md) lists
 the one that works). The versions tested are the ones `Install.bat`
 downloads, pinned in [`tools/install/install.ps1`](../tools/install/install.ps1):
 llvm-mingw 20260616 (LLVM 22.1.8), CMake 3.31.12, Ninja 1.13.2, Python 3.12.
+With that llvm-mingw and CMake, SDL3's configure checks come answered from
+`thirdparty/dq8-gfx/cmake/sdl3-preseed.cmake` (a minute less); after
+changing either, SDL3's release or its patches, regenerate it with
+`python tools/install/sdl3_preseed.py` (its help says how).
 
 ```bash
 git clone --recurse-submodules <this repo>
@@ -32,10 +36,11 @@ python setup.py check
 
 From the repository root. The generated code is built with clang (the flags
 are GNU-style; on Windows an LLVM MinGW clang works). Configuring the game
-downloads raylib and SDL3, glslang (for the GPU backend's shaders) when no
-GLSL compiler is installed, and, on Windows, a prebuilt LGPL FFmpeg whose
-hash the framework pins. `-DRG_GS_SDLGPU=OFF` at configure leaves out the
-GPU backend, and with it the menu: the game draws with the software GS.
+downloads raylib (the 5.5 tag's archive) and SDL3, glslang (for the GPU
+backend's shaders) when no GLSL compiler is installed, and, on Windows, a
+prebuilt LGPL FFmpeg whose hash the framework pins. `-DRG_GS_SDLGPU=OFF`
+at configure leaves out the GPU backend, and with it the menu: the game
+draws with the software GS.
 
 ```bash
 # 1. The recompiler: applies patches/ps2recomp to the pinned framework, then
@@ -76,7 +81,10 @@ your disc into `build/vu-blocks-manifest`. A run with
 `PS2_VU_AOT_PROFILE=build/vu-blocks/NAME.txt` records the blocks the
 interpreter executes (both units; keep the lines starting with `0` for
 VU0 alone), and CMake compiles every `build/vu-blocks/*.txt` it finds too
-(as many shards at a time as memory allows: each takes 2.2 GB to compile); maintainers:
+(a shard for each distinct block, at least 128, counted at configure, or
+`-DRG_VU_AOT_SHARDS=N`; several at a time as memory and the processor
+allow: a four-word block takes up to about 0.5 GB and 18 s to compile);
+maintainers:
 `python setup.py vu-blocks-manifest` folds the recordings into the manifest.
 
 ## Rebuilding after a change
@@ -114,6 +122,11 @@ What each step keeps:
   (delete the manifest to extract again), then runs `tools`, `recompile` and
   `build` as above. `Install.bat` also keeps the toolchain it downloaded
   while its hash matches the version pinned in `tools/install/install.ps1`.
+  In a folder with a long path, or with spaces or accented letters, it
+  builds through a short name (`build/short-name.txt`, a junction in
+  `C:\RogueGalaxyBuild` that it removes at the end), and the build's caches
+  name that path: build such a folder again with `Install.bat -Updating`,
+  which makes the junction again, not with `cmake --build` or `setup.py`.
 
 ## Linux and Steam Deck
 

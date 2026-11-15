@@ -76,6 +76,9 @@ struct SdlGpuStats {
     // screen, not drawn (Rogue Galaxy: added).
     uint64_t nativeDraws = 0u;
     uint64_t nativeMeshesCulled = 0u;
+    // Sprites of no width or no height, which cover no pixel, dropped before
+    // any work (Rogue Galaxy: added).
+    uint64_t emptySprites = 0u;
     // Drawn through the same-state fast path (Rogue Galaxy: added).
     uint64_t sameStatePrimitives = 0u;
     uint64_t trianglesDrawn = 0u;

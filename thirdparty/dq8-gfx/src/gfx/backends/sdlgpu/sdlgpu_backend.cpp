@@ -760,10 +760,46 @@ struct SdlGpuBackend::Impl {
         // primitive inside the box adds no page.
         bool boxPages = false;
         float offsetX = 0.0f, offsetY = 0.0f, depthScale = 0.0f;
+        // A vertex alpha past 0x80 would take this state's blend to the
+        // destination copy (vertexAlphaWeighs), decided once per state.
+        bool vertexAlphaWeighs = false;
     } last;
+
+    // Whether a source-alpha blend can weigh past one under this state, by
+    // vertex alpha above 0x80: where the texture brings no alpha, and where
+    // it is modulated, since a texel's alpha is scaled by the vertex's (the
+    // menus' text: a 0x30 grey glyph at alpha 0xFF, which only reads as white
+    // doubled; PCSX2 needs its full blending accuracy for the same text). Not
+    // for a native mesh: its one snapshot would serve all its triangles, and
+    // those that overlap would blend against the frame from before the mesh.
+    // DQ8_GFX_NO_TEXTURED_OVERONE=1 leaves textured primitives out.
+    static bool vertexAlphaWeighs(const GSDrawState &state, const GsAlphaState &alpha, bool native) {
+        static const bool textured = [] {
+            const char *value = std::getenv("DQ8_GFX_NO_TEXTURED_OVERONE");
+            return value == nullptr || value[0] == '\0' || std::strcmp(value, "0") == 0;
+        }();
+        if (alpha.c != kBlendAlphaSource)
+            return false;
+        const GSTex0Reg &tex0 = state.context.tex0;
+        if (!state.prim.tme || !tex0.tcc)
+            return true;
+        return textured && tex0.tfx == 0u && !native;
+    }
+
+    static bool vertexAlphaPastOne(const GSPrimitiveBatch &batch) {
+        for (uint8_t index = 0u; index < batch.vertexCount; ++index)
+            if (batch.vertices[index].a > 0x80u)
+                return true;
+        return false;
+    }
 
     // False sends the primitive down the full path.
     bool submitSameState(const GSPrimitiveBatch &batch) {
+        // The state does not hold a vertex's alpha: a primitive with the
+        // state of the one before can still need its blend done in the
+        // shader (each glyph's fill, after its black copies at 0x80).
+        if (last.vertexAlphaWeighs && vertexAlphaPastOne(batch))
+            return false;
         GsSurface *color = last.color;
         GsRegion written = primitiveBounds(batch);
         if (written.empty())
@@ -906,6 +942,10 @@ struct SdlGpuBackend::Impl {
     // DQ8_GFX_NO_GPU_PADDING: a feedback snapshot's padding rows come from
     // local memory, resolving the target that owns them, as before.
     const bool noGpuPadding = std::getenv("DQ8_GFX_NO_GPU_PADDING") != nullptr;
+    // DQ8_GFX_NO_EMPTY_SPRITES: a sprite of no width or no height goes
+    // through like any other draw, as before (see submitOne; Rogue Galaxy:
+    // added).
+    const bool noEmptySpriteDrop = std::getenv("DQ8_GFX_NO_EMPTY_SPRITES") != nullptr;
     // DQ8_GFX_CYCLE_SNAPSHOTS: the copies into a snapshot texture cycle it,
     // as before, and count against the pending budget (see recordSnapshot).
     const bool cycleSnapshots = std::getenv("DQ8_GFX_CYCLE_SNAPSHOTS") != nullptr;
@@ -2479,6 +2519,19 @@ struct SdlGpuBackend::Impl {
             return;
         if (!gsIsColorFramePsm(context.frame.psm))
             return;
+        // A sprite of no width or no height covers no pixel at any scale (its
+        // edges are exclusive), so it draws nothing; dropped here, it also
+        // builds no texture, while primitiveBounds below rounds its edges out
+        // to a pixel. Rogue Galaxy draws such sprites, and in Zerard's plaza
+        // six a frame read the 512x448 buffer 0x2A00 as CT24, which the GPU
+        // path refused (no samples to fit), so the whole buffer was read back
+        // from the GPU twice a frame for textures nothing showed: a quarter of
+        // this thread's time (Rogue Galaxy: added).
+        if (!noEmptySpriteDrop && state.prim.type == GS_PRIM_SPRITE && batch.vertexCount >= 2u &&
+            (batch.vertices[0].x == batch.vertices[1].x || batch.vertices[0].y == batch.vertices[1].y)) {
+            ++stats.emptySprites;
+            return;
+        }
         if (last.valid && std::memcmp(&state, &last.state, sizeof(state)) == 0 && submitSameState(batch))
             return;
         last.valid = false;
@@ -2590,11 +2643,10 @@ struct SdlGpuBackend::Impl {
         // Then the blends weighted past one, which a fixed-point attachment
         // clamps: FIX above 0x80, and vertex alpha above it where the texture
         // brings none (the town's additive sparkles and light shafts carry
-        // up to 0xB4).
+        // up to 0xB4), and where it is modulated (the menus' text).
         bool overOne = blend.enabled && alpha.c == kBlendAlphaFixed && alpha.fix > 0x80u;
-        if (blend.enabled && alpha.c == kBlendAlphaSource && (!state.prim.tme || !context.tex0.tcc))
-            for (uint8_t index = 0u; index < batch.vertexCount && !overOne; ++index)
-                overOne = batch.vertices[index].a > 0x80u;
+        if (blend.enabled && vertexAlphaWeighs(state, alpha, nativeMesh != nullptr) && vertexAlphaPastOne(batch))
+            overOne = true;
         const bool destinationRead = !framebufferFetch && device.destinationCopy() &&
             (test.destinationAlphaTestEnabled || (blend.enabled && alpha.c == kBlendAlphaDest) || overOne);
         if (!framebufferFetch && !destinationRead && blend.enabled && !blend.exact)
@@ -3126,6 +3178,8 @@ struct SdlGpuBackend::Impl {
             last.boxPages = pushedNew;
             last.reach = plainBounded ? plainReach : GsRegion{};
             last.reachAll = state.prim.tme && plainTexture && !plainBounded;
+            last.vertexAlphaWeighs = device.destinationCopy() && !framebufferFetch && blend.enabled &&
+                                     vertexAlphaWeighs(state, gsDecodeAlpha(context.alpha), false);
         }
         if (draw.snapshot)
             feedbackWritten.clear();
@@ -3779,12 +3833,13 @@ struct SdlGpuBackend::Impl {
         const uint64_t submissions = device.submissions();
         static uint64_t previousSameState = 0u, previousSubmitted = 0u;
         static SdlGpuStats previousReasons{};
+        static uint64_t previousUploadMerges = 0u;
         const auto d = [](uint64_t now, uint64_t before) { return static_cast<unsigned long long>(now - before); };
         std::fprintf(stderr,
                      "[gfx] same-state primitives %llu of %llu submitted | flushes: settle=%llu transfer=%llu "
                      "snapshot=%llu alias=%llu texread=%llu feedback=%llu localcopy=%llu present=%llu "
                      "rewrite=%llu of %llu | covered-releases=%llu (%llu pages) | native strips=%llu (on the CPU %llu, "
-                     "draws %llu, off screen %llu)\n",
+                     "draws %llu, off screen %llu) | empty sprites=%llu | upload merges=%llu\n",
                      d(stats.sameStatePrimitives, previousSameState), d(stats.primitivesSubmitted, previousSubmitted),
                      d(stats.flushSettle, previousReasons.flushSettle),
                      d(stats.transferFlushes, previousReasons.transferFlushes),
@@ -3797,8 +3852,11 @@ struct SdlGpuBackend::Impl {
                      d(stats.nativeMeshes, previousReasons.nativeMeshes),
                      d(stats.nativeMeshesExpanded, previousReasons.nativeMeshesExpanded),
                      d(stats.nativeDraws, previousReasons.nativeDraws),
-                     d(stats.nativeMeshesCulled, previousReasons.nativeMeshesCulled));
+                     d(stats.nativeMeshesCulled, previousReasons.nativeMeshesCulled),
+                     d(stats.emptySprites, previousReasons.emptySprites),
+                     d(targetStats().uploadMerges, previousUploadMerges));
         previousReasons = stats;
+        previousUploadMerges = targetStats().uploadMerges;
         previousSameState = stats.sameStatePrimitives;
         previousSubmitted = stats.primitivesSubmitted;
         if (const auto &extra = statsExtraLine()) {

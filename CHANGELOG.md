@@ -2,29 +2,55 @@
 
 ## Unreleased
 
+### Changed
+
+- `Install.bat` works in a folder with a long path, spaces or accented
+  letters, instead of offering a copy at `C:\RogueGalaxy`.
+- In a launcher such as QuiverLauncher, Play installs the game the first
+  time, in a window of its own.
+- `Rogue Galaxy.exe` offers to run `Install.bat` while the game is not
+  built, so an install that stopped halfway goes on from it.
+- A first install compiles the game in about a fifth less time.
+- A first install configures the game in about a minute and a half less.
+
+## 0.3.0 (pre-release)
+
+What the Japanese Director's Cut changed in battles, as options; the
+European texts (experimental); the mouse camera and new keyboard and mouse
+controls; and fixes. No game data is included.
+
+**Requires:** Windows 10/11 (64-bit), about 16 GB free, and your own image
+of Rogue Galaxy (USA, SCUS-97490).
+
+### Install
+
+1. Download **RogueGalaxy-0.3.0.zip** (not "Source code").
+2. Extract it to a short path, such as `C:\`: it holds the folder
+   `RogueGalaxy`.
+3. Run `Install.bat` and pick your disc image.
+4. Wait about 20 minutes on a fast PC (up to an hour on a slower one), then
+   play with `Rogue Galaxy.exe`.
+
+### Update from 0.2.0
+
+Run `Update.bat` in your game folder. This version changes how the game's
+code is translated, so the update takes about as long as the first
+install. Your saves (`disc\mc0`), settings, textures and the undub stay
+([INSTALL.md](docs/INSTALL.md#update); from 0.1.0,
+[by hand](docs/INSTALL.md#from-010)).
+
 ### New
 
-- What the Japanese Director's Cut changed in battles, which the US
-  release did not get, as three options (Game, off by default, from the
-  next start):
-  - Director's Cut balance: smaller groups of enemies, more money from
-    many of them, the Rosencaster and Starship Factory enemies weaker, the
-    Area Masters stronger, bosses never knocked down;
-  - Director's Cut enemy behavior: the enemies' attacks and AI;
-  - Director's Cut party AI: allies low on health fall back and guard.
-  All of it comes from your own Japanese Director's Cut disc:
-  `Install-Undub.bat` reads it. With the undub already installed, the
-  update reads it from the image it came from, if that is still where it
-  was; otherwise run `Install-Undub.bat` again (the voices it copied stay).
-  The balance works with the European texts too, with their names: the
-  install that comes second makes that text's tables.
-- European texts (experimental): the menus, scenes and battles in French,
-  German, Spanish or Italian, from your own European disc (F1 > Settings >
-  Language > Text, from the next start). Run `Install-European.bat` first
-  and pick the disc image. The options on the game's own Settings screen
-  are named in that language too. The voices stay as they are. Played in
-  Spanish and tested in all four up to the first scenes; the rest of the
-  story has not been seen in them yet.
+- Director's Cut balance, enemy behavior and party AI (Game, off by
+  default): what the Japanese Director's Cut changed in battles, which the
+  US release did not get, read from your own Japanese disc by
+  `Install-Undub.bat` ([DIRECTORS-CUT.md](docs/DIRECTORS-CUT.md)). With the
+  undub from 0.2.0, the update reads it from the same image; if the image
+  has moved, run `Install-Undub.bat` again.
+- European texts (experimental): French, German, Spanish or Italian, from
+  your own European disc. Run `Install-European.bat`, then pick the
+  language in F1 > Settings > Language > Text
+  ([#3](https://github.com/victor-takai/rogue-galaxy-recomp/issues/3)).
 - Mouse camera (Game, on by default): the mouse turns and tilts the
   camera, exploring, in battle and in the first-person view, with its own
   sensitivity and an option to invert the vertical. Once you press a key
@@ -52,7 +78,7 @@
   console's pace again.
 - An option that does nothing as things stand is greyed out in the F1
   menu, with a line under it saying what would make it work: Mouse
-  sensitivity and Invert mouse vertical without Mouse camera, Widescreen
+  sensitivity and Invert mouse up and down without Mouse camera, Widescreen
   while the picture is shown at 4:3, Borders while the picture fills the
   window, the Director's Cut options and the undub before
   `Install-Undub.bat`, Text before `Install-European.bat` (and a language
@@ -63,6 +89,20 @@
 - The frame-rate counter (F3) and the fast-forward badge stay in the
   window's corners with the picture at 4:3 too, as the notifications do;
   they sat in the picture's corners, inside the bars.
+- The F1 menu's icons sit level with their text: in the notifications,
+  the windows' titles and the pause banner they sat a few pixels high. The
+  controller, the gear, the keyboard, the undo arrow and the check are
+  drawn anew, the controller and the gear as they look.
+- Some of the F1 menu's names say better what they are: Controller's
+  buttons is now Buttons in the game's text, under Convenience; Show the
+  loading recap at once is Quick loading recap, as on the game's Settings
+  screen; Keyboard shortcuts is Shortcuts, and that window now lists F6.
+  Texts that had gone wrong were corrected, among them setting a key,
+  which now names the keys kept for shortcuts, the empty Textures page and
+  the free camera, which Start also turns off. F7, F9 and F10, which write
+  diagnostics to the log, can no longer be bound in Controls.
+- Much of the menu text that came out dull grey (the load screen, the
+  Settings rows, the item descriptions) is bright, as on the PS2.
 - Water, a sword on a character's back and other things no longer show
   through the ground and through bodies after a visit to the Revelation
   screens
@@ -72,6 +112,41 @@
   folder. Both copies still share the settings in
   `%APPDATA%\RogueGalaxy\Recompiled`: each saves all of its settings
   whenever one of them changes (moving its window too), over the other's.
+- Zerard's central plaza, where you land after the boss at the end of
+  Juraika, runs faster at high internal resolutions: from about 40 to
+  about 51 fps at 4x on the PC it was measured on, with the same picture
+  ([#17](https://github.com/victor-takai/rogue-galaxy-recomp/issues/17)).
+- From chapter 8, where the game moves to the disc's second layer, it no
+  longer hangs: it could not open the parts of its code it loads from
+  there (the field and battles, the Insectron, the Factory, the title
+  screen).
+- Native renderer (Game > Native renderer, off by default, for
+  development) is no longer empty: with it on, most of the work the PS2's
+  vector unit did on the models is done on the PC and its graphics card.
+  The models are still drawn through the emulation of the PS2's graphics
+  chip. By notavolleyball-dev, with fixes by azlekayn.
+
+### Known issues
+
+- Only the USA version is supported: the Japanese and European discs add
+  to it (voices, texts, the Director's Cut's battles), never replace it.
+- It has not been played from start to finish; most of the testing covers
+  the early game.
+- From chapter 8 the game no longer hangs (above), but no testing has
+  reached chapter 8: the fix has not been seen in play.
+- The heaviest scenes can dip below 60 fps, more so at high internal
+  resolutions: Zerard's central plaza runs at about 51 fps at 4x (above).
+- A black screen after the boss at the end of Juraika was reported once
+  ([#17](https://github.com/victor-takai/rogue-galaxy-recomp/issues/17)) and
+  has not been seen again. If it happens to you, the log
+  (`build\last-run.log`) helps.
+- The European texts are experimental: a few lines stay English, and most
+  of the story has not been seen in them.
+- The Director's Cut options have been played only in the early game.
+- In widescreen, menus and text are stretched.
+- The Steam Deck, through Proton, is prepared but untested.
+- An antivirus may block the compiler during the install: restore it and
+  run `Install.bat` again.
 
 ## 0.2.0 (pre-release)
 
