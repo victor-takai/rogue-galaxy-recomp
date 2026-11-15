@@ -4,6 +4,12 @@
 
 ### Changed
 
+- `Install.bat` works in a folder with a long path, spaces or accented
+  letters, instead of offering a copy at `C:\RogueGalaxy`.
+- In a launcher such as QuiverLauncher, Play installs the game the first
+  time, in a window of its own.
+- `Rogue Galaxy.exe` offers to run `Install.bat` while the game is not
+  built, so an install that stopped halfway goes on from it.
 - A first install compiles the game in about a fifth less time.
 - A first install configures the game in about a minute and a half less.
 

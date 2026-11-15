@@ -52,7 +52,10 @@ import zlib
 from datetime import date
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+# Not resolve(): Install.bat may run this through a short name for a long
+# folder (a junction, tools/install/short-name.ps1), which resolve() would
+# turn back into the long path the build tools cannot use.
+ROOT = Path(os.path.abspath(__file__)).parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 from disc.iso9660 import SECTOR, Entry, IsoImage  # noqa: E402
@@ -586,11 +589,11 @@ def cmd_recompile(args: argparse.Namespace) -> int:
     spec = load_toml(config_dir(args.version) / "funcmap.toml")
     logs = ROOT / "build" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
-    generated = (ROOT / "build" / "generated").resolve()
+    generated = Path(os.path.abspath(ROOT / "build" / "generated"))
     failed = 0
     for image, ispec in spec["image"].items():
         cfg_path = config_dir(args.version) / "recomp" / f"{image}.toml"
-        out = (ROOT / load_toml(cfg_path)["general"]["output"]).resolve()
+        out = Path(os.path.abspath(ROOT / load_toml(cfg_path)["general"]["output"]))
         if generated not in out.parents:
             sys.exit(f"{cfg_path.name}: output {out} is not under {generated}; refusing to clear it")
         # ps2_recomp writes into a staging folder; only files whose bytes

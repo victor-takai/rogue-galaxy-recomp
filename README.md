@@ -49,7 +49,7 @@ connection and your own uncompressed `.iso` of Rogue Galaxy USA
 
 1. Download `RogueGalaxy-<version>.zip` from the [releases](../../releases)
    page (not "Source code").
-2. Extract it to a short path, such as `C:\`.
+2. Extract it to a folder on this PC, outside OneDrive, such as `C:\`.
 3. Double-click `Install.bat` and choose your disc image.
 4. Wait about 20 minutes on a fast PC, up to an hour on a slower one.
 5. Play with `Rogue Galaxy.exe`.
