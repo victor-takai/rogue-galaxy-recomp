@@ -29,6 +29,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 // Debug accounting published by ps2xRuntime's GIF frontend (gs_frontend.cpp).
@@ -646,7 +647,20 @@ bool batchTraceEnabled() {
     return enabled;
 }
 
+// notePresentationFlip's note, for the frame the presenting thread shows next.
+struct FlipNote {
+    bool set = false;
+    std::chrono::steady_clock::time_point flipped{};
+    std::chrono::steady_clock::time_point taken{};
+};
+thread_local FlipNote t_flipNote;
+
 } // namespace
+
+void notePresentationFlip(std::chrono::steady_clock::time_point flipped,
+                          std::chrono::steady_clock::time_point taken) {
+    t_flipNote = FlipNote{true, flipped, taken};
+}
 
 
 void setStatsExtraLine(std::function<std::string()> provider) {
@@ -1345,6 +1359,80 @@ struct SdlGpuBackend::Impl {
                 std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
         }
     };
+
+    // The moments of one present to the window: when the game flipped the
+    // frame and when the presenting thread took it (notePresentationFlip;
+    // with no flip, taken is begin), when this backend began showing it
+    // (after the GS worker reached the frame), the time spent waiting for its
+    // drawing on the GPU (and the slot's previous display), the time the
+    // swapchain image took to come, and when the present went out.
+    struct PresentTimes {
+        std::chrono::steady_clock::time_point flipped{};
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point taken = begin;
+        std::chrono::steady_clock::duration fence{};
+        std::chrono::steady_clock::duration acquire{};
+        std::chrono::steady_clock::time_point submitted{};
+    };
+
+    // DQ8_GFX_PRESENT_LOG=FILE: a CSV line per present to the window, for
+    // frame pacing; the stats line's "longest frame" is taken when a frame is
+    // prepared, before this part of its way to the screen (Rogue Galaxy:
+    // added). tools/bench/present_log.py reads it.
+    struct PresentLog {
+        std::FILE *file = nullptr;
+        std::mutex mutex;
+        std::chrono::steady_clock::time_point origin = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point flushed = origin;
+        PresentLog() {
+            const char *path = std::getenv("DQ8_GFX_PRESENT_LOG");
+            if (path == nullptr || *path == '\0')
+                return;
+            file = std::fopen(path, "w");
+            if (!file) {
+                std::fprintf(stderr, "[gfx] present log: cannot write %s\n", path);
+                return;
+            }
+            std::fputs("flip_ms,taken_ms,kind,worker_ms,fence_ms,acquire_ms,submitted_ms\n", file);
+            std::fprintf(stderr, "[gfx] present log in %s\n", path);
+        }
+        ~PresentLog() {
+            if (file)
+                std::fclose(file);
+        }
+        PresentLog(const PresentLog &) = delete;
+        PresentLog &operator=(const PresentLog &) = delete;
+
+        // One line. Flushed about once a second, not at every present: the
+        // presenting thread writes it, and a call into the system there
+        // would move the times it measures. A game stopped by a signal keeps
+        // all but its last second. kind: flip (a frame the game flipped), vblank (shown at a vsync with
+        // no flip: loading, movies, RG_PRESENT=vblank), refresh (the last
+        // frame again, under a fresh overlay).
+        void write(const char *kind, const PresentTimes &times) {
+            if (!file)
+                return;
+            using Clock = std::chrono::steady_clock;
+            // -1 for a moment that did not happen: no flip, or nothing went
+            // to the window (hidden, minimised, no picture).
+            const auto since = [&](Clock::time_point at) {
+                return at == Clock::time_point{} ? -1.0
+                                                 : std::chrono::duration<double, std::milli>(at - origin).count();
+            };
+            const auto length = [](Clock::duration span) {
+                return std::chrono::duration<double, std::milli>(span).count();
+            };
+            std::lock_guard lock(mutex);
+            std::fprintf(file, "%.3f,%.3f,%s,%.3f,%.3f,%.3f,%.3f\n", since(times.flipped), since(times.taken), kind,
+                         length(times.begin - times.taken), length(times.fence), length(times.acquire),
+                         since(times.submitted));
+            if (times.begin - flushed >= std::chrono::seconds(1)) {
+                std::fflush(file);
+                flushed = times.begin;
+            }
+        }
+    };
+    PresentLog presentLog;
 
     bool setError(std::string message) {
         lastError = std::move(message);
@@ -4432,7 +4520,7 @@ struct SdlGpuBackend::Impl {
     // Called with the backend lock released: acquiring a swapchain texture
     // waits for the display, and holding the lock across that wait blocks
     // every Submit and transfer the EE thread makes for the whole frame.
-    bool showInWindow(PresentationSlot *slot, std::string &error) {
+    bool showInWindow(PresentationSlot *slot, std::string &error, PresentTimes *times = nullptr) {
         if (!window || (slot && !slot->texture))
             return true;
         const auto fail = [&](const char *context) {
@@ -4440,10 +4528,13 @@ struct SdlGpuBackend::Impl {
             return false;
         };
         if (slot && slot->displayed) {
+            const auto waitStart = std::chrono::steady_clock::now();
             if (!SDL_WaitForGPUFences(device.handle(), true, &slot->displayed, 1))
                 return fail("SDL_WaitForGPUFences(previous display): ");
             SDL_ReleaseGPUFence(device.handle(), slot->displayed);
             slot->displayed = nullptr;
+            if (times)
+                times->fence += std::chrono::steady_clock::now() - waitStart;
         }
         applyPresentMode();
 
@@ -4456,6 +4547,7 @@ struct SdlGpuBackend::Impl {
         SDL_GPUTexture *swapchain = nullptr;
         uint32_t swapchainWidth = 0u;
         uint32_t swapchainHeight = 0u;
+        const auto acquireStart = std::chrono::steady_clock::now();
         if (!SDL_WaitAndAcquireGPUSwapchainTexture(commands, window, &swapchain,
                                                    &swapchainWidth, &swapchainHeight)) {
             SDL_CancelGPUCommandBuffer(commands);
@@ -4463,6 +4555,8 @@ struct SdlGpuBackend::Impl {
         }
         // Also when minimised, so an idle overlay does not retry every pump.
         lastShown = std::chrono::steady_clock::now();
+        if (times)
+            times->acquire = lastShown - acquireStart;
         if (!swapchain || swapchainWidth == 0u || swapchainHeight == 0u) {
             // Minimised or otherwise unavailable this frame; nothing to show.
             if (!submitAfterPending([&] { return SDL_SubmitGPUCommandBuffer(commands); }))
@@ -4518,6 +4612,8 @@ struct SdlGpuBackend::Impl {
             submitAfterPending([&] { return SDL_SubmitGPUCommandBufferAndAcquireFence(commands); });
         if (!displayed)
             return fail("SDL_SubmitGPUCommandBufferAndAcquireFence(present): ");
+        if (times)
+            times->submitted = std::chrono::steady_clock::now();
         if (slot)
             slot->displayed = displayed;
         else
@@ -4579,13 +4675,17 @@ struct SdlGpuBackend::Impl {
             }
         }
         // One prepared and not displayed yet: its drawing has to be done.
+        PresentTimes times;
         if (slot && !tookLease && slot->prepared &&
             !SDL_WaitForGPUFences(device.handle(), true, &slot->prepared, 1)) {
             std::fprintf(stderr, "[gfx] window refresh: SDL_WaitForGPUFences(prepared): %s\n", SDL_GetError());
             return;
         }
+        times.fence = std::chrono::steady_clock::now() - times.begin;
         std::string error;
-        const bool shown = showInWindow(slot, error);
+        const bool shown = showInWindow(slot, error, presentLog.file ? &times : nullptr);
+        if (shown)
+            presentLog.write("refresh", times);
         if (slot && tookLease) {
             std::lock_guard lock(presentationPool->mutex);
             slot->leased = false;
@@ -5561,12 +5661,21 @@ PresentationFrame SdlGpuBackend::DisplayPreparedPresentation(const GSPresentatio
             throw std::runtime_error("SDL GPU presentation cancelled");
     }
     auto &slot = prepared->pool->slots[prepared->slot];
+    // Taken for this frame alone, shown or not.
+    const FlipNote note = std::exchange(t_flipNote, FlipNote{});
     if (prepared->haveFrame && m_impl->window != nullptr) {
+        Impl::PresentTimes times;
+        if (note.set) {
+            times.flipped = note.flipped;
+            times.taken = note.taken;
+        }
         if (slot.prepared && !SDL_WaitForGPUFences(m_impl->device.handle(), true, &slot.prepared, 1))
             throw std::runtime_error(std::string("SDL_WaitForGPUFences(snapshot): ") + SDL_GetError());
+        times.fence = std::chrono::steady_clock::now() - times.begin;
         std::string error;
-        if (!m_impl->showInWindow(&slot, error))
+        if (!m_impl->showInWindow(&slot, error, m_impl->presentLog.file ? &times : nullptr))
             throw std::runtime_error(error);
+        m_impl->presentLog.write(note.set ? "flip" : "vblank", times);
         m_impl->lastDisplayedSlot = prepared->slot;
         m_impl->lastGameFrame = m_impl->lastShown;
         m_impl->updatePerformanceTitle(prepared->gsActive);

@@ -656,17 +656,24 @@ void writeNativeScreenshot(const PresentationFrame &frame)
     std::fclose(out);
 }
 
-// Step 7d of docs/NATIVE-PIPELINE.md: under the pipeline the presenting
-// thread shows the frame each flip closed (flip_pacing.cpp pushes its Present
-// record) through the backend's native present, in place of the GS's display
-// (PMODE/DISPFB). It also answers the game's colour reads, which wait on
-// the game's thread beside it. Without a flip for 200 ms (the game is not
-// drawing frames of its own) the last frame is shown at every vsync, so the
-// window and the menu keep up.
-bool presentNative(void *userData, bool newTick)
+// The runtime's host present hook (ps2_host_present.h), on every pass of the
+// presenter loop; newTick at a new guest vsync.
+//
+// On the GS display (the default), a flip that landed after the presenter's
+// look at a tick is shown at once instead of at the next tick
+// (flip_pacing.h, showLateFlip); at a tick the runtime's latch shows it.
+//
+// Under the native pipeline, step 7d of docs/NATIVE-PIPELINE.md: the
+// presenting thread shows the frame each flip closed (flip_pacing.cpp
+// pushes its Present record) through the backend's native present, in place
+// of the GS's display (PMODE/DISPFB). It also answers the game's colour
+// reads, which wait on the game's thread beside it. Without a flip for
+// 200 ms (the game is not drawing frames of its own) the last frame is shown
+// at every vsync, so the window and the menu keep up.
+bool presentHook(void *userData, bool newTick)
 {
     if (!dq8::gfx::native::enabled())
-        return false;
+        return rg::graphics::showLateFlip(newTick);
     auto *backend = static_cast<dq8::gfx::SdlGpuBackend *>(userData);
     backend->serveNativeReads();
     // A flip returns from its vsync wait at the same tick this thread sees,
@@ -690,6 +697,7 @@ bool presentNative(void *userData, bool newTick)
     {
         shownFlip = flips;
         flipAt = now;
+        dq8::gfx::notePresentationFlip(rg::graphics::lastFlipTime(), now);
     }
     // Between ticks only a new flip is shown; at a tick, a paused game's
     // last frame is shown again after 200 ms, as before.
@@ -1330,7 +1338,7 @@ Setup::Setup(PS2Runtime &runtime)
                                 initialWindowPlacement(settings)))
             {
                 runtime.setExternalPresenter(&pump, sdl.get());
-                ps2SetHostPresentHook(&presentNative, sdl.get());
+                ps2SetHostPresentHook(&presentHook, sdl.get());
                 if (!sdl->supportsPresentMode(settings.display.presentMode))
                 {
                     settings.display.presentMode = SDL_GPU_PRESENTMODE_VSYNC;

@@ -19,6 +19,7 @@
   built, so an install that stopped halfway goes on from it.
 - A first install compiles the game in about a fifth less time.
 - A first install configures the game in about a minute and a half less.
+- Frames reach the screen at an even pace.
 
 ## 0.3.0 (pre-release)
 

@@ -179,6 +179,7 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `RG_GS_NO_WINDOW=1` | Present through the runtime's window instead of SDL's |
 | `RG_GS_WORKER=0` | Run the GS backend on the game's thread instead of its own worker thread |
 | `RG_PRESENT=vblank` | Present at host vblanks instead of on the game's flips |
+| `RG_PRESENT_TICK=1` | Shows a flip only at a guest vsync tick, as before: a flip that lands just after the presenter's look at a tick waits for the next one, so at 30 fps frames reach the screen 1 and 3 ticks apart in turn, and at 60 fps the next flip replaces it there, unseen. By default, in the game's own window (not `RG_GS_NO_WINDOW`) and with the GS worker (not `RG_GS_WORKER=0`, which presents at vsyncs, as `RG_PRESENT=vblank` does), a flip is shown at the presenter's first pass after it lands (`src/flip_pacing.h`, `showLateFlip`; the native pipeline's switch is `RG_NATIVE_PRESENT_TICK`) |
 | `RG_VIF1_THREAD=0` | Run VIF1 lists (VU1) on the game's thread instead of their own |
 | `RG_GIF_THREAD=0` | Run the GS packets of the VIF1 lists on the VIF1 thread instead of a GIF stage of their own |
 | `RG_GS_DEPTH_READS=queue` | Serve the game's depth readbacks through the GS worker queue |
@@ -200,6 +201,7 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `DQ8_GFX_PROFILE_CYCLE` | Tags the scene's draws with the VU1 program that made them, as `RG_JITTER` does (`src/vif1_thread.cpp`); the backend's profile cycle it is named for is no longer in the code |
 | `RG_TEXTURE_PACK_DECODE=1` | Decode every picture of the texture packs on the CPU, instead of sending the BC1, BC2, BC3 and BC7 ones to the GPU compressed; to compare |
 | `DQ8_GFX_STATS_EVERY=N` | A `[gfx]` stats line every N presented frames (off unless set; both launchers set 60, `debug\RogueGalaxy-hitches.bat` 10) |
+| `DQ8_GFX_PRESENT_LOG=FILE` | A CSV line per present to the window, for frame pacing, in milliseconds: when the game flipped the frame and when the presenter took it, its kind (`flip`; `vblank`, shown at a vsync with no flip: loading, movies, and every frame with `RG_PRESENT=vblank` or `RG_GS_WORKER=0`; `refresh`, the last frame again), the waits for the GS worker to reach it (under the native pipeline, for its composing), for its drawing on the GPU (fence) and for a swapchain image (acquire), and when the present went out (-1 for what did not happen: no flip, or nothing to the window, hidden or minimised). The stats line's "longest frame" is taken earlier, when a frame is prepared. `python tools/bench/present_log.py FILE [FROM TO] [--hz HZ]` sums it up |
 | `DQ8_GFX_SHOW_FPS=1` | The backend's frame rate in the window title; `RG_SHOW_FPS=1` sets it with `RG_GS_NO_WINDOW=1` |
 | `DQ8_GFX_HIDDEN_WINDOW=1` | The window is never shown or raised, for scripted runs; the GS work is the same, and frames still reach `DQ8_GFX_SCREENSHOT_DIR` (`tools/bench/walk.sh` sets it) |
 | `DQ8_GFX_REMOVE_LINE_BLEND` | Set: no PS2 one-line display blend, for runs without the menu (the trace replay). In the game the menu's setting replaces it at start: use `RG_SETTINGS_FILE` with `remove_line_blend = 1` instead |

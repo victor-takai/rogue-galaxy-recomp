@@ -488,6 +488,17 @@ hidden and never raises it, for scripted runs that should leave the desktop
 alone; the GS work is the same and `DQ8_GFX_SCREENSHOT_DIR` still writes
 frames.
 
+The present log (Rogue Galaxy: added). `DQ8_GFX_PRESENT_LOG=FILE` writes
+a CSV line per present to the window: when the game flipped the frame and
+when the presenting thread took it (`notePresentationFlip`, from the layer
+that hands flips to the presenter), the waits for the GS worker (under
+the native pipeline, for the frame's composing), for the frame's drawing (fence) and for a swapchain image (acquire,
+`showInWindow`), and when the present went out. The stats line's "longest
+frame" is taken when a frame is prepared, before that part of its way.
+Rogue Galaxy's `tools/bench/present_log.py` sums it up; it found the
+presenter taking a flip only at the next guest vsync when the flip landed
+a moment after its look.
+
 The build (Rogue Galaxy: changed). `Dq8EmbedSpirv.cmake` turns a module
 into words with two regexes over the whole file instead of a `list(GET)`
 per byte, which was quadratic: the largest draw shader took 47 s on its
