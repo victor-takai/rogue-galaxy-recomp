@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### New
+
+- Linux and the Steam Deck (untested): `install.sh` builds the game for
+  Linux from your disc image, and `rogue-galaxy.sh` starts it. In a
+  launcher such as QuiverLauncher, Play builds the game the first time, in
+  a terminal window of its own.
+
 ### Changed
 
 - `Install.bat` works in a folder with a long path, spaces or accented

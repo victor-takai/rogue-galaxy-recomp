@@ -7,8 +7,10 @@ GitHub's own "Source code" archives leave the submodules out
 (thirdparty/PS2Recomp, thirdparty/imgui), and Install.bat cannot build
 without them, so a release carries this archive instead:
 RogueGalaxy-<version>.zip, one folder RogueGalaxy/ holding the committed
-files, each submodule at its recorded commit, and REVISION, the commit the
-About window names (no .git comes along). --ref archives another commit
+files, each submodule at its recorded commit, REVISION, the commit the
+About window names, and FILES, every other file's name one a line, for
+install.sh to remove what a newer version dropped when it is unpacked over
+an older one (no .git comes along). --ref archives another commit
 than HEAD (a release's tag, to make its archive again). With --worktree it takes the
 working tree's tracked and new files instead of the commit, to try an
 install before committing. Only source: never disc data or a build.
@@ -20,6 +22,7 @@ import argparse
 import hashlib
 import io
 import re
+import stat
 import subprocess
 import sys
 import tarfile
@@ -33,6 +36,8 @@ FOLDER = "RogueGalaxy"
 # makes sure.
 NEVER = ("disc/", "build/", "mc0/", "mc1/", "textures/", "toolchain/")
 LARGEST = 20 << 20
+# The archive's files so far, for FILES.
+NAMES: list[str] = []
 
 
 def git(*args: str, cwd: Path = ROOT) -> bytes:
@@ -71,8 +76,13 @@ def add(zf: zipfile.ZipFile, name: str, data: bytes, mtime: float) -> None:
     # A day before, in UTC, is in the past in every time zone.
     info = zipfile.ZipInfo(f"{FOLDER}/{name}", time.gmtime(max(mtime - 86400, 315532800))[:6])
     info.compress_type = zipfile.ZIP_DEFLATED
-    info.external_attr = (0o755 if name.endswith(".sh") else 0o644) << 16
+    # Marked as made on Unix, so the modes count: packed on Windows the
+    # entries say FAT, and then Info-ZIP's unzip and the zip crate drop a
+    # script's exec bit. Windows' own unpackers ignore it.
+    info.create_system = 3
+    info.external_attr = (stat.S_IFREG | (0o755 if name.endswith(".sh") else 0o644)) << 16
     zf.writestr(info, data, compresslevel=9)
+    NAMES.append(name)
 
 
 def add_archive(zf: zipfile.ZipFile, tar_bytes: bytes, prefix: str) -> int:
@@ -125,7 +135,8 @@ def main() -> int:
         for path, commit in links:
             count += add_archive(zf, archive(commit, ROOT / path), path + "/")
         add(zf, "REVISION", (revision + "\n").encode(), time.time())
-        count += 1
+        add(zf, "FILES", "".join(name + "\n" for name in sorted(NAMES)).encode(), time.time())
+        count += 2
 
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
     print(f"{target}: {count} files, {target.stat().st_size / 2**20:.1f} MiB, revision {revision}")

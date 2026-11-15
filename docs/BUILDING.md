@@ -144,6 +144,32 @@ To update, `git pull --recurse-submodules` and run `./install.sh` again: it
 keeps the extracted disc and rebuilds what changed (`Update.bat` is Windows
 only). The game checks for a new release at start through `curl`.
 
+Started without a terminal, with a display and with no arguments (a launcher
+such as QuiverLauncher, whose Play runs the first script it finds,
+`install.sh`; a file manager; Steam), `install.sh` starts the game when it
+is built, and otherwise opens a terminal (the first that starts of Konsole,
+GNOME Terminal, Ptyxis, GNOME Console, Xfce Terminal, `xdg-terminal-exec`,
+Alacritty, kitty, foot, `x-terminal-emulator` and xterm), asks for the disc
+image through kdialog or zenity when there is one, builds, then starts the
+game.
+`rogue-galaxy.sh` hands over to `install.sh --play` the same way when the
+game is not built.
+
+A release archive carries `REVISION`; `install.sh` copies it to
+`build/installed-revision` once the build is done, and a newer archive
+unpacked over the folder (how QuiverLauncher updates) is built again on the
+next start, as is a build made by hand with `setup.py` in a release folder.
+Once for each archive unpacked, `install.sh` first removes from the code
+folders what the archive's `FILES` does not list, as `Update.bat` does (a
+dropped patch would otherwise still be applied), and gives every file
+today's date, since unzip gives them the archive's, older than the build: an
+update is a full build. The files the framework's patches create stay; the
+configure removes them itself when the framework is back unpatched, as an
+unpack leaves it, before it applies the patches again. One install or update
+runs at a time in a folder (`build/install.lock`, through `flock`; its build
+in the container holds `build/container.lock`), and `rogue-galaxy.sh` does
+not start the game while one runs.
+
 By hand, the steps above work as they are, with these needs:
 
 - curl (the update check), clang with lld, CMake 3.24+, Ninja, Python 3.11+, git, GNU make, nasm,

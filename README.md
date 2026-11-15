@@ -72,6 +72,11 @@ builds in a container (distrobox) it sets up itself.
    10 to 30 minutes.
 3. Play with `./rogue-galaxy.sh`, or from the application menu.
 
+Started without a terminal (a launcher's Play button, such as
+QuiverLauncher's, or a file manager), `install.sh` opens one to build in,
+asks for the disc image in a window, then starts the game; once the game is
+built, it just starts it.
+
 On a Steam Deck, play in game mode: in desktop mode add
 `rogue-galaxy.sh` to Steam as a non-Steam game (Games > Add a Non-Steam
 Game), then switch to game mode. Back + Start opens the game's menu (F1).

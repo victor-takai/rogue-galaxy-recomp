@@ -11,14 +11,37 @@ fail() {
         kdialog --error "$1" --title "Rogue Galaxy" 2>/dev/null
     elif command -v zenity >/dev/null 2>&1; then
         zenity --error --text="$1" --title="Rogue Galaxy" 2>/dev/null
+    elif command -v notify-send >/dev/null 2>&1; then
+        notify-send -u critical "Rogue Galaxy" "$1" 2>/dev/null
+    elif command -v xmessage >/dev/null 2>&1; then
+        xmessage -center "Rogue Galaxy: $1" 2>/dev/null
     fi
     exit 1
 }
 
 game=build/game/src/roguegalaxy
 disc=disc/SCUS_974.90
-[ -x "$game" ] || fail "The game is not built yet: see docs/BUILDING.md."
-[ -e "$disc" ] || fail "No extracted disc in disc/: run  python3 setup.py extract  first."
+# An install or update running in this folder holds build/install.lock, and
+# its build in the container build/container.lock (install.sh's busy): the
+# game would start half built.
+if command -v flock >/dev/null 2>&1; then
+    for lock in build/install.lock build/container.lock; do
+        if [ -e "$lock" ] && ! flock -n "$lock" true; then
+            fail "An install or update is running in this folder. Let it end, then start the game again."
+        fi
+    done
+fi
+# Not built yet, the disc not out whole (disc/manifest.json comes last), or
+# a release archive unpacked over an older build (its REVISION is not the one
+# built); the same test as install.sh's ready: the installer builds it, in a
+# terminal it opens when there is none, then starts the game. Through sh: an
+# archive unpacked without its modes leaves install.sh not runnable.
+if ! [ -x "$game" ] || ! [ -e "$disc" ] || ! [ -e disc/manifest.json ] \
+    || { [ -f REVISION ] && [ "$(cat REVISION)" != "$(cat build/installed-revision 2>/dev/null)" ]; }; then
+    [ -f install.sh ] && exec sh ./install.sh --play
+    [ -x "$game" ] || fail "The game is not built yet: see docs/BUILDING.md."
+    [ -e "$disc" ] || fail "No extracted disc in disc/: run  python3 setup.py extract  first."
+fi
 
 # A second start while the game is up would start a second game.
 if command -v flock >/dev/null 2>&1; then
