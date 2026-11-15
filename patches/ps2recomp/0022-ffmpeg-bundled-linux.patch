@@ -1,5 +1,5 @@
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 513d79e..313f898 100644
+index 513d79e..30233dd 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -249,6 +249,11 @@ else()
@@ -14,7 +14,7 @@ index 513d79e..313f898 100644
  
  if(NOT PS2X_ENABLE_FFMPEG)
      message(STATUS "FFmpeg disabled; MPEG video decode falls back to stub frames")
-@@ -341,6 +346,75 @@ elseif(WIN32)
+@@ -341,6 +346,79 @@ elseif(WIN32)
          "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyFfmpegDlls.cmake"
          CACHE INTERNAL
          "Script used to stage FFmpeg runtime DLLs beside executables")
@@ -56,6 +56,10 @@ index 513d79e..313f898 100644
 +        URL_HASH SHA256=${FFMPEG_SOURCE_SHA256}
 +        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 +        PREFIX "${FFMPEG_PREFIX_DIR}"
++        # Built in its source folder: FFmpeg's configure refuses a build
++        # folder apart from it when the path holds a blank (a game folder
++        # with a space in its name).
++        BUILD_IN_SOURCE TRUE
 +        CONFIGURE_COMMAND <SOURCE_DIR>/configure
 +            --prefix=${FFMPEG_INSTALL_DIR}
 +            --cc=${CMAKE_C_COMPILER}
