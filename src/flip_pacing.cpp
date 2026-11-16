@@ -7,7 +7,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <mutex>
+#include <optional>
 
 #include "ps2_runtime.h"
 #include "return_hook.h"
@@ -60,11 +62,10 @@ public:
         // Queued behind the flip's copy: it shows exactly that frame.
         GSPresentationTicket ticket = m_inner->PreparePresentation(request);
         std::lock_guard lock(m_mutex);
-        // A frame the presenter has not taken yet is dropped for the newer one.
-        m_pending = std::move(ticket);
-        m_pendingFlipped = flipped;
+        m_flips.push_back({std::move(ticket), flipped});
+        prune();
         m_lastFlip = Clock::now();
-        m_hasPending.store(static_cast<bool>(m_pending), std::memory_order_release);
+        m_hasPending.store(!m_flips.empty(), std::memory_order_release);
     }
 
     // A flip waits for the presenter to take it. Every pass of the presenter
@@ -72,7 +73,15 @@ public:
     bool hasPending() const { return m_hasPending.load(std::memory_order_acquire); }
 
     void Initialize(uint8_t *vram, uint32_t vramSize) override { m_inner->Initialize(vram, vramSize); }
-    void Reset() override { m_inner->Reset(); }
+    void Reset() override
+    {
+        {
+            std::lock_guard lock(m_mutex);
+            m_flips.clear();
+            m_hasPending.store(false, std::memory_order_release);
+        }
+        m_inner->Reset();
+    }
     void SubmitNativeMesh(const GSNativeMesh &mesh, const GSDrawState &state) override
     {
         m_inner->SubmitNativeMesh(mesh, state);
@@ -140,19 +149,31 @@ public:
             const Clock::time_point now = Clock::now();
             if (now - m_lastFlip < kFlipTimeout)
             {
-                GSPresentationTicket ticket = std::move(m_pending);
-                m_pending.reset();
-                m_hasPending.store(false, std::memory_order_release);
+                GSPresentationTicket ticket;
+                Clock::time_point flipped{};
+                if (!m_flips.empty())
+                {
+                    // The newest flip already done, so a steady 60 shows
+                    // each flip at the next vblank; when none is, the oldest,
+                    // nearest to done (waiting on the newest locked the
+                    // display to half rate once the worker ran a frame
+                    // behind). The older ones are passed over.
+                    const size_t take = newestReady().value_or(0u);
+                    ticket = std::move(m_flips[take].ticket);
+                    flipped = m_flips[take].flipped;
+                    m_flips.erase(m_flips.begin(), m_flips.begin() + static_cast<std::ptrdiff_t>(take) + 1);
+                }
+                m_hasPending.store(!m_flips.empty(), std::memory_order_release);
                 t_nothingToPresent = !ticket;
 #if defined(RG_HAS_SDLGPU)
                 if (ticket)
                 {
-                    dq8::gfx::notePresentationFlip(m_pendingFlipped, now);
+                    dq8::gfx::notePresentationFlip(flipped, now);
                 }
 #endif
                 return ticket;
             }
-            m_pending.reset();
+            m_flips.clear();
             m_hasPending.store(false, std::memory_order_release);
         }
         return m_inner->PreparePresentation(request);
@@ -165,21 +186,66 @@ public:
     {
         {
             std::lock_guard lock(m_mutex);
-            m_pending.reset();
+            m_flips.clear();
             m_hasPending.store(false, std::memory_order_release);
         }
         m_inner->CancelPreparedPresentations();
     }
 
 private:
+    struct HeldFlip
+    {
+        GSPresentationTicket ticket;
+        // When the flip returned: the present log's note.
+        Clock::time_point flipped{};
+    };
+
     std::unique_ptr<GSRasterBackend> m_inner;
     std::mutex m_mutex;
     GSPresentationRequest m_lastRequest{};
     bool m_haveRequest = false;
-    GSPresentationTicket m_pending;
-    Clock::time_point m_pendingFlipped{};
+    // The flips not presented yet, oldest first, at most kHeldFlips: each
+    // holds one of the backend's three presentation slots once prepared,
+    // and the presenter holds a third.
+    std::deque<HeldFlip> m_flips;
     Clock::time_point m_lastFlip{};
     std::atomic<bool> m_hasPending{false};
+
+    static constexpr size_t kHeldFlips = 2u;
+
+    // Under m_mutex.
+    std::optional<size_t> newestReady() const
+    {
+        for (size_t i = m_flips.size(); i-- > 0u;)
+        {
+            if (m_inner->IsPresentationReady(m_flips[i].ticket))
+            {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Under m_mutex: a flip older than one already done is never taken, and
+    // past kHeldFlips the oldest (which the presenter would wait on) and the
+    // newest stay.
+    void prune()
+    {
+        if (const std::optional<size_t> ready = newestReady(); ready && *ready > 0u)
+        {
+            m_flips.erase(m_flips.begin(), m_flips.begin() + static_cast<std::ptrdiff_t>(*ready));
+        }
+        // RG_PRESENT_LATEST=1: only the newest flip is held, as before.
+        static const bool latestOnly = [] {
+            const char *value = std::getenv("RG_PRESENT_LATEST");
+            return value && *value && std::strcmp(value, "0") != 0;
+        }();
+        const size_t held = latestOnly ? 1u : kHeldFlips;
+        while (m_flips.size() > held)
+        {
+            m_flips.erase(m_flips.begin() + static_cast<std::ptrdiff_t>(held - 1u));
+        }
+    }
 };
 
 FlipPacedBackend *g_paced = nullptr;
