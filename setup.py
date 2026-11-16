@@ -821,6 +821,11 @@ def sync_tree(src: Path, dst: Path) -> tuple[int, int]:
 TOOLS_BUILD = ROOT / "build" / "tools"
 GAME_BUILD = ROOT / "build" / "game"
 COMPILERS = ["-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++"]
+# On Windows FindPython3 looks in the registry before PATH; the game's build
+# needs Python (make_resources.py, src/CMakeLists.txt), and the one on PATH
+# is the one Install.bat gives the build, not another version installed in
+# Windows. Nothing is pinned, so a Python removed later is looked for again.
+GAME_PYTHON = ["-DPython3_FIND_REGISTRY=LAST"] if os.name == "nt" else []
 
 
 def run_step(what: str, command: list[str]) -> None:
@@ -888,7 +893,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     reset_future_times()
     if not configured(GAME_BUILD):
         run_step("configure build/game", [
-            "cmake", "-S", str(ROOT), "-B", str(GAME_BUILD), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", *COMPILERS])
+            "cmake", "-S", str(ROOT), "-B", str(GAME_BUILD), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", *COMPILERS,
+            *GAME_PYTHON])
     run_step("build the game", ["cmake", "--build", str(GAME_BUILD)])
     print(f"built {GAME_BUILD / 'src' / 'roguegalaxy.exe'}; start it with \"Rogue Galaxy.exe\"")
     return 0

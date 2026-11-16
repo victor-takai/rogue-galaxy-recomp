@@ -7,8 +7,8 @@
 # recompiler, recompile, build the game. Everything it writes stays in this
 # folder; run it again after a failure and what is done is skipped. The
 # folder can be anywhere but in OneDrive or on a network share: a long path,
-# or one with spaces or accented letters, is built through a short name for
-# it (short-name.ps1).
+# or one with spaces or letters of any language, is built through a short
+# name for it (short-name.ps1).
 #
 #   Install.bat                         (or drop the .iso onto it)
 #   Install.bat -Iso "D:\Rogue Galaxy (USA).iso"
@@ -86,8 +86,8 @@ function Confirm-Step([string]$Question) {
 }
 
 # Why this folder cannot hold the game, or "" when it can. A long path, or
-# one with spaces or accented letters, can: the build goes through a short
-# name for it (short-name.ps1).
+# one with spaces or letters of any language, can: the build goes through a
+# short name for it (short-name.ps1).
 function Get-PathProblem([string]$Path) {
     if ($Path.StartsWith("\\")) { return "it is on a network share" }
     foreach ($cloud in @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial)) {
@@ -95,13 +95,15 @@ function Get-PathProblem([string]$Path) {
             return "it is inside OneDrive, which would upload the 10 GB the build writes"
         }
     }
-    # The game's runtime turns its folder's path into the system's code page
-    # (std::filesystem's narrow strings), and a letter the code page lacks
-    # stops it as it starts (2026-11-13: a folder named in Cyrillic and
-    # Japanese, code page 1252).
+    # The game's runtime passes its folder's path on as narrow text, in the
+    # process's code page: UTF-8 by the game's manifest (src\roguegalaxy.manifest)
+    # from Windows 10 version 1903 (build 18362) on, the system's code page
+    # before it, where a letter that code page lacks stops the game as it
+    # starts (2026-11-13: a folder named in Cyrillic and Japanese, code
+    # page 1252).
     $ansi = [System.Text.Encoding]::Default
-    if ($ansi.GetString($ansi.GetBytes($Path)) -cne $Path) {
-        return "its path has letters this Windows' language settings cannot hold (code page $($ansi.CodePage)), which the game cannot open yet"
+    if ($ansi.GetString($ansi.GetBytes($Path)) -cne $Path -and [Environment]::OSVersion.Version.Build -lt 18362) {
+        return "its path has letters this Windows' language settings cannot hold (code page $($ansi.CodePage)), which the game opens only on Windows 10 version 1903 or later"
     }
     return ""
 }
@@ -383,7 +385,7 @@ function Main {
     if (Test-NeedsShortName $Root) {
         $shortName = Use-ShortName $Root
         if (-not $shortName) {
-            Move-ToShortPath "its path is long or has spaces or accented letters, and Windows did not let the installer make $(Get-ShortName $Root), the short name the build tools would see it by"
+            Move-ToShortPath "its path is long or has spaces, symbols or letters other than A-Z, and Windows did not let the installer make $(Get-ShortName $Root), the short name the build tools would see it by"
             Stop-Install "Move this folder to a short path without spaces, such as C:\RogueGalaxy, and run Install.bat there."
         }
         $script:BuildRoot = $shortName

@@ -1,6 +1,7 @@
-"""Writes the launcher's resources, its icon and manifest, as a .res file.
+"""Writes an executable's resources, its icon and manifest, as a .res file.
 
-    python make_resources.py ICON.ico MANIFEST.manifest OUT.res
+    python make_resources.py ICON.ico MANIFEST.manifest OUT.res   (the launcher)
+    python make_resources.py MANIFEST.manifest OUT.res            (the game: no icon)
 
 The linker (lld) takes a .res as it is. It is written here rather than by the
 toolchain's resource compiler, windres: on the machine this was made on, the
@@ -12,6 +13,7 @@ is resource 1 of type 24 (RT_MANIFEST), which Windows reads at start.
 import struct
 import sys
 from pathlib import Path
+from xml.etree import ElementTree
 
 RT_ICON = 3
 RT_GROUP_ICON = 14
@@ -29,14 +31,13 @@ def resource(kind: int, name: int, data: bytes) -> bytes:
     return header + data + b"\0" * (-len(data) % 4)
 
 
-def main() -> None:
-    icon_path, manifest_path, out_path = (Path(arg) for arg in sys.argv[1:4])
+def icon_resources(icon_path: Path) -> bytes:
+    """The icon's images, one resource each, and the group that lists them."""
     icon = icon_path.read_bytes()
     reserved, kind, count = struct.unpack_from("<HHH", icon, 0)
     if reserved != 0 or kind != 1 or count == 0:
         sys.exit(f"{icon_path}: not an icon")
-    # The empty resource that opens every 32-bit .res file.
-    out = struct.pack("<IIHHHHIHHII", 0, 32, 0xFFFF, 0, 0xFFFF, 0, 0, 0, 0, 0, 0)
+    out = b""
     group = struct.pack("<HHH", 0, 1, count)
     for index in range(count):
         width, height, colours, _, planes, bits, size, offset = struct.unpack_from(
@@ -47,8 +48,25 @@ def main() -> None:
         group += struct.pack(
             "<BBBBHHIH", width, height, colours, 0, planes or 1, bits or 32, size, index + 1
         )
-    out += resource(RT_GROUP_ICON, 1, group)
-    out += resource(RT_MANIFEST, 1, manifest_path.read_bytes())
+    return out + resource(RT_GROUP_ICON, 1, group)
+
+
+def main() -> None:
+    args = [Path(arg) for arg in sys.argv[1:]]
+    if len(args) not in (2, 3):
+        sys.exit(__doc__)
+    *icon_path, manifest_path, out_path = args
+    manifest = manifest_path.read_bytes()
+    # A manifest Windows cannot read keeps the program from starting at all.
+    try:
+        ElementTree.fromstring(manifest)
+    except ElementTree.ParseError as error:
+        sys.exit(f"{manifest_path}: not a manifest ({error})")
+    # The empty resource that opens every 32-bit .res file.
+    out = struct.pack("<IIHHHHIHHII", 0, 32, 0xFFFF, 0, 0xFFFF, 0, 0, 0, 0, 0, 0)
+    if icon_path:
+        out += icon_resources(icon_path[0])
+    out += resource(RT_MANIFEST, 1, manifest)
     out_path.write_bytes(out)
 
 
