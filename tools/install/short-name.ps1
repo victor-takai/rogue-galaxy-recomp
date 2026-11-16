@@ -6,7 +6,7 @@
 # (build\tools\_deps\toml11-src\tests\...), and Windows programs stop at 259
 # characters unless long paths are turned on in the registry, which they are
 # not by default. So a folder whose path is longer than $ShortNameLimit, or
-# has spaces, accented letters or symbols, is reached through a directory
+# has spaces, symbols or letters other than A-Z, is reached through a directory
 # junction, C:\RogueGalaxyBuild\<8 hex digits> (on the drive Windows is on,
 # C: but for a few), while the install or update
 # runs: the build's tools see only that short, plain name, and the files
