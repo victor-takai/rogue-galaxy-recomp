@@ -9,6 +9,7 @@
 #include "gfx/backends/sdlgpu/sdlgpu_regions.h"
 #include "gfx/backends/sdlgpu/sdlgpu_window.h"
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <functional>
@@ -76,6 +77,9 @@ struct SdlGpuStats {
     // screen, not drawn (Rogue Galaxy: added).
     uint64_t nativeDraws = 0u;
     uint64_t nativeMeshesCulled = 0u;
+    // Sprites of no width or no height, which cover no pixel, dropped before
+    // any work (Rogue Galaxy: added).
+    uint64_t emptySprites = 0u;
     // Drawn through the same-state fast path (Rogue Galaxy: added).
     uint64_t sameStatePrimitives = 0u;
     uint64_t trianglesDrawn = 0u;
@@ -317,5 +321,14 @@ private:
 
 // Returns null and fills `error` when SDL cannot create a GPU device.
 std::unique_ptr<SdlGpuBackend> createSdlGpuBackend(std::string &error);
+
+// For DQ8_GFX_PRESENT_LOG (Rogue Galaxy: added): when the game flipped the
+// frame the presenting thread is about to show and when that thread took
+// it, from the layer that hands the game's flips to the presenter. Called
+// on the presenting thread before that frame's DisplayPreparedPresentation
+// or presentNativeFrame, which logs the two and forgets them; a frame shown
+// without this note is logged as a vblank presentation (no flip).
+void notePresentationFlip(std::chrono::steady_clock::time_point flipped,
+                          std::chrono::steady_clock::time_point taken);
 
 } // namespace dq8::gfx

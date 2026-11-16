@@ -17,6 +17,7 @@
 #include "scene_timing.h"
 
 #if defined(RG_HAS_SDLGPU)
+#include "gfx/backends/sdlgpu/sdlgpu_backend.h"
 #include "gfx/native/native_pipeline.h"
 #include "native_producer.h"
 #endif
@@ -48,6 +49,7 @@ public:
     // The game's thread, after each flip.
     void onGuestFlip()
     {
+        const Clock::time_point flipped = Clock::now();
         GSPresentationRequest request;
         {
             std::lock_guard lock(m_mutex);
@@ -60,10 +62,15 @@ public:
         // Queued behind the flip's copy: it shows exactly that frame.
         GSPresentationTicket ticket = m_inner->PreparePresentation(request);
         std::lock_guard lock(m_mutex);
-        m_flips.push_back(std::move(ticket));
+        m_flips.push_back({std::move(ticket), flipped});
         prune();
         m_lastFlip = Clock::now();
+        m_hasPending.store(!m_flips.empty(), std::memory_order_release);
     }
+
+    // A flip waits for the presenter to take it. Every pass of the presenter
+    // asks, so without the lock.
+    bool hasPending() const { return m_hasPending.load(std::memory_order_acquire); }
 
     void Initialize(uint8_t *vram, uint32_t vramSize) override { m_inner->Initialize(vram, vramSize); }
     void Reset() override
@@ -71,6 +78,7 @@ public:
         {
             std::lock_guard lock(m_mutex);
             m_flips.clear();
+            m_hasPending.store(false, std::memory_order_release);
         }
         m_inner->Reset();
     }
@@ -130,16 +138,19 @@ public:
     bool SupportsPreparedPresentation() const override { return m_inner->SupportsPreparedPresentation(); }
     bool QueuesPreparedPresentation() const override { return m_inner->QueuesPreparedPresentation(); }
 
-    // The presenter thread, at each new guest vblank.
+    // The presenter thread, at each new guest vblank, and between them for a
+    // flip that landed after the tick's look (showLateFlip).
     GSPresentationTicket PreparePresentation(const GSPresentationRequest &request) override
     {
         {
             std::lock_guard lock(m_mutex);
             m_lastRequest = request;
             m_haveRequest = true;
-            if (Clock::now() - m_lastFlip < kFlipTimeout)
+            const Clock::time_point now = Clock::now();
+            if (now - m_lastFlip < kFlipTimeout)
             {
                 GSPresentationTicket ticket;
+                Clock::time_point flipped{};
                 if (!m_flips.empty())
                 {
                     // The newest flip already done, so a steady 60 shows
@@ -148,13 +159,22 @@ public:
                     // display to half rate once the worker ran a frame
                     // behind). The older ones are passed over.
                     const size_t take = newestReady().value_or(0u);
-                    ticket = std::move(m_flips[take]);
+                    ticket = std::move(m_flips[take].ticket);
+                    flipped = m_flips[take].flipped;
                     m_flips.erase(m_flips.begin(), m_flips.begin() + static_cast<std::ptrdiff_t>(take) + 1);
                 }
+                m_hasPending.store(!m_flips.empty(), std::memory_order_release);
                 t_nothingToPresent = !ticket;
+#if defined(RG_HAS_SDLGPU)
+                if (ticket)
+                {
+                    dq8::gfx::notePresentationFlip(flipped, now);
+                }
+#endif
                 return ticket;
             }
             m_flips.clear();
+            m_hasPending.store(false, std::memory_order_release);
         }
         return m_inner->PreparePresentation(request);
     }
@@ -167,11 +187,19 @@ public:
         {
             std::lock_guard lock(m_mutex);
             m_flips.clear();
+            m_hasPending.store(false, std::memory_order_release);
         }
         m_inner->CancelPreparedPresentations();
     }
 
 private:
+    struct HeldFlip
+    {
+        GSPresentationTicket ticket;
+        // When the flip returned: the present log's note.
+        Clock::time_point flipped{};
+    };
+
     std::unique_ptr<GSRasterBackend> m_inner;
     std::mutex m_mutex;
     GSPresentationRequest m_lastRequest{};
@@ -179,8 +207,9 @@ private:
     // The flips not presented yet, oldest first, at most kHeldFlips: each
     // holds one of the backend's three presentation slots once prepared,
     // and the presenter holds a third.
-    std::deque<GSPresentationTicket> m_flips;
+    std::deque<HeldFlip> m_flips;
     Clock::time_point m_lastFlip{};
+    std::atomic<bool> m_hasPending{false};
 
     static constexpr size_t kHeldFlips = 2u;
 
@@ -189,7 +218,7 @@ private:
     {
         for (size_t i = m_flips.size(); i-- > 0u;)
         {
-            if (m_inner->IsPresentationReady(m_flips[i]))
+            if (m_inner->IsPresentationReady(m_flips[i].ticket))
             {
                 return i;
             }
@@ -221,7 +250,11 @@ private:
 
 FlipPacedBackend *g_paced = nullptr;
 PS2Runtime::RecompiledFunction g_originalFlip = nullptr;
+PS2Runtime *g_runtime = nullptr;
 std::atomic<uint64_t> g_flips{0u};
+// When the last flip returned, in steady_clock ticks: the native pipeline's
+// note for the present log (lastFlipTime).
+std::atomic<Clock::rep> g_lastFlipAt{0};
 
 // The native pipeline's producer for the frame's end (docs/NATIVE-PIPELINE.md):
 // a Present of the scene target at each flip. The target itself is the
@@ -249,9 +282,10 @@ void afterFlip(uint8_t *, R5900Context *, PS2Runtime *, uint32_t)
 {
     rg::nativefx::endFlip();
     // Under the pipeline the presenting thread shows the frame the Present
-    // record closed (graphics.cpp's presentNative, step 7d), not the GS's
+    // record closed (graphics.cpp's presentHook, step 7d), not the GS's
     // display: nothing is prepared on the GS queue to pace.
     const bool native = presentNative(g_flips.load(std::memory_order_relaxed) + 1u);
+    g_lastFlipAt.store(Clock::now().time_since_epoch().count(), std::memory_order_relaxed);
     g_flips.fetch_add(1u, std::memory_order_release);
     if (g_paced && !native)
     {
@@ -287,6 +321,7 @@ std::unique_ptr<GSRasterBackend> paceOnFlips(std::unique_ptr<GSRasterBackend> ba
 
 void installFlipHook(PS2Runtime &runtime)
 {
+    g_runtime = &runtime;
     // Also without pacing: the hook counts the flips for the menu's frame
     // rate.
     g_originalFlip = runtime.lookupFunction(kGfxFlipBuffers);
@@ -305,7 +340,29 @@ void installFlipHook(PS2Runtime &runtime)
 
 uint64_t guestFlips()
 {
-    return g_flips.load(std::memory_order_relaxed);
+    // Acquire: a caller that sees a flip's count then sees its time in
+    // lastFlipTime() (or a later flip's), on any CPU.
+    return g_flips.load(std::memory_order_acquire);
+}
+
+std::chrono::steady_clock::time_point lastFlipTime()
+{
+    return Clock::time_point(Clock::duration(g_lastFlipAt.load(std::memory_order_relaxed)));
+}
+
+bool showLateFlip(bool newTick)
+{
+    static const bool onlyAtTick = [] {
+        const char *value = std::getenv("RG_PRESENT_TICK");
+        return value && *value && *value != '0';
+    }();
+    // At a tick the runtime's own latch takes the flip waiting, if any.
+    if (onlyAtTick || newTick || !g_paced || !g_runtime || !g_paced->hasPending())
+    {
+        return false;
+    }
+    g_runtime->gs().latchHostPresentationFrame();
+    return true;
 }
 
 } // namespace rg::graphics

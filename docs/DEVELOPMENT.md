@@ -10,7 +10,10 @@ On Windows, double-click `Rogue Galaxy.exe`, which the build puts in the
 repository's folder: it starts the built game on `disc/SCUS_974.90`, writes
 the game's log to `build/last-run.log` (the run before survives as
 `build/last-run.prev.log`) and opens no terminal; a game that ends with an
-error shows the log's last lines in a message box. `debug\RogueGalaxy.bat`
+error shows the log's last lines in a message box. While the game is not
+built it offers to run `Install.bat` instead (the installer builds it
+first, as soon as the compiler is downloaded), and while `Install.bat` or
+`Update.bat` runs in the folder it says so and starts nothing. `debug\RogueGalaxy.bat`
 does the same in a terminal, which it keeps open until the game closes. The
 log still goes to `build/last-run.log`, not to the terminal: to follow it as
 it is written, run `Get-Content -Wait build\last-run.log` in a second one.
@@ -73,8 +76,8 @@ and the first few of those get a `[gfx] depth lost, then tested` line
 
 ## Variables
 
-They come in three groups: the menu's options for one run, the tools for
-diagnosis, and the renderer's internals.
+They come in four groups: the menu's options for one run, the tools for
+diagnosis, the renderer's internals, and the install scripts.
 
 ### Player options
 
@@ -91,14 +94,14 @@ Most of these set an option of the F1 menu for one run, without saving it.
 | `RG_MUTE=1` | No sound output (the IOP still runs) |
 | `RG_WIDESCREEN=1` | The game drawn for a wide screen of the window's shape (the menu's "Widescreen"; `src/widescreen.cpp`) |
 | `RG_MINIMAP_SIZE=N`, `RG_COMPASS_SIZE=N` | The field's minimap and compass, percent of the game's size, 50 to 100 (the menu's "Minimap size" and "Compass size"; `src/hud_size.h`) |
-| `RG_BUTTONS=xbox` | The game's text shows an Xbox controller's buttons whatever is connected (`src/button_glyphs.h`; the menu's "Controller's buttons" follows the controller in use); `RG_GAIJI_DUMP=FILE` writes the picture of special characters they are drawn in (gaiji2.img) as loaded |
+| `RG_BUTTONS=xbox` | The game's text shows an Xbox controller's buttons whatever is connected (`src/button_glyphs.h`; the menu's "Buttons in the game's text" follows the controller in use); `RG_GAIJI_DUMP=FILE` writes the picture of special characters they are drawn in (gaiji2.img) as loaded |
 | `RG_SKIP_OPENING=1` | The logos at boot give way to the title screen (the menu's "Skip the opening") |
 | `RG_FIELD_OF_VIEW=N` | The camera's field of view in the field and in battle, degrees across a 4:3 picture (the menu's "Field of view"; the game's is 52) |
 | `RG_CAMERA_DISTANCE=N` | The camera's distance from the party, percent of the game's (the menu's "Camera distance") |
 | `RG_FASTER_CAMERA=1` | The right stick turns the camera twice as fast (the menu's "Faster camera rotation") |
 | `RG_MOUSE_CAMERA=1` | The mouse turns and tilts the camera (the menu's "Mouse camera", `src/mouse_camera.h`) |
 | `RG_MOUSE_SENSITIVITY=N` | The mouse camera's sensitivity, 25 to 400 percent or 0.25 to 4 (the menu's "Mouse sensitivity") |
-| `RG_MOUSE_INVERT=1` | Moving the mouse up looks down (the menu's "Invert mouse vertical") |
+| `RG_MOUSE_INVERT=1` | Moving the mouse up looks down (the menu's "Invert mouse up and down") |
 | `RG_DRAW_DISTANCE=N` | How far the scenery and objects are drawn, percent of the game's (the menu's "Draw distance") |
 | `RG_ENCOUNTER_RATE=N` | Random battles, percent of the game's rate; 0 turns them off (the menu's "Encounter rate") |
 | `RG_BATTLE_EXPERIENCE=N` | A won battle's experience, percent of the game's (the menu's "Experience from battles") |
@@ -112,7 +115,7 @@ Most of these set an option of the F1 menu for one run, without saving it.
 | `RG_DIRECTOR_CUT_PARTY_AI=1` | The same release's party AI scripts (`chara\spt\c001.stb` to `c009`); `0` off (the menu's "Director's Cut party AI"), logged the same way |
 | `RG_FREE_CAMERA=1` | Starts with the free camera on (the menu's "Free camera"; `src/free_camera.h`) |
 | `RG_INSTANT_TEXT=1` | Text in the message windows a page at a time (the menu's "Instant text"; `src/instant_text.h`) |
-| `RG_INSTANT_RECAP=1` | The loading screen's story so far appears whole at once, then Press X (the menu's "Show the loading recap at once") |
+| `RG_INSTANT_RECAP=1` | The loading screen's story so far appears whole at once, then Press X (the menu's "Quick loading recap") |
 | `RG_VOICE_LANG=JA` | Voices (and the movies that differ) from `disc/JA`, whatever the menu's "Undub (Japanese voices)" says; any language of the game's table works for the voice token (`src/voice_language.h`). Logs `[rg] voice <path>` for each voice asked |
 | `RG_TEXT_LANG=FR` | The text in that language (FR, DE, ES, IT; EN for the game's), whatever the menu's "Text" says; needs `disc/EU/<LANG>.idx` from `setup.py extract-european` (`src/text_language.h`). Logs `[rg] text in FR`, and `[rg] in English: <path>` for a file the language has none of |
 | `RG_TEXT_TRACE=1` | With a European text language: logs each archive lookup and each file served from `disc/EU/<LANG>.DAT` |
@@ -122,6 +125,7 @@ Most of these set an option of the F1 menu for one run, without saving it.
 | `RG_BIGGER_BAG=1` | The bag has a seventh page, 280 spaces, from the start (the menu's "Seventh bag page"; `0` turns it off; `src/inventory.h`) |
 | `RG_NATIVE_RENDERER=1` | The native renderer for this run, whatever the menu's "Native renderer" says (`0` turns it off; `src/native_renderer.h`, [NATIVE-RENDERER.md](NATIVE-RENDERER.md)): the switch the native rendering work goes behind as it lands, off by default. On, `RG_VU1_NATIVE` defaults to `gpu` and `RG_VU0_NATIVE` to on; each variable still overrides it. The bench and oracle scripts set it unless it is set. Logs `[rg] native renderer on` |
 | `RG_NATIVE_PIPELINE=1` | Only with the native renderer on: the native pipeline ([NATIVE-PIPELINE.md](NATIVE-PIPELINE.md), `thirdparty/dq8-gfx/src/gfx/native`) presents its own scene in place of the GS display. It draws the whole frame (the 3D meshes with their textures, the effects, the 2D, the per-object composites) and answers the game's colour and depth reads; nothing reaches the GS, whose calls a tripwire logs and drops (`RG_NATIVE_GS`). A mesh into a buffer the game never named is dropped (a target miss). Known limits in [NATIVE-PIPELINE.md](NATIVE-PIPELINE.md). Screenshots capture the native scene. Logs `[native-pipeline] on`; with `DQ8_GFX_STATS_EVERY`, a `[native-pipeline]` line (records by kind, R1-R5) and a `[native-producer]` line (textures, palettes, targets and meshes made, and why not) |
+| `RG_NATIVE_PRESENT_TICK=1` | Under the native pipeline, shows a flip only at a guest vsync tick: a flip that lands just after a tick waits for the next one, and is replaced there, unseen, when a newer flip has landed meanwhile. By default a flip is shown at the presenter's first pass after it lands |
 | `RG_DEV_TOOLS=1` | The developers' tools left in the game come back (the menu's "Developer tools"; `src/dev_tools.h`) |
 | `RG_TEXTURE_PACK=DIR` | Read that one texture pack, a folder or a `.zip`, instead of `textures\hd` and `textures\packs` ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)) |
 
@@ -132,10 +136,10 @@ the project's fixes off to compare.
 
 | Variable | Effect |
 |---|---|
-| `RG_UI_SCRIPT=file\|text` | Drive the menu for tests and screenshots: `<guest frame> <command> [args]` entries, `;`-separated (see `thirdparty/dq8-gfx/src/ui/ui_script.cpp`) |
+| `RG_UI_SCRIPT=file\|text` | Drive the menu for tests and screenshots: `<guest frame> <command> [args]` entries, `;`-separated (see `thirdparty/dq8-gfx/src/ui/ui_script.cpp`); `notify icon=NAME text` shows a notice with that icon, `icons` every icon at the menu's sizes |
 | `RG_MOUSE_TEST=DX,DY,FROM,TO` | With the mouse camera on, DX and DY counts of mouse motion (right and down) at each camera's take while the game's pad reads are from FROM to TO, for a bench run without a mouse (`src/mouse_camera.h`): compare a frame against the same push of the right stick in `RG_INPUT` (68 counts a frame are a full push exploring, at 1.0x) |
 | `RG_INPUT="30:CROSS:150,..."` | Scripted pad input: seconds, buttons (`+`-joined; `LUP` etc. for the left stick, `RUP` etc. for the right), milliseconds; with `RG_INPUT_CLOCK=pad` both numbers count the game's pad reads, so a script replays alike at any host speed |
-| `RG_SPEED=N[@READ]` | The game's speed, as the menu's fast-forward (`2` = F4 at its default, `0` unpaced), from the start or from that pad read (the clock `RG_INPUT_CLOCK=pad` counts, not vsyncs); for scripted runs, whose hidden window never runs the menu or its `RG_UI_SCRIPT`. A scripted walk keeps its timing only at the speed it was written for, so start it after the input (`native-perf.sh`'s walk ends at pad read 3600: `@3700`). The log's `[speed]` line shows what was parsed; a value that does not parse is ignored there, not run unpaced |
+| `RG_SPEED=N[@READ][,N@READ...]` | The game's speed, as the menu's fast-forward (`2` = F4 at its default, `0` unpaced), from the start or from that pad read (the clock `RG_INPUT_CLOCK=pad` counts, not vsyncs); a list changes it again at later reads, by growing reads (`0@8600,1@54000`: unpaced through a long stretch of scenes, normal again for what is measured); for scripted runs, whose hidden window never runs the menu or its `RG_UI_SCRIPT`. A scripted walk keeps its timing only at the speed it was written for, so start it after the input (`native-perf.sh`'s walk ends at pad read 3600: `@3700`). The log's `[speed]` lines, one a step, show what was parsed; a value that does not parse (or is not finite) is ignored there, not run unpaced. A step is taken at the first present after its read, so unpaced it lands a few reads late |
 | `RG_MC0_DIR=path` | Memory card folder instead of `disc/mc0` (`mc1` is its sibling). The benchmarks point it at `build/run/mc0-bench`, a copy holding only the save they load, since a second save changes what the scripted load menu picks |
 | `RG_FORCE_ENCOUNTER=1` | A battle at the first steps wherever the field has enemies: the encounter countdown is cut before each tick (`src/debug/encounter.cpp`), and each battle's start is logged with its pad read; the battle bench (`walk.sh BATTLE=1`) sets it |
 | `RG_FORCE_RETURN=RULE,...` | Main-ELF functions answer what a test needs, to open a screen no save reaches yet (`src/debug/force_return.h`): `ADDR=V` returns V, `ADDR>=V` at least V, `ADDR<=V` at most V (signed 32-bit), and `ADDR@RA` before the sign keeps the rule to the calls returning to RA (the jal's address + 8), so the rest of the game still gets the true answer. The function still runs; only v0 changes once it has returned, also for a call unwound at a safe point (`src/return_hook.h`). Numbers are hex with `0x`, else decimal; addresses a multiple of 4. At most 16 functions a run. `'0x29AC50=1,0x3CD5B0@0x2B0090>=8'` opens the Frog Log and the Rare Items tab's "Ancient Key Pieces" heading on the bench's early save. Quote it in a shell (`>`, `<`). Logs each rule and its first 4 uses, warns about an RA not right after a call; like `RG_TRACE`, it misses a function reached by a tail `j` |
@@ -175,6 +179,7 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `RG_GS_NO_WINDOW=1` | Present through the runtime's window instead of SDL's |
 | `RG_GS_WORKER=0` | Run the GS backend on the game's thread instead of its own worker thread |
 | `RG_PRESENT=vblank` | Present at host vblanks instead of on the game's flips |
+| `RG_PRESENT_TICK=1` | Shows a flip only at a guest vsync tick, as before: a flip that lands just after the presenter's look at a tick waits for the next one, so at 30 fps frames reach the screen 1 and 3 ticks apart in turn, and at 60 fps the next flip replaces it there, unseen. By default, in the game's own window (not `RG_GS_NO_WINDOW`) and with the GS worker (not `RG_GS_WORKER=0`, which presents at vsyncs, as `RG_PRESENT=vblank` does), a flip is shown at the presenter's first pass after it lands (`src/flip_pacing.h`, `showLateFlip`; the native pipeline's switch is `RG_NATIVE_PRESENT_TICK`) |
 | `RG_VIF1_THREAD=0` | Run VIF1 lists (VU1) on the game's thread instead of their own |
 | `RG_GIF_THREAD=0` | Run the GS packets of the VIF1 lists on the VIF1 thread instead of a GIF stage of their own |
 | `RG_GS_DEPTH_READS=queue` | Serve the game's depth readbacks through the GS worker queue |
@@ -196,6 +201,7 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `DQ8_GFX_PROFILE_CYCLE` | Tags the scene's draws with the VU1 program that made them, as `RG_JITTER` does (`src/vif1_thread.cpp`); the backend's profile cycle it is named for is no longer in the code |
 | `RG_TEXTURE_PACK_DECODE=1` | Decode every picture of the texture packs on the CPU, instead of sending the BC1, BC2, BC3 and BC7 ones to the GPU compressed; to compare |
 | `DQ8_GFX_STATS_EVERY=N` | A `[gfx]` stats line every N presented frames (off unless set; both launchers set 60, `debug\RogueGalaxy-hitches.bat` 10) |
+| `DQ8_GFX_PRESENT_LOG=FILE` | A CSV line per present to the window, for frame pacing, in milliseconds: when the game flipped the frame and when the presenter took it, its kind (`flip`; `vblank`, shown at a vsync with no flip: loading, movies, and every frame with `RG_PRESENT=vblank` or `RG_GS_WORKER=0`; `refresh`, the last frame again), the waits for the GS worker to reach it (under the native pipeline, for its composing), for its drawing on the GPU (fence) and for a swapchain image (acquire), and when the present went out (-1 for what did not happen: no flip, or nothing to the window, hidden or minimised). The stats line's "longest frame" is taken earlier, when a frame is prepared. `python tools/bench/present_log.py FILE [FROM TO] [--hz HZ]` sums it up |
 | `DQ8_GFX_SHOW_FPS=1` | The backend's frame rate in the window title; `RG_SHOW_FPS=1` sets it with `RG_GS_NO_WINDOW=1` |
 | `DQ8_GFX_HIDDEN_WINDOW=1` | The window is never shown or raised, for scripted runs; the GS work is the same, and frames still reach `DQ8_GFX_SCREENSHOT_DIR` (`tools/bench/walk.sh` sets it) |
 | `DQ8_GFX_REMOVE_LINE_BLEND` | Set: no PS2 one-line display blend, for runs without the menu (the trace replay). In the game the menu's setting replaces it at start: use `RG_SETTINGS_FILE` with `remove_line_blend = 1` instead |
@@ -205,11 +211,21 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `DQ8_GFX_NO_DUAL_SOURCE=1` | No dual-source blending: the source-alpha blends go back to the alpha replay (two passes), for comparing frames or a driver without `dualSrcBlend` |
 | `RG_PRESENT_LATEST=1` | Flip pacing holds only the newest flip and the presenter waits for it, as before the newest-finished rule (`src/flip_pacing.cpp`): a worker a frame behind can then hold the display at half rate; `0` or empty leaves the rule on |
 | `DQ8_GFX_NO_DESTINATION_COPY=1` | No shader that reads the destination from a snapshot: the draws that need it keep their approximation |
+| `DQ8_GFX_NO_TEXTURED_OVERONE=1` | A modulated, textured source-alpha blend whose vertex alpha passes 0x80 keeps the attachment's clamped blend instead of the destination copy (the menus' text reads grey again); `0` or empty leaves it on |
 | `DQ8_GFX_SUBMIT_DRAWS=N` | A flush of the queued draws submits them once this many are recorded (96 unless set; 0 submits at every flush) |
 | `DQ8_GFX_PRESENT_FROM_MEMORY=1`, `DQ8_GFX_DISABLE_GPU_COMPOSE=1` | Present from GS local memory, as the software backend reads it; compose the display on the CPU. Both tell a wrong picture from a wrong readback |
 | `DQ8_GFX_TRACE_BATCHES=1` | A line per draw call: its target, pipeline state and geometry |
 | `DQ8_GFX_DUMP_TEXTURES=DIR` | Every texture as expanded, named by identity |
 | `DQ8_GFX_CHECK_GPU_TEXTURES=1` | Rebuild each texture taken from a render target the old way, by reading the target back, and report texels that differ; it stalls on every readback, so it is for checking changes |
 | `DQ8_GS_UPLOAD_TRACE=N` | Every N uploads to GS memory, how they are fed (the payload a call) |
-| `DQ8_GFX_FLUSH_ON_TRANSFER`, `DQ8_GFX_NO_CLAIM`, `DQ8_GFX_NO_PASSIVE_DEPTH`, `DQ8_GFX_PATCH_CT32_ONLY`, `DQ8_GFX_NO_COVERED_RELEASE`, `DQ8_GFX_NO_GPU_PADDING`, `DQ8_GFX_CYCLE_SNAPSHOTS`, `DQ8_GFX_NO_ROUND_TRIP`, `DQ8_GFX_CPU_LOCAL_COPY`, `DQ8_GFX_NO_UNCHANGED_SKIP` | Each, when set, puts one of the backend's optimizations back to its old behaviour, for comparing frames (the comment by each `getenv` in `thirdparty/dq8-gfx/src/gfx/backends/sdlgpu/` says which) |
+| `DQ8_GFX_FLUSH_ON_TRANSFER`, `DQ8_GFX_NO_CLAIM`, `DQ8_GFX_NO_PASSIVE_DEPTH`, `DQ8_GFX_PATCH_CT32_ONLY`, `DQ8_GFX_NO_COVERED_RELEASE`, `DQ8_GFX_NO_GPU_PADDING`, `DQ8_GFX_CYCLE_SNAPSHOTS`, `DQ8_GFX_NO_ROUND_TRIP`, `DQ8_GFX_CPU_LOCAL_COPY`, `DQ8_GFX_NO_UNCHANGED_SKIP`, `DQ8_GFX_NO_EMPTY_SPRITES`, `DQ8_GFX_NO_WHOLE_UPLOAD_SKIP`, `DQ8_GFX_NO_BLOCK_READS` | Each, when set, puts one of the backend's optimizations back to its old behaviour, for comparing frames (the comment by each `getenv` in `thirdparty/dq8-gfx/src/gfx/backends/sdlgpu/` and `gs/gs_vram.cpp` says which) |
 | `DQ8_GFX_SCREENSHOT_DIR`, `DQ8_GFX_SCREENSHOT_EVERY` | Framework: write every Nth frame as PPM |
+
+### Install scripts
+
+The scripts behind `Install.bat`, `Update.bat`, `Install-European.bat` and
+`Install-Undub.bat` (`tools/install/`).
+
+| Variable | Effect |
+|---|---|
+| `RG_OWN_WINDOW=1` | Never open a window of their own. Started with no input, no output and no arguments, as a launcher's Play starts them, they run their batch file again in a new window and wait for it (`tools/install/launchers.ps1`); a script that runs them so, without `-Yes` or `-Iso`, sets this to keep them in its own output. The new window sets it too |

@@ -1,0 +1,25 @@
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index 513d79e..a421428 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -75,11 +75,17 @@ else()
+         set(PLATFORM "Android" CACHE STRING "" FORCE)
+     endif()
+ 
++    # The 5.5 tag's archive, 42 MB, rather than a clone of the repository:
++    # the clone brought its whole history, 413 MB, and took 23 s of a first
++    # configure against 5 s (GIT_SHALLOW still fetched every branch's tip, 20 s).
++    # No URL_HASH: GitHub makes these archives on request and does not promise
++    # the same bytes, and a changed hash would stop every configure; the clone
++    # had no hash either. Extracted files get the extraction's time, so a new
++    # URL rebuilds raylib.
+     FetchContent_Declare(
+         raylib
+-        GIT_REPOSITORY "https://github.com/raysan5/raylib.git"
+-        GIT_TAG "5.5" # we will migrate to 4.2.0 later, trust me it will be better
+-        GIT_PROGRESS TRUE
++        URL "https://github.com/raysan5/raylib/archive/refs/tags/5.5.tar.gz" # we will migrate to 4.2.0 later, trust me it will be better
++        DOWNLOAD_EXTRACT_TIMESTAMP FALSE
+     )
+     FetchContent_MakeAvailable(raylib)
+ 
