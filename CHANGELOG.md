@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (pre-release)
+## 0.5.0 (pre-release)
 
 ### New
 
@@ -18,6 +18,17 @@
   entry its pictures (capsule, portrait, banner, logo, icon), as a game from
   the store has. A picture you already set is kept. Steam shows them after a
   restart (game mode does it).
+- Steam Deck fork: a new home screen: the game's artwork behind it, slowly
+  moving, with glowing engines, light streaks and drifting stars; the game's
+  logo; large buttons (Play, Update, Quit) where the selected one turns
+  orange, and a spinner while it checks or updates. A build without
+  `installer/art/home.jpg` draws a plain sky, and one without
+  `installer/art/logo-home.png` writes the title in text.
+
+## 0.4.0 (pre-release)
+
+### New
+
 - Steam Deck fork: `installer/RogueGalaxy-Setup.py`, a window to run once in
   desktop mode: it asks for the disc image and the folder, builds the game
   and adds it to Steam.
