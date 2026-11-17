@@ -1059,6 +1059,11 @@ void Overlay::drawQuitPrompt() {
 // with a dark background (the game has drawn nothing yet) and keeps the game
 // paused until Play. Everything is reached with the controller (A selects).
 void Overlay::drawHome() {
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        std::fprintf(stderr, "[ui] home screen drawn\n");
+    }
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
