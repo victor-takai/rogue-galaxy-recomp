@@ -134,12 +134,16 @@ def main() -> int:
             count += add_archive(zf, archive(args.ref), "")
         for path, commit in links:
             count += add_archive(zf, archive(commit, ROOT / path), path + "/")
+        # Each submodule's commit: an update skips a submodule that has not
+        # moved (update.sh), as the framework's files carry our patches.
+        add(zf, "SUBMODULES", "".join(f"{path} {commit}\n" for path, commit in links).encode(), time.time())
         add(zf, "REVISION", (revision + "\n").encode(), time.time())
         add(zf, "FILES", "".join(name + "\n" for name in sorted(NAMES)).encode(), time.time())
-        count += 2
+        count += 3
 
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
     print(f"{target}: {count} files, {target.stat().st_size / 2**20:.1f} MiB, revision {revision}")
+    (out / f"{target.name}.sha256").write_text(f"{digest}  {target.name}\n", encoding="utf-8")
     print(f"sha256 {digest}")
     return 0
 

@@ -69,11 +69,26 @@ progress 0.12 "Unpacking"
 # The marker install.sh keeps for an unpacked archive is written here, since
 # it would otherwise take every file for new.
 python3 -I - "$archive" <<'PY' || fail "Could not unpack the archive"
-import os, stat, sys, zipfile
+import os, stat, subprocess, sys, zipfile
 archive = sys.argv[1]
 old = set(open("FILES").read().split("\n")) if os.path.exists("FILES") else set()
 with zipfile.ZipFile(archive) as z:
     members = {}
+    # A submodule whose commit has not moved is left as it is: the framework's
+    # files carry our patches, and writing them back would build it all again.
+    subs = {}
+    if "SUBMODULES" in [i.filename.split("/", 1)[-1] for i in z.infolist()]:
+        for i in z.infolist():
+            if i.filename.split("/", 1)[-1] == "SUBMODULES":
+                subs = dict(l.split() for l in z.read(i).decode().splitlines() if l.strip())
+    installed = {}
+    if os.path.exists("build/submodules-installed"):
+        installed = dict(l.split() for l in open("build/submodules-installed").read().splitlines() if l.strip())
+    elif os.path.isdir(".git") and subs:
+        tree = subprocess.run(["git", "ls-tree", "HEAD", *subs], capture_output=True, text=True).stdout
+        installed = {l.split("\t")[1]: l.split()[2] for l in tree.splitlines() if "\t" in l}
+    skipped = tuple(p + "/" for p, c in subs.items() if installed.get(p) == c)
+    kept = lambda name: name.startswith(skipped)
     for info in z.infolist():
         if info.is_dir():
             continue
@@ -84,7 +99,7 @@ with zipfile.ZipFile(archive) as z:
         sys.exit("not a game release")
     written = 0
     for name, info in members.items():
-        if name in ("FILES", "REVISION"):
+        if name in ("FILES", "REVISION") or kept(name):
             continue
         data = z.read(info)
         if os.path.isfile(name) and open(name, "rb").read() == data:
@@ -97,12 +112,14 @@ with zipfile.ZipFile(archive) as z:
         written += 1
     new = set(z.read(members["FILES"]).decode().split("\n"))
     for name in sorted(old - new):
-        if name and os.path.isfile(name):
+        if name and not kept(name) and os.path.isfile(name):
             os.remove(name)
     for name in ("REVISION", "FILES"):
         with open(name, "wb") as f:
             f.write(z.read(members[name]))
 print("update: %d file(s) written, %d dropped" % (written, len([n for n in old - new if n])))
+with open("build/submodules-installed", "w") as f:
+    f.write("".join("%s %s\n" % item for item in subs.items()))
 with open("build/unpacked-archive", "w") as f:
     f.write("%s %d\n" % (open("REVISION").read().strip(), int(os.stat("FILES").st_ctime)))
 PY
