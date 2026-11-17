@@ -149,7 +149,31 @@ add_custom_command(
     COMMENT "Embedding the menu font"
     VERBATIM)
 
+# The home screen's pictures (Steam Deck fork: added), embedded the same way:
+# the background and the logo. A tree without a file gets an empty array, and
+# the screen draws a sky / the title in text.
+function(dq8_embed_art INPUT OUTPUT SYMBOL)
+    if(EXISTS "${INPUT}")
+        add_custom_command(
+            OUTPUT "${OUTPUT}"
+            COMMAND "${CMAKE_COMMAND}" "-DINPUT=${INPUT}" "-DOUTPUT=${OUTPUT}"
+                    "-DSYMBOL=${SYMBOL}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dq8EmbedBinary.cmake"
+            DEPENDS "${INPUT}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dq8EmbedBinary.cmake"
+            ${DQ8_DEPENDS_EXPLICIT_ONLY}
+            COMMENT "Embedding ${SYMBOL}"
+            VERBATIM)
+    else()
+        file(WRITE "${OUTPUT}"
+            "extern const unsigned char ${SYMBOL}[] = {0};\nextern const unsigned int ${SYMBOL}_size = 0u;\n")
+    endif()
+endfunction()
+set(DQ8_HOME_ART_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/home_art_data.cpp")
+set(DQ8_HOME_LOGO_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/home_logo_data.cpp")
+dq8_embed_art("${CMAKE_CURRENT_SOURCE_DIR}/../../installer/art/home.jpg" "${DQ8_HOME_ART_SOURCE}" kHomeArtData)
+dq8_embed_art("${CMAKE_CURRENT_SOURCE_DIR}/../../installer/art/logo-home.png" "${DQ8_HOME_LOGO_SOURCE}" kHomeLogoData)
+
 add_library(dq8_ui STATIC
+    src/ui/ui_art.cpp
     src/ui/ui_glyphs.cpp
     src/ui/ui_overlay.cpp
     src/ui/ui_pages.cpp
@@ -158,5 +182,7 @@ add_library(dq8_ui STATIC
     src/ui/ui_style.cpp
     src/ui/ui_widgets.cpp
     "${DQ8_UI_FONT_SOURCE}"
+    "${DQ8_HOME_ART_SOURCE}"
+    "${DQ8_HOME_LOGO_SOURCE}"
 )
 target_link_libraries(dq8_ui PUBLIC dq8_gfx_sdlgpu dq8_imgui)

@@ -1,6 +1,7 @@
 #include "ui/ui_overlay.h"
 
 #include "gfx/backends/sdlgpu/sdlgpu_input.h"
+#include "ui/ui_art.h"
 #include "ui/ui_style.h"
 #include "ui/ui_widgets.h"
 
@@ -11,7 +12,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cfloat>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -1063,24 +1066,247 @@ void Overlay::drawQuitPrompt() {
     ImGui::PopStyleVar();
 }
 
+namespace {
+// The home screen's pieces (Steam Deck fork). All of them draw on the
+// window's own list, so a hidden window or a missing artwork costs nothing.
+float hash01(uint32_t n) {
+    n = (n ^ 61u) ^ (n >> 16);
+    n *= 9u;
+    n ^= n >> 4;
+    n *= 0x27d4eb2du;
+    n ^= n >> 15;
+    return static_cast<float>(n & 0xFFFFu) / 65535.0f;
+}
+
+float smooth(float x) {
+    x = std::clamp(x, 0.0f, 1.0f);
+    return x * x * (3.0f - 2.0f * x);
+}
+
+ImU32 mix(ImU32 a, ImU32 b, float t) {
+    const auto lerp = [&](int shift) {
+        const float x = static_cast<float>((a >> shift) & 0xFFu);
+        const float y = static_cast<float>((b >> shift) & 0xFFu);
+        return static_cast<ImU32>(x + (y - x) * t) << shift;
+    };
+    return lerp(IM_COL32_R_SHIFT) | lerp(IM_COL32_G_SHIFT) | lerp(IM_COL32_B_SHIFT) | lerp(IM_COL32_A_SHIFT);
+}
+
+// Text with tracking and a soft shadow; `size` in pixels. Returns its width.
+float trackedText(ImDrawList *list, ImVec2 at, float size, float tracking, ImU32 from, ImU32 to, const char *text,
+                  float fade) {
+    ImFont *font = ImGui::GetFont();
+    const size_t count = std::strlen(text);
+    float x = at.x;
+    for (size_t i = 0; i < count; ++i) {
+        const char glyph[2] = {text[i], 0};
+        const float t = count > 1 ? static_cast<float>(i) / static_cast<float>(count - 1) : 0.0f;
+        const float advance = font->CalcTextSizeA(size, FLT_MAX, 0.0f, glyph).x;
+        list->AddText(font, size, ImVec2(x + size * 0.04f, at.y + size * 0.05f), IM_COL32(0, 0, 10, static_cast<int>(150 * fade)),
+                      glyph);
+        list->AddText(font, size, ImVec2(x, at.y), withAlpha(mix(from, to, t), fade), glyph);
+        x += advance + tracking;
+    }
+    return x - at.x - tracking;
+}
+
+// A spinning arc, for work in progress.
+void spinner(ImDrawList *list, ImVec2 centre, float radius, ImU32 color) {
+    const float t = static_cast<float>(ImGui::GetTime());
+    list->PathClear();
+    list->PathArcTo(centre, radius, t * 5.0f, t * 5.0f + 4.2f, 24);
+    list->PathStroke(color, std::max(2.0f, radius * 0.28f));
+}
+
+// One button of the home screen: a glass plate that lights up under the
+// cursor, with a gold bar and a sliding label; the first (Play) is gold.
+bool homeButton(const char *id, const char *label, ImVec2 size, bool enabled, float fade,
+                int adornment) {
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, IM_COL32(0, 0, 0, 0));
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const bool pressed = ImGui::Button(id, size);
+    ImGui::PopStyleColor(4);
+    const bool lit = enabled && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
+    const bool held = enabled && ImGui::IsItemActive();
+    const ImVec2 max(min.x + size.x, min.y + size.y);
+
+    float &glow = *ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(id), 0.0f);
+    glow += ((lit ? 1.0f : 0.0f) - glow) * std::min(1.0f, ImGui::GetIO().DeltaTime * 14.0f);
+    const float dim = (enabled ? 1.0f : 0.72f) * fade;
+    const float round = size.y * 0.3f;
+    ImDrawList *list = ImGui::GetWindowDrawList();
+
+    // The plate.
+    if (glow > 0.02f)
+        drawShadow(list, min, max, round, glow * 0.7f * fade);
+    // Glass at rest; the selected button turns gold-orange, whichever it is.
+    const ImU32 top = mix(IM_COL32(16, 24, 60, 215), IM_COL32(255, 222, 118, 255), glow);
+    const ImU32 bottom = mix(IM_COL32(8, 12, 36, 215), IM_COL32(244, 150, 56, 255), glow);
+    const float press = held ? 1.0f : 0.0f;
+    list->AddRectFilled(min, max, withAlpha(mix(top, bottom, 0.5f), dim), round);
+    list->AddRectFilled(ImVec2(min.x + 2.0f, min.y + 2.0f), ImVec2(max.x - 2.0f, min.y + size.y * 0.5f),
+                        withAlpha(IM_COL32(255, 255, 255, static_cast<int>(26 + 44 * glow)), dim), round - 2.0f, ImDrawFlags_RoundCornersTop);
+    // A glint that crosses a lit button.
+    list->PushClipRect(ImVec2(min.x + round, min.y + 3.0f), ImVec2(max.x - round, max.y - 3.0f), true);
+    if (glow > 0.05f) {
+        const float sweep = std::fmod(static_cast<float>(ImGui::GetTime()) * 0.7f, 1.8f) - 0.4f;
+        const float gx = min.x + size.x * sweep;
+        list->AddRectFilledMultiColor(ImVec2(gx - size.y, min.y), ImVec2(gx, max.y), IM_COL32(255, 255, 255, 0),
+                                      IM_COL32(255, 255, 255, static_cast<int>(46 * glow * dim)),
+                                      IM_COL32(255, 255, 255, static_cast<int>(46 * glow * dim)), IM_COL32(255, 255, 255, 0));
+    }
+    list->PopClipRect();
+    list->AddRectFilled(min, max, IM_COL32(0, 0, 0, static_cast<int>(70 * press)), round);
+    const ImU32 edge = mix(IM_COL32(205, 218, 255, 190), IM_COL32(255, 244, 200, 255), glow);
+    list->AddRect(min, max, withAlpha(edge, dim), round, 2.0f + glow);
+
+    // The label, nudged right as the plate lights up, and a chevron.
+    ImFont *font = ImGui::GetFont();
+    const float textSize = em(1.2f);
+    const ImVec2 measured = font->CalcTextSizeA(textSize, FLT_MAX, 0.0f, label);
+    const float slide = glow * em(0.35f);
+    const ImVec2 at(min.x + em(1.5f) + slide, min.y + (size.y - measured.y) * 0.5f);
+    const ImU32 ink = mix(palette::kText, IM_COL32(42, 22, 8, 255), glow);
+    if (glow < 0.5f)
+        list->AddText(font, textSize, ImVec2(at.x + 1.0f, at.y + 1.5f), IM_COL32(0, 0, 8, static_cast<int>(160 * dim)), label);
+    list->AddText(font, textSize, at, withAlpha(ink, dim), label);
+    if (glow > 0.05f && enabled) {
+        const ImVec2 tip(max.x - em(1.1f) + slide * 0.5f, min.y + size.y * 0.5f);
+        const ImU32 chevron = IM_COL32(42, 22, 8, 255);
+        list->AddTriangleFilled(ImVec2(tip.x - em(0.55f), tip.y - em(0.4f)), ImVec2(tip.x, tip.y),
+                                ImVec2(tip.x - em(0.55f), tip.y + em(0.4f)), withAlpha(chevron, glow * dim));
+    }
+    // Right side: a spinner while work goes on, or a pulsing gold dot.
+    const ImVec2 mark(max.x - em(1.3f), min.y + size.y * 0.5f);
+    if (adornment == 1)
+        spinner(list, mark, em(0.45f), withAlpha(palette::kSky, dim));
+    else if (adornment == 2 && glow < 0.05f) {
+        const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 3.5f);
+        list->AddCircleFilled(mark, em(0.55f) + pulse * em(0.25f), withAlpha(palette::kGold, 0.18f * dim));
+        list->AddCircleFilled(mark, em(0.3f), withAlpha(palette::kGold, dim));
+    }
+    return pressed;
+}
+} // namespace
+
 // The screen the game starts on: Play, Update, Quit. It covers the window
-// with a dark background (the game has drawn nothing yet) and keeps the game
-// paused until Play. Everything is reached with the controller (A selects).
+// with the game's artwork, slowly moving and lit, and keeps the game paused
+// until Play. Everything is reached with the controller (A selects).
 void Overlay::drawHome() {
     static bool logged = false;
+    static double openedAt = -1.0;
     if (!logged) {
         logged = true;
         std::fprintf(stderr, "[ui] home screen drawn\n");
     }
+    const double time = ImGui::GetTime();
+    if (openedAt < 0.0)
+        openedAt = time;
+    const float fade = smooth(static_cast<float>((time - openedAt) / 0.9));
+    const float t = static_cast<float>(time);
+
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->Pos);
-    ImGui::SetNextWindowSize(viewport->Size);
+    const ImVec2 origin = viewport->Pos;
+    const ImVec2 view = viewport->Size;
+    const ImVec2 corner(origin.x + view.x, origin.y + view.y);
+    ImGui::SetNextWindowPos(origin);
+    ImGui::SetNextWindowSize(view);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(5, 8, 22, 255));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(4, 7, 20, 255));
     ImGui::Begin("##homebg", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    {
+        ImDrawList *list = ImGui::GetWindowDrawList();
+        // The sky, when there is no artwork, or beneath its edges.
+        list->AddRectFilledMultiColor(origin, corner, IM_COL32(10, 22, 70, 255), IM_COL32(70, 36, 40, 255),
+                                      IM_COL32(8, 10, 30, 255), IM_COL32(20, 12, 34, 255));
+        ImVec2 image(origin.x, origin.y), imageSize = view;
+        ImTextureRef art;
+        ImVec2 artPixels;
+        if (homeArt(HomePicture::Background, art, artPixels)) {
+            // Covers the window, breathing in and out and drifting a little,
+            // the picture shown wider than the window so no edge ever shows.
+            const float cover = std::max(view.x / artPixels.x, view.y / artPixels.y);
+            const float zoom = 1.03f + 0.02f * std::sin(t * 0.11f) + 0.05f * (1.0f - fade);
+            const float scale = cover * zoom;
+            imageSize = ImVec2(artPixels.x * scale, artPixels.y * scale);
+            const float spareX = imageSize.x - view.x, spareY = imageSize.y - view.y;
+            image = ImVec2(origin.x - spareX * (0.5f + 0.45f * std::sin(t * 0.07f)),
+                           origin.y - spareY * (0.5f + 0.38f * std::sin(t * 0.05f + 1.0f)));
+            list->AddImage(art, image, ImVec2(image.x + imageSize.x, image.y + imageSize.y), ImVec2(0, 0), ImVec2(1, 1),
+                           IM_COL32(255, 255, 255, 255));
+            // The ship's two engines, pulsing: where the picture burns blue.
+            const ImVec2 engines[2] = {ImVec2(0.565f, 0.523f), ImVec2(0.678f, 0.490f)};
+            for (int i = 0; i < 2; ++i) {
+                const ImVec2 p(image.x + engines[i].x * imageSize.x, image.y + engines[i].y * imageSize.y);
+                const float pulse = 0.5f + 0.5f * std::sin(t * 4.3f + static_cast<float>(i) * 1.7f + 1.3f * std::sin(t * 9.0f));
+                const float radius = view.y * (0.035f + 0.012f * pulse);
+                for (int ring = 5; ring >= 1; --ring) {
+                    const float k = static_cast<float>(ring) / 5.0f;
+                    list->AddCircleFilled(p, radius * (0.4f + k * 1.8f),
+                                          IM_COL32(90, 170, 255, static_cast<int>((10.0f + 26.0f * pulse) * (1.2f - k) * fade)), 28);
+                }
+                list->AddCircleFilled(p, radius * 0.28f, IM_COL32(220, 240, 255, static_cast<int>((90 + 120 * pulse) * fade)), 20);
+            }
+        }
+
+        // Light streaks crossing the picture, like the ones it already has.
+        for (uint32_t i = 0; i < 16; ++i) {
+            const float speed = 0.05f + 0.07f * hash01(i * 7u + 1u);
+            const float phase = std::fmod(t * speed + hash01(i * 13u + 5u), 1.0f);
+            const float x = origin.x + view.x * (1.15f - phase * 1.5f + 0.2f * hash01(i * 3u + 9u));
+            const float y = origin.y + view.y * (-0.1f + phase * 1.25f * (0.4f + hash01(i * 5u + 2u)));
+            const float length = view.x * (0.08f + 0.14f * hash01(i * 11u + 3u));
+            const float alpha = std::sin(phase * 3.14159f) * (0.10f + 0.16f * hash01(i * 17u + 4u)) * fade;
+            const ImVec2 head(x, y), tail(x + length * 0.82f, y - length * 0.58f);
+            list->AddLine(tail, head, i % 3u == 0u ? IM_COL32(255, 190, 110, static_cast<int>(255 * alpha))
+                                                   : IM_COL32(190, 220, 255, static_cast<int>(255 * alpha)),
+                          1.0f + 1.4f * hash01(i * 19u + 6u));
+        }
+
+        // Legibility: a dark veil behind the left column, the corners drawn in.
+        const float veil = 0.62f;
+        list->AddRectFilledMultiColor(origin, ImVec2(origin.x + view.x * veil, corner.y), IM_COL32(3, 6, 22, 215),
+                                      IM_COL32(3, 6, 22, 0), IM_COL32(3, 6, 22, 0), IM_COL32(3, 6, 22, 215));
+        list->AddRectFilledMultiColor(ImVec2(origin.x, corner.y - view.y * 0.30f), corner, IM_COL32(2, 4, 14, 0),
+                                      IM_COL32(2, 4, 14, 0), IM_COL32(2, 4, 14, 200), IM_COL32(2, 4, 14, 200));
+        list->AddRectFilledMultiColor(origin, ImVec2(corner.x, origin.y + view.y * 0.2f), IM_COL32(2, 4, 14, 150),
+                                      IM_COL32(2, 4, 14, 150), IM_COL32(2, 4, 14, 0), IM_COL32(2, 4, 14, 0));
+
+        // Stars and embers drifting up and across, twinkling.
+        for (uint32_t i = 0; i < 90; ++i) {
+            const float speed = 0.012f + 0.03f * hash01(i * 31u + 1u);
+            const float rise = std::fmod(t * speed + hash01(i * 7u + 3u), 1.0f);
+            const float x = origin.x + view.x * std::fmod(hash01(i * 5u + 2u) + rise * 0.12f, 1.0f);
+            const float y = corner.y - view.y * rise * 1.05f;
+            const float twinkle = 0.5f + 0.5f * std::sin(t * (1.2f + 2.5f * hash01(i * 3u + 8u)) + hash01(i) * 6.28f);
+            const bool ember = i % 4u == 0u;
+            const float alpha = std::sin(rise * 3.14159f) * (0.25f + 0.6f * twinkle) * fade;
+            const float size = (ember ? 1.6f : 1.0f) + 1.6f * hash01(i * 23u + 4u);
+            const ImU32 color = ember ? IM_COL32(255, 196, 110, static_cast<int>(255 * alpha))
+                                      : IM_COL32(220, 232, 255, static_cast<int>(255 * alpha));
+            list->AddCircleFilled(ImVec2(x, y), size * (view.y / 800.0f) * 1.2f, color, 8);
+            if (size > 2.2f)
+                list->AddCircleFilled(ImVec2(x, y), size * 2.6f * (view.y / 800.0f), withAlpha(color, 0.18f), 12);
+        }
+        // The foot of the screen: how to move, and the version.
+        ImDrawList *foot = list;
+        ImFont *font = ImGui::GetFont();
+        const float small = em(0.9f);
+        const std::string version = m_host.version;
+        const float versionWidth = font->CalcTextSizeA(small, FLT_MAX, 0.0f, version.c_str()).x;
+        const ImVec2 versionAt(corner.x - view.x * 0.035f - versionWidth, corner.y - view.y * 0.06f - small);
+        foot->AddText(font, small, ImVec2(versionAt.x + 1.0f, versionAt.y + 1.0f), IM_COL32(0, 0, 8, static_cast<int>(180 * fade)),
+                      version.c_str());
+        foot->AddText(font, small, versionAt, IM_COL32(200, 212, 245, static_cast<int>(230 * fade)), version.c_str());
+        // The first moments: up from black.
+        list->AddRectFilled(origin, corner, IM_COL32(0, 0, 0, static_cast<int>(255 * (1.0f - fade))));
+    }
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
@@ -1089,22 +1315,60 @@ void Overlay::drawHome() {
     using State = HostServices::HomeUpdate::State;
     const bool working = update.state == State::Working;
 
-    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
-                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(2.4f), em(1.8f)));
-    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
+    // The column: title, buttons, update status.
+    const float column = std::min(em(21.0f), view.x * 0.46f);
+    // Padding all round, so a button's edge and glow are not cut by the window.
+    const float pad = em(1.0f);
+    ImGui::SetNextWindowPos(ImVec2(origin.x + view.x * 0.07f - pad, origin.y + view.y * 0.5f), ImGuiCond_Always,
+                            ImVec2(0.0f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(column + pad * 2.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, em(0.8f)));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
+                                   ImGuiWindowFlags_AlwaysAutoResize;
     if (ImGui::Begin("##home", nullptr, flags)) {
-        decorateWindow();
-        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.9f);
-        ImGui::TextUnformatted("Rogue Galaxy");
-        ImGui::PopFont();
-        mutedText("Recompiled for the Steam Deck  -  %s", m_host.version.c_str());
-        ImGui::Dummy(ImVec2(0.0f, em(0.9f)));
+        ImDrawList *list = ImGui::GetWindowDrawList();
+        const ImVec2 top = ImGui::GetCursorScreenPos();
+        const float slide = (1.0f - fade) * em(2.0f);
 
-        const ImVec2 buttonSize(em(16.0f), em(2.4f));
+        // The title: the game's logo, or its name in text without the picture.
+        float y = top.y;
+        float titleWidth = column;
+        ImTextureRef logo;
+        ImVec2 logoPixels;
+        if (homeArt(HomePicture::Logo, logo, logoPixels)) {
+            titleWidth = column * 1.12f;
+            const float height = titleWidth * logoPixels.y / logoPixels.x;
+            const ImVec2 at(top.x - slide - column * 0.04f, y);
+            list->AddImage(logo, at, ImVec2(at.x + titleWidth, at.y + height), ImVec2(0, 0), ImVec2(1, 1),
+                           IM_COL32(255, 255, 255, static_cast<int>(255 * fade)));
+            y += height + em(0.4f);
+        } else {
+            const float titleSize = em(3.6f);
+            trackedText(list, ImVec2(top.x - slide, y), titleSize, titleSize * 0.06f, IM_COL32(255, 255, 255, 255),
+                        IM_COL32(255, 232, 160, 255), "ROGUE", fade);
+            y += titleSize * 1.08f;
+            titleWidth = trackedText(list, ImVec2(top.x - slide, y), titleSize, titleSize * 0.06f,
+                                     IM_COL32(255, 244, 205, 255), IM_COL32(255, 176, 76, 255), "GALAXY", fade);
+            y += titleSize * 1.12f;
+        }
+        // A gold rule that draws itself in, with a spark at its end.
+        const float rule = std::min(titleWidth, column) * smooth(static_cast<float>((time - openedAt - 0.2) / 0.8));
+        list->AddRectFilledMultiColor(ImVec2(top.x, y), ImVec2(top.x + rule, y + 3.0f), withAlpha(palette::kGold, fade),
+                                      IM_COL32(255, 168, 70, 0), IM_COL32(255, 168, 70, 0), withAlpha(palette::kGold, fade));
+        list->AddCircleFilled(ImVec2(top.x + rule, y + 1.5f), 3.0f, IM_COL32(255, 244, 205, static_cast<int>(220 * fade)));
+        y += em(0.7f);
+        const float subSize = em(0.95f);
+        trackedText(list, ImVec2(top.x, y), subSize, em(0.28f), IM_COL32(186, 204, 255, 255), IM_COL32(186, 204, 255, 255),
+                    "STEAM DECK EDITION", fade);
+        ImGui::Dummy(ImVec2(column, (y + subSize - top.y) + em(1.8f)));
+
+        // The buttons.
+        const ImVec2 buttonSize(column, em(3.1f));
         ImGui::BeginDisabled(working);
-        if (ImGui::Button("Play", buttonSize))
+        if (homeButton("##play", "Play", buttonSize, !working, fade, 0))
             closeHome();
         ImGui::SetItemDefaultFocus();
         ImGui::EndDisabled();
@@ -1126,13 +1390,15 @@ void Overlay::drawHome() {
             label = "Restart to finish";
         const bool canUpdate = static_cast<bool>(m_host.startUpdate) &&
                                (update.state == State::Available || update.state == State::Failed);
+        const int adornment = (update.state == State::Checking || working) ? 1 : update.state == State::Available ? 2 : 0;
         ImGui::BeginDisabled(!canUpdate);
-        if (ImGui::Button((label + "##update").c_str(), buttonSize))
+        if (homeButton("##update", label.c_str(), buttonSize, canUpdate || update.state == State::UpToDate, fade,
+                       adornment) && canUpdate)
             m_host.startUpdate();
         ImGui::EndDisabled();
 
         ImGui::BeginDisabled(working);
-        if (ImGui::Button("Quit", buttonSize)) {
+        if (homeButton("##quit", "Quit", buttonSize, !working, fade, 0)) {
             SDL_Event quit{};
             quit.type = SDL_EVENT_QUIT;
             SDL_PushEvent(&quit);
@@ -1140,17 +1406,37 @@ void Overlay::drawHome() {
         ImGui::EndDisabled();
 
         if (working || update.state == State::Failed || update.state == State::Done) {
-            ImGui::Dummy(ImVec2(0.0f, em(0.6f)));
-            if (working)
-                ImGui::ProgressBar(update.progress < 0.0f ? -1.0f * static_cast<float>(ImGui::GetTime()) : update.progress,
-                                   ImVec2(buttonSize.x, em(0.9f)), "");
-            mutedText("%s", update.text.c_str());
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            if (working) {
+                const float bar = em(0.55f);
+                const ImVec2 end(at.x + column, at.y + bar);
+                list->AddRectFilled(at, end, IM_COL32(255, 255, 255, 36), bar * 0.5f);
+                list->PushClipRect(at, end, true);
+                if (update.progress < 0.0f) {
+                    const float run = std::fmod(t * 0.8f, 1.4f) - 0.2f;
+                    const float from = at.x + column * run;
+                    list->AddRectFilledMultiColor(ImVec2(from, at.y), ImVec2(from + column * 0.3f, end.y), IM_COL32(244, 203, 82, 0),
+                                                  palette::kGold, palette::kGold, IM_COL32(244, 203, 82, 0));
+                } else {
+                    const float done = std::clamp(update.progress, 0.0f, 1.0f);
+                    list->AddRectFilledMultiColor(at, ImVec2(at.x + column * done, end.y), IM_COL32(255, 168, 70, 255),
+                                                  palette::kGold, palette::kGold, IM_COL32(255, 168, 70, 255));
+                }
+                list->PopClipRect();
+                ImGui::Dummy(ImVec2(column, bar));
+            }
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + column);
+            ImGui::PushStyleColor(ImGuiCol_Text, update.state == State::Failed ? palette::kBad : palette::kText);
+            ImGui::TextUnformatted(update.text.c_str());
+            ImGui::PopStyleColor();
+            ImGui::PopTextWrapPos();
         }
         ImGui::End();
     } else {
         ImGui::End();
     }
-    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 }
 
 void Overlay::drawCapturePrompt() {

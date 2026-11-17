@@ -69,7 +69,9 @@ saves never go into git. The repository holds only checksums and addresses
 
 **The one other exception: the installer's theme.** The owner chose to ship
 official promotional artwork of the game (Level-5 / Sony's, not read from the
-disc): one picture in `installer/art/`, the installer's background, and the
+disc): one picture in `installer/art/`, the installer's background and the game's home
+screen picture and logo `installer/art/home.jpg`, `installer/art/logo-home.png` (embedded at
+build time), and the
 Steam library pictures (capsule, portrait, hero, logo, icon) in
 `installer/art/steam/`, which the installer copies into Steam's grid folder
 when it adds the game; the AppImage and
