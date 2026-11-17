@@ -52,7 +52,7 @@ ISO_BYTES = 6_967_721_984  # Redump's image of the USA release
 
 CSS = b"""
 window { background: #04061a; color: #f2f3fc; }
-.brand { font-size: 40px; font-weight: 800; letter-spacing: 7px; color: #f4cb52;
+.brand { font-size: 34px; font-weight: 800; letter-spacing: 7px; color: #f4cb52;
          text-shadow: 0 0 18px rgba(244,203,82,0.55), 0 3px 0 #6b3d00; }
 .tagline { font-size: 12px; font-weight: 700; letter-spacing: 4px; color: #ff8c7a; }
 .title { font-size: 24px; font-weight: 700; color: #f2f3fc; }
@@ -66,7 +66,7 @@ window { background: #04061a; color: #f2f3fc; }
 .warn { color: #f6b640; }
 .bad { color: #ff7b72; }
 .card { background: rgba(8,12,42,0.74); border: 1px solid rgba(244,203,82,0.30); border-radius: 14px;
-        padding: 12px; box-shadow: 0 10px 34px rgba(0,0,0,0.5); }
+        padding: 10px 12px; box-shadow: 0 10px 34px rgba(0,0,0,0.5); }
 button { background: rgba(28,40,110,0.65); color: #f2f3fc; border: 1px solid rgba(127,212,255,0.4);
          border-radius: 9px; padding: 8px 18px; box-shadow: none; background-image: none; }
 button:hover { background: rgba(48,66,160,0.8); border-color: #7fd4ff; }
@@ -696,9 +696,9 @@ class Window(Gtk.ApplicationWindow):
             GLib.timeout_add_seconds(cfg.test_cancel, lambda: self.cancel_install() or False)
 
     # -- building blocks
-    def section(self, number: int, title: str, hint: str) -> Gtk.Box:
+    def section(self, number: int, title: str, hint: str, action: Gtk.Widget | None = None) -> Gtk.Box:
         """A card with a numbered heading; the content is appended to it."""
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         card.add_css_class("card")
         head = Gtk.Box(spacing=12)
         badge = Gtk.Label(label=str(number), valign=Gtk.Align.CENTER)
@@ -712,6 +712,9 @@ class Window(Gtk.ApplicationWindow):
         texts.append(note)
         head.append(badge)
         head.append(texts)
+        if action:
+            action.set_valign(Gtk.Align.CENTER)
+            head.append(action)
         card.append(head)
         return card
 
@@ -724,7 +727,7 @@ class Window(Gtk.ApplicationWindow):
         box.append(brand)
         box.append(tagline)
         if text:
-            sub = Gtk.Label(label=text, xalign=0, wrap=True, max_width_chars=58, margin_top=8)
+            sub = Gtk.Label(label=text, xalign=0, wrap=True, max_width_chars=58, margin_top=4)
             sub.add_css_class("subtitle")
             box.append(sub)
         return box
@@ -737,8 +740,8 @@ class Window(Gtk.ApplicationWindow):
         return page
 
     def build_setup(self) -> Gtk.Widget:
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
-                          margin_top=14, margin_bottom=6, margin_start=56, margin_end=24)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                          margin_top=10, margin_bottom=4, margin_start=56, margin_end=24)
         content.append(self.header("Built on this Deck from your own disc image; nothing leaves it. Afterwards you "
                                    "play from Steam, and the game updates itself."))
 
@@ -759,7 +762,9 @@ class Window(Gtk.ApplicationWindow):
         content.append(card)
 
         # 2. where
-        card = self.section(2, "Where to install", "The game, its saves and its build go in one folder.")
+        other = Gtk.Button(label="Another folder...")
+        other.connect("clicked", lambda *_: self.pick_folder(self.set_folder))
+        card = self.section(2, "Where to install", "The game, its saves and its build go in one folder.", other)
         self.where_buttons: list[tuple[Gtk.CheckButton, Path]] = []
         group = None
         for label, path in storage_choices():
@@ -779,10 +784,7 @@ class Window(Gtk.ApplicationWindow):
             usable[-1][0].set_active(True)
         for row, _ in self.where_buttons:
             row.connect("toggled", lambda *_: self.update_buttons())
-        other = Gtk.Button(label="Another folder...", halign=Gtk.Align.START)
-        other.connect("clicked", lambda *_: self.pick_folder(self.set_folder))
         self.where_note = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=58, visible=False)
-        card.append(other)
         card.append(self.where_note)
         content.append(card)
 
@@ -790,14 +792,14 @@ class Window(Gtk.ApplicationWindow):
         card = self.section(3, "Options", "Both can wait: the home screen can add them later.")
         self.steam_check = Gtk.CheckButton(label="Add Rogue Galaxy to Steam (play it from game mode)")
         self.steam_check.set_active(self.cfg.steam)
-        self.european_check = Gtk.CheckButton(label="Add the European disc (SCES-54552)")
+        self.european_check = Gtk.CheckButton(label="Add the European disc (SCES-54552) for FR, DE, ES and IT texts")
         self.european_check.set_active(bool(self.cfg.european))
         self.european_check.connect("toggled", lambda *_: self.on_european_toggled())
         row = Gtk.Box(spacing=12, margin_start=28)
         eu = Gtk.Button(label="Choose the European .iso...")
         eu.connect("clicked", lambda *_: self.pick_file(self.set_european, "Rogue Galaxy European disc"))
         self.european_label = Gtk.Label(label=self.cfg.european.name if self.cfg.european else
-                                        "No image chosen. French, German, Spanish and Italian texts.",
+                                        "No image chosen",
                                         xalign=0, hexpand=True, wrap=True, max_width_chars=58)
         self.european_label.add_css_class("muted")
         row.append(eu)
