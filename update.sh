@@ -95,7 +95,7 @@ with zipfile.ZipFile(archive) as z:
         mode = (info.external_attr >> 16) & 0o777
         os.chmod(name, mode or 0o644)
         written += 1
-    new = set(z.read("FILES").decode().split("\n"))
+    new = set(z.read(members["FILES"]).decode().split("\n"))
     for name in sorted(old - new):
         if name and os.path.isfile(name):
             os.remove(name)
