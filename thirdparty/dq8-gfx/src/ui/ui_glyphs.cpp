@@ -291,11 +291,7 @@ std::string keyText(SDL_Scancode scancode) {
         {SDL_SCANCODE_LSHIFT, "L Shift"}, {SDL_SCANCODE_RSHIFT, "R Shift"},
         {SDL_SCANCODE_LCTRL, "L Ctrl"}, {SDL_SCANCODE_RCTRL, "R Ctrl"},
         {SDL_SCANCODE_LALT, "L Alt"}, {SDL_SCANCODE_RALT, "R Alt"},
-#if defined(__APPLE__)
-        {SDL_SCANCODE_LGUI, "L Cmd"}, {SDL_SCANCODE_RGUI, "R Cmd"},
-#else
         {SDL_SCANCODE_LGUI, "L Win"}, {SDL_SCANCODE_RGUI, "R Win"},
-#endif
         {SDL_SCANCODE_RETURN, "Enter"}, {SDL_SCANCODE_ESCAPE, "Esc"},
         {SDL_SCANCODE_BACKSPACE, "Bksp"}, {SDL_SCANCODE_CAPSLOCK, "Caps"},
     };

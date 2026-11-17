@@ -204,7 +204,7 @@ avoids it until the next reboot.
 | `tools/disc/archive.py`, `cfgbin.py`, `balance.py` | The game's archives (`.HD6` index, `.pac`), its compiled tables (`.cfg.bin`), and the Director's Cut balance's tables and enemy files built from them |
 | `tools/mwo3/mwo3.py` | MWo3 overlay header parser, ELF cross-check, overlay-to-ELF wrapper |
 | `tools/funcmap/` | Function-map builder and the checks behind `setup.py check` |
-| `tools/bench/` | `walk.sh NAME [SCALE] [FPS]`: the scripted Salgin walk on the pad clock, for speed (3x, 60 fps mode, the `[gfx]` intervals before the logged frame) and for regressions (1x, 30 fps mode, `cmpvram.py` against a reference frame made with the same save); `PROFILE=1` samples the threads as well. It needs the maintainer's input scripts in `build/run/` and saves in `disc/mc0`, which are not in the repository |
+| `tools/bench/` | `cmpvram.py`, `hitches.py` and other benchmark helpers (the scripted walk was Windows only and is gone) |
 | `tools/mipsdis.py` | Disassembler for the main program, with the map's names ([FINDING-THINGS.md](FINDING-THINGS.md)) |
 | `tools/hang/` | A thread's call chain read from it (`stackwalk.py`), an AI script decoded (`aiscript.py`) |
 | `tools/profile/report.py` | Reads the profiles `RG_PROFILE` writes ([DEVELOPMENT.md](DEVELOPMENT.md)) |

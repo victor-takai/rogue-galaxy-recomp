@@ -9,20 +9,12 @@
 #include <thread>
 #include <vector>
 
-#if defined(_WIN32)
-#include <windows.h>
-#include <winhttp.h>
-#endif
 
 namespace rg::updates
 {
 namespace
 {
 
-#if defined(_WIN32)
-constexpr const wchar_t *kHost = L"api.github.com";
-constexpr const wchar_t *kPath = L"/repos/victor-takai/rogue-galaxy-recomp/releases?per_page=10";
-#endif
 // This fork's releases; RG_UPDATE_REPO=owner/name points the check elsewhere (a test).
 std::string repo()
 {
@@ -44,72 +36,6 @@ std::atomic<bool> g_reachable{false};
 std::mutex g_mutex;
 Release g_newer;
 
-#if defined(_WIN32)
-// The releases' JSON, or empty: GitHub lists them newest first, pre-releases
-// included (0.1.0 is one, which /releases/latest leaves out).
-std::string fetch()
-{
-    std::string body;
-    HINTERNET session = WinHttpOpen(L"RogueGalaxyRecompiled", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session)
-    {
-        // Before Windows 8.1.
-        session = WinHttpOpen(L"RogueGalaxyRecompiled", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
-                              WINHTTP_NO_PROXY_BYPASS, 0);
-    }
-    if (!session)
-    {
-        return body;
-    }
-    WinHttpSetTimeouts(session, 5000, 5000, 5000, 5000);
-    HINTERNET connect = WinHttpConnect(session, kHost, INTERNET_DEFAULT_HTTPS_PORT, 0);
-    HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", kPath, nullptr, WINHTTP_NO_REFERER,
-                                                     WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
-                                : nullptr;
-    if (request &&
-        WinHttpSendRequest(request, L"Accept: application/vnd.github+json\r\n", static_cast<DWORD>(-1), WINHTTP_NO_REQUEST_DATA,
-                           0, 0, 0) &&
-        WinHttpReceiveResponse(request, nullptr))
-    {
-        DWORD status = 0, size = sizeof(status);
-        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                            WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
-        while (status == 200)
-        {
-            DWORD available = 0;
-            if (!WinHttpQueryDataAvailable(request, &available) || available == 0 ||
-                body.size() + available > kMostBytes)
-            {
-                break;
-            }
-            const size_t old = body.size();
-            body.resize(old + available);
-            DWORD read = 0;
-            if (!WinHttpReadData(request, body.data() + old, available, &read))
-            {
-                body.resize(old);
-                break;
-            }
-            body.resize(old + read);
-        }
-        if (status != 200)
-        {
-            std::fprintf(stderr, "[updates] GitHub answered %lu\n", static_cast<unsigned long>(status));
-        }
-    }
-    if (request)
-    {
-        WinHttpCloseHandle(request);
-    }
-    if (connect)
-    {
-        WinHttpCloseHandle(connect);
-    }
-    WinHttpCloseHandle(session);
-    return body;
-}
-#elif defined(__linux__)
 // curl does the TLS (SteamOS and nearly every distribution ship it), so the
 // game links no HTTP library; the same 5 seconds and 1 MB as WinHTTP's.
 std::string fetch()
@@ -140,12 +66,6 @@ std::string fetch()
     }
     return body;
 }
-#else
-std::string fetch()
-{
-    return {};
-}
-#endif
 
 // The first release's tag: the JSON's first "tag_name".
 std::string firstTag(const std::string &json)

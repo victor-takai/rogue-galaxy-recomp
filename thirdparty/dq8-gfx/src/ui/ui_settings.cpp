@@ -11,11 +11,7 @@
 #include <sstream>
 #include <string>
 
-#ifdef _WIN32
-#include <process.h>
-#else
 #include <unistd.h>
-#endif
 
 namespace dq8::ui {
 namespace {
@@ -311,11 +307,7 @@ bool saveSettings(const std::string &path, const Settings &settings) {
     // The temporary carries the process id: two copies of the game (another
     // folder's, on the same settings file) saving at the same moment write
     // one each, and the one renamed last replaces the file whole.
-#ifdef _WIN32
-    const long process = _getpid();
-#else
     const long process = static_cast<long>(getpid());
-#endif
     const std::string temporary = path + "." + std::to_string(process) + ".tmp";
     bool written = false;
     {

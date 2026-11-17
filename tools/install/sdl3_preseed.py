@@ -7,7 +7,7 @@ cache (default build/game): the check answers SDL3 added to it
 SDL release and patches, compiler and target, CMake, flags, headers).
 Dq8Sdl3Preseed.cmake loads them at configure when the key matches.
 
-Run it after changing the installer's toolchain (tools/install/install.ps1),
+Run it after changing the installer's toolchain (the build container, install.sh),
 SDL3's release (thirdparty/dq8-gfx/CMakeLists.txt) or its patches
 (thirdparty/dq8-gfx/cmake/patches), on a fresh folder configured with that
 toolchain and -DDQ8_SDL3_PRESEED=OFF, e.g.

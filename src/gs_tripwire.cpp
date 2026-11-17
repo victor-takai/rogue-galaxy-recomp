@@ -13,10 +13,8 @@
 #include "gfx/native/native_pipeline.h"
 #endif
 
-#if defined(__linux__) || defined(__APPLE__)
 #include <execinfo.h>
 #include <unistd.h>
-#endif
 
 namespace rg::graphics
 {
@@ -92,11 +90,9 @@ bool cross(Call call, bool read)
         std::lock_guard lock(printing);
         std::fprintf(stderr, "[native-gs] the GS backend was entered: %s%s\n", kNames[call],
                      mode() == Mode::Drop && !read ? " (dropped)" : "");
-#if defined(__linux__) || defined(__APPLE__)
         void *frames[32];
         const int depth = backtrace(frames, 32);
         backtrace_symbols_fd(frames, depth, STDERR_FILENO);
-#endif
         if (mode() == Mode::Abort)
             std::abort();
     }

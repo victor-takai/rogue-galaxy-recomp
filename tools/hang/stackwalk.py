@@ -1,6 +1,6 @@
 """Walk a guest thread's stack in a memory dump: stackwalk.py DUMPDIR SP RA [--depth N]
 
-DUMPDIR holds rdram.bin from tools/hang/dumpmem.ps1 (guest RAM, offset =
+DUMPDIR holds rdram.bin from a memory dump (guest RAM, offset =
 guest address). SP and RA are the thread's registers as dumpmem.ps1 printed
 them ("ctx at ... sp 017678A0 ra 0015DEE0"), hex. The function containing RA
 is the innermost frame whose prologue is known (a kernel stub such as

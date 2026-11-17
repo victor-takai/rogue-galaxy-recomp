@@ -91,7 +91,6 @@ bool onSteamDeck()
     {
         return true;
     }
-#if defined(__linux__)
     std::FILE *file = std::fopen("/sys/class/dmi/id/product_name", "r");
     if (file)
     {
@@ -100,7 +99,6 @@ bool onSteamDeck()
         std::fclose(file);
         return std::strncmp(name, "Jupiter", 7) == 0 || std::strncmp(name, "Galileo", 7) == 0;
     }
-#endif
     return false;
 }
 
@@ -1277,11 +1275,7 @@ Setup::Setup(PS2Runtime &runtime)
         const bool showFps = env("RG_SHOW_FPS", "0") != "0";
         if (showFps && noWindow)
         {
-#if defined(_WIN32)
-            _putenv("DQ8_GFX_SHOW_FPS=1");
-#else
             setenv("DQ8_GFX_SHOW_FPS", "1", 1);
-#endif
         }
         std::string error;
         std::unique_ptr<dq8::gfx::SdlGpuBackend> sdl = dq8::gfx::createSdlGpuBackend(error);

@@ -19,11 +19,7 @@
 namespace dq8::ui {
 namespace {
 constexpr double kCaptureSeconds = 6.0;
-#if defined(__APPLE__)
-constexpr const char *kQuitShortcut = "Cmd+Q";
-#else
 constexpr const char *kQuitShortcut = "Alt+F4";
-#endif
 constexpr const char *kProjectUrl = "https://github.com/victor-takai/rogue-galaxy-recomp";
 constexpr const char *kIssuesUrl = "https://github.com/victor-takai/rogue-galaxy-recomp/issues";
 

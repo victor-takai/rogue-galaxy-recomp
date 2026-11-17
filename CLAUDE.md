@@ -53,13 +53,10 @@ configs or the patches, never the generated files. The game's log is
   its id.
 - Scripted input: `RG_INPUT` with `RG_INPUT_CLOCK=pad` replays alike at any
   speed (DEVELOPMENT.md).
-- The frame-compare gate for renderer changes: `tools/bench/walk.sh NAME 1 30`
-  (scale 1, the 30 fps mode; then scale 3), then
-  `tools/bench/cmpvram.py NAME REF` against a reference made with the same
-  save. Only the 30 fps walk is
-  deterministic; 60 fps frames follow the frame time and never compare. The
-  input scripts and saves it needs are the maintainer's (`build/run/`, not in
-  the repository): say in the pull request that the gate is still to run.
+- The frame-compare gate for renderer changes was `tools/bench/walk.sh`,
+  which only worked on Windows and is gone from this fork; compare frames by
+  hand with `RG_UI_SCRIPT` screenshots and `tools/bench/cmpvram.py` until a
+  Deck replacement exists. Say in the pull request what was compared.
 - Speed: compare runs taken alike on an idle machine, with frames per second
   over wall time (`[gfx]` lines), not presents.
 - `RG_SELFTEST=gs` checks the code changed in vendored dependencies.

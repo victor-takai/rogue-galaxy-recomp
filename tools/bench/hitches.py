@@ -1,7 +1,7 @@
 r"""The stats intervals of a run as a table, for short hitches: hitches.py LOG [FROM TO] [--over MS]
 
 LOG is a log written with DQ8_GFX_STATS_EVERY (build/last-run.log of
-debug\RogueGalaxy-hitches.bat, which prints every 10 frames, or a bench's
+a run with DQ8_GFX_STATS_EVERY=10, which prints every 10 frames, or a bench's
 build/run/NAME.log with STATS_EVERY=10). Each row is one interval: its end
 in seconds from the first stats line (summed from the frame rates, so it
 drifts a little against the [mark] times), the frame rate, the longest

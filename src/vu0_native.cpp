@@ -102,11 +102,7 @@ constexpr int XY = X | Y, XYZ = X | Y | Z, XYZW = 15, YZW = Y | Z | W, XZW = X |
               YW = Y | W, ZW = Z | W, XZ = X | Z;
 constexpr int kX = 0, kY = 1, kZ = 2, kW = 3;
 
-#if defined(_MSC_VER)
-#define RG_VU0_INLINE __forceinline
-#else
 #define RG_VU0_INLINE inline __attribute__((always_inline))
-#endif
 
 // The same normalization on four lanes at once. The helpers below work on
 // whole registers with SSE (Rogue Galaxy: they were per-lane loops the

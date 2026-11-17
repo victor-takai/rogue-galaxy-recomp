@@ -4,7 +4,7 @@
     python tools/release/source_zip.py [--out build/release] [--ref REF | --worktree]
 
 GitHub's own "Source code" archives leave the submodules out
-(thirdparty/PS2Recomp, thirdparty/imgui), and Install.bat cannot build
+(thirdparty/PS2Recomp, thirdparty/imgui), and install.sh cannot build
 without them, so a release carries this archive instead:
 RogueGalaxy-<version>.zip, one folder RogueGalaxy/ holding the committed
 files, each submodule at its recorded commit, REVISION, the commit the
