@@ -30,8 +30,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-REPO = "https://github.com/victor-takai/rogue-galaxy-recomp"
-RAW = "https://raw.githubusercontent.com/victor-takai/rogue-galaxy-recomp"
+REPO = "https://github.com/touyoo0/deck-galaxy"
+RAW = "https://raw.githubusercontent.com/touyoo0/deck-galaxy"
 PICTURE = "docs/images/menu-game.jpg"
 
 
