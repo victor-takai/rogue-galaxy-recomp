@@ -142,6 +142,7 @@ lo=0.15 hi=0.3
         "== recompile"*) lo=0.3 hi=0.35; progress "$lo" "Recompiling the game's code" ;;
         "== configure build/game"*) lo=0.35 hi=0.36; progress "$lo" "Preparing the game's build" ;;
         "== build the game"*) lo=0.36 hi=0.99; progress "$lo" "Building the game" ;;
+        "== ps2_recomp "*|"== VU"*|"== check"*|"== patches"*) ;;
         "== "*) progress -1 "${line#== }" ;;
     esac
 done

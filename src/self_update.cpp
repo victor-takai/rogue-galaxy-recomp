@@ -117,9 +117,10 @@ void run()
     }
     finish(State::Done, "Updated: restarting");
     std::this_thread::sleep_for(std::chrono::milliseconds(800));
-    // The launcher holds build/.launcher.lock on file descriptor 9 for as
-    // long as the game runs; the script would find it taken by this process.
-    close(9);
+    // rogue-galaxy.sh, the parent of this process, keeps build/.launcher.lock
+    // while the game runs; the script started again must not take it for a
+    // second game.
+    setenv("RG_RELAUNCH", "1", 1);
     const char *const again[] = {"sh", "rogue-galaxy.sh", nullptr};
     execvp("sh", const_cast<char *const *>(again));
     finish(State::Failed, "Updated, but the game could not start again: start it from Steam");

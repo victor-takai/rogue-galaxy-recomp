@@ -43,8 +43,10 @@ if ! [ -x "$game" ] || ! [ -e "$disc" ] || ! [ -e disc/manifest.json ] \
     [ -e "$disc" ] || fail "No extracted disc in disc/: run  python3 setup.py extract  first."
 fi
 
-# A second start while the game is up would start a second game.
-if command -v flock >/dev/null 2>&1; then
+# A second start while the game is up would start a second game. The game
+# that restarts itself after an update (RG_RELAUNCH) is not a second one: the
+# script that started it still holds the lock.
+if [ -z "$RG_RELAUNCH" ] && command -v flock >/dev/null 2>&1; then
     exec 9>build/.launcher.lock
     flock -n 9 || fail "Rogue Galaxy is already running."
 fi
