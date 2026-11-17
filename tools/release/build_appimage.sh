@@ -5,7 +5,8 @@
 #     tools/release/build_appimage.sh [OUT_DIR]      (default build/release)
 #
 # Run it on x86_64 Linux (the Deck, or the build container). The AppImage is
-# thin on purpose: it carries installer/RogueGalaxy-Setup.py and starts it
+# thin on purpose: it carries installer/RogueGalaxy-Setup.py (and installer/art,
+# its background pictures) and starts it
 # with the system's python3, which on SteamOS already has GTK 4 (PyGObject);
 # bundling GTK would add over 100 MB for nothing. Output:
 # RogueGalaxy-Setup-x86_64.AppImage and its .sha256.
@@ -40,6 +41,8 @@ APPDIR="$WORK/RogueGalaxy-Setup.AppDir"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/share/rogue-galaxy"
 cp "$ROOT/installer/RogueGalaxy-Setup.py" "$APPDIR/usr/share/rogue-galaxy/"
+# The installer's background pictures (CLAUDE.md, "Never game data": the one exception).
+[ -d "$ROOT/installer/art" ] && cp -r "$ROOT/installer/art" "$APPDIR/usr/share/rogue-galaxy/art"
 
 cat > "$APPDIR/AppRun" <<'EOF'
 #!/bin/sh

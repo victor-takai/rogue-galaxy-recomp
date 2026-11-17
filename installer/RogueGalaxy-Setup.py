@@ -22,12 +22,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
+import random
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -35,7 +39,10 @@ from pathlib import Path
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gio, GLib, Gtk  # noqa: E402
+gi.require_version("Gdk", "4.0")
+gi.require_version("Gsk", "4.0")
+gi.require_version("Graphene", "1.0")
+from gi.repository import Gdk, Gio, GLib, Graphene, Gsk, Gtk  # noqa: E402
 
 REPO = os.environ.get("RG_UPDATE_REPO", "touyoo0/deck-galaxy")
 API = os.environ.get("RG_UPDATE_API", f"https://api.github.com/repos/{REPO}/releases?per_page=10")
@@ -44,25 +51,40 @@ NEED_GB = 24  # the extracted disc, the generated code, the build
 ISO_BYTES = 6_967_721_984  # Redump's image of the USA release
 
 CSS = b"""
-window, .page { background: #060a1e; color: #f2f3fc; }
-.title { font-size: 26px; font-weight: 700; color: #f2f3fc; }
-.subtitle { font-size: 14px; color: #9ea8cc; }
+window { background: #04061a; color: #f2f3fc; }
+.brand { font-size: 40px; font-weight: 800; letter-spacing: 7px; color: #f4cb52;
+         text-shadow: 0 0 18px rgba(244,203,82,0.55), 0 3px 0 #6b3d00; }
+.tagline { font-size: 12px; font-weight: 700; letter-spacing: 4px; color: #ff8c7a; }
+.title { font-size: 24px; font-weight: 700; color: #f2f3fc; }
+.subtitle { font-size: 14px; color: #b4bde0; }
 .muted { color: #9ea8cc; }
 .section { font-size: 17px; font-weight: 700; color: #f2f3fc; }
-.badge { background: #f4cb52; color: #1a1500; font-weight: 700; border-radius: 14px; min-width: 28px; min-height: 28px; }
+.badge { background-image: linear-gradient(#ffdf7a, #f0a82a); color: #1a1500; font-weight: 800;
+         border-radius: 15px; min-width: 30px; min-height: 30px;
+         box-shadow: 0 0 14px rgba(244,203,82,0.6); }
 .good { color: #70de8e; }
 .warn { color: #f6b640; }
 .bad { color: #ff7b72; }
-.card { background: #0c112e; border: 1px solid #2a3263; border-radius: 12px; padding: 14px; }
-button { background: #1a2046; color: #f2f3fc; border: 1px solid #2a3263; border-radius: 8px;
-         padding: 8px 18px; box-shadow: none; background-image: none; }
-button:hover { background: #232b5c; }
-button:disabled { color: #5f6890; background: #10152f; }
-button.suggested-action { background: #f4cb52; color: #1a1500; border-color: #f4cb52; font-weight: 700; }
-button.suggested-action:disabled { background: #4a4224; color: #8a8160; border-color: #4a4224; }
-progressbar trough { background: #1a2046; min-height: 10px; border-radius: 6px; }
-progressbar progress { background: #f4cb52; min-height: 10px; border-radius: 6px; }
+.card { background: rgba(8,12,42,0.74); border: 1px solid rgba(244,203,82,0.30); border-radius: 14px;
+        padding: 12px; box-shadow: 0 10px 34px rgba(0,0,0,0.5); }
+button { background: rgba(28,40,110,0.65); color: #f2f3fc; border: 1px solid rgba(127,212,255,0.4);
+         border-radius: 9px; padding: 8px 18px; box-shadow: none; background-image: none; }
+button:hover { background: rgba(48,66,160,0.8); border-color: #7fd4ff; }
+button:disabled { color: #5f6890; background: rgba(16,21,47,0.7); border-color: rgba(127,212,255,0.12); }
+button.suggested-action { background-image: linear-gradient(#ffdf7a, #f0a82a); color: #1a1500; border-color: #ffe9a0;
+                          font-size: 17px; font-weight: 800; padding: 12px 44px; border-radius: 12px;
+                          box-shadow: 0 0 22px rgba(244,203,82,0.45); }
+button.suggested-action:hover { background-image: linear-gradient(#ffeaa0, #ffbe3a); }
+button.suggested-action:disabled { background-image: none; background: rgba(74,66,36,0.75); color: #8a8160;
+                                   border-color: transparent; box-shadow: none; }
+progressbar trough { background: rgba(26,32,70,0.9); min-height: 14px; border-radius: 8px;
+                     border: 1px solid rgba(127,212,255,0.3); }
+progressbar progress { background-image: linear-gradient(90deg, #ffb13b, #ffe37a); min-height: 14px;
+                       border-radius: 8px; box-shadow: 0 0 14px rgba(244,203,82,0.7); }
 checkbutton { color: #f2f3fc; }
+check, radio { background: rgba(16,22,58,0.9); border: 1px solid rgba(127,212,255,0.5); }
+check:checked, radio:checked { background: #f4cb52; color: #1a1500; border-color: #ffe9a0; }
+expander title { color: #b4bde0; }
 textview, textview text { background: #04071a; color: #9ea8cc; font-family: monospace; font-size: 12px; }
 """
 
@@ -112,6 +134,10 @@ class Failure(Exception):
     pass
 
 
+class Cancelled(Exception):
+    pass
+
+
 # ---------------------------------------------------------------- the job
 
 
@@ -139,6 +165,14 @@ class Job(threading.Thread):
         self.ui = ui
         self.lo, self.hi = 0.0, 0.0
         self.tail: list[str] = []
+        self.cancelled = False
+        self.killed = threading.Event()  # the build's processes are gone
+        self.proc: subprocess.Popen | None = None
+        folder = Path(cfg.dir) if cfg.dir else None
+        # A folder this install creates (new, or empty) goes away if it is cancelled; one with an
+        # earlier install in it stays as it was.
+        self.fresh = bool(folder and not (folder / "install.sh").exists()
+                          and (not folder.exists() or not any(folder.iterdir())))
 
     def say(self, text: str, fraction: float | None = None) -> None:
         GLib.idle_add(self.ui.on_progress, text, fraction)
@@ -164,6 +198,11 @@ class Job(threading.Thread):
             self.build()
             self.extras()
             self.steam()
+        except Cancelled:
+            self.killed.wait(90)
+            self.cleanup()
+            GLib.idle_add(self.ui.on_cancelled)
+            return
         except Failure as error:
             GLib.idle_add(self.ui.on_failed, str(error))
             return
@@ -174,16 +213,86 @@ class Job(threading.Thread):
 
     # -- running a program, its output line by line
     def stream(self, command: list[str], cwd: Path, on_line=None) -> int:
+        if self.cancelled:
+            raise Cancelled
         self.log("$ " + " ".join(command))
+        # Its own process group, so that cancelling can end it and what it started.
         process = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   stdin=subprocess.DEVNULL, text=True, bufsize=1, errors="replace")
+                                   stdin=subprocess.DEVNULL, text=True, bufsize=1, errors="replace",
+                                   start_new_session=True)
+        self.proc = process
         assert process.stdout is not None
         for raw in process.stdout:
             line = raw.rstrip()
             self.log(line)
             if on_line:
                 on_line(line)
-        return process.wait()
+        status = process.wait()
+        if self.cancelled:
+            raise Cancelled
+        return status
+
+    # -- cancelling: end the build, in the container too, then delete what it made
+    def cancel(self) -> None:
+        """From another thread: stop everything. run() then cleans up."""
+        self.cancelled = True
+        try:
+            self.kill_build()
+        finally:
+            self.killed.set()
+
+    def kill_build(self) -> None:
+        folder = str(Path(self.cfg.dir).resolve()) if self.cfg.dir else ""
+        if self.proc and self.proc.poll() is None:
+            try:
+                os.killpg(self.proc.pid, signal.SIGTERM)
+            except OSError:
+                pass
+        if not folder:
+            return
+        # The build runs in the distrobox container, which outlives this window: end every process whose
+        # working directory is inside the install folder. The container sees this computer's folders under
+        # /run/host, and shares its process list (if it did not, the same is done from inside it).
+        folders = (folder, "/run/host" + folder)
+        for _ in range(3):
+            for entry in Path("/proc").iterdir():
+                if not entry.name.isdigit() or int(entry.name) == os.getpid():
+                    continue
+                try:
+                    cwd = os.readlink(entry / "cwd")
+                except OSError:
+                    continue
+                if any(cwd == f or cwd.startswith(f + "/") for f in folders):
+                    try:
+                        os.kill(int(entry.name), signal.SIGKILL)
+                    except OSError:
+                        pass
+            time.sleep(0.5)
+        script = ('for p in /proc/[0-9]*; do c=$(readlink "$p/cwd" 2>/dev/null); for d in "$@"; do case "$c" in '
+                  '"$d"|"$d"/*) [ "${p#/proc/}" != "$$" ] && kill -KILL "${p#/proc/}" 2>/dev/null;; esac; done; done')
+        if shutil.which("distrobox"):
+            try:
+                subprocess.run(["distrobox", "enter", "rg-build", "--", "sh", "-c", script, "sh", *folders],
+                               cwd=Path.home(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=45)
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+    def cleanup(self) -> None:
+        """What a cancelled install leaves: the folder it created, the partial download, the menu entry."""
+        folder = Path(self.cfg.dir) if self.cfg.dir else None
+        if not folder:
+            return
+        (folder.parent / f".{folder.name}-download.zip").unlink(missing_ok=True)
+        if not self.fresh:
+            return
+        entry = Path.home() / ".local/share/applications/rogue-galaxy.desktop"
+        try:
+            if entry.exists() and str(folder) in entry.read_text(errors="replace"):
+                entry.unlink()
+        except OSError:
+            pass
+        shutil.rmtree(folder, ignore_errors=True)
 
     # -- 1. the sources
     def fetch(self) -> None:
@@ -230,6 +339,8 @@ class Job(threading.Thread):
             total = int(response.headers.get("Content-Length") or 0)
             done = 0
             while chunk := response.read(1 << 20):
+                if self.cancelled:
+                    raise Cancelled
                 out.write(chunk)
                 digest.update(chunk)
                 done += len(chunk)
@@ -247,6 +358,8 @@ class Job(threading.Thread):
         with zipfile.ZipFile(archive) as z:
             members = [i for i in z.infolist() if not i.is_dir()]
             for info in members:
+                if self.cancelled:
+                    raise Cancelled
                 name = info.filename.split("/", 1)[1] if "/" in info.filename else ""
                 if not name:
                     continue
@@ -350,6 +463,202 @@ class Job(threading.Thread):
         self.stream([tool, str(desktop)], self.cfg.dir)
 
 
+# ---------------------------------------------------------------- the sky
+# The window's background, drawn here (no game art: it is all gradients):
+# a deep-space sky with nebulae, twinkling stars, a ringed planet with its
+# moon, and now and then a shooting star.
+
+
+def rgba(r: float, g: float, b: float, a: float = 1.0) -> Gdk.RGBA:
+    return Gdk.RGBA(red=r / 255, green=g / 255, blue=b / 255, alpha=a)
+
+
+def stops(*pairs) -> list:
+    out = []
+    for offset, color in pairs:
+        stop = Gsk.ColorStop()
+        stop.offset = offset
+        stop.color = color
+        out.append(stop)
+    return out
+
+
+def rect(x: float, y: float, w: float, h: float) -> Graphene.Rect:
+    return Graphene.Rect().init(x, y, w, h)
+
+
+def point(x: float, y: float) -> Graphene.Point:
+    return Graphene.Point().init(x, y)
+
+
+def circle(cx: float, cy: float, r: float) -> Gsk.RoundedRect:
+    box = Gsk.RoundedRect()
+    box.init_from_rect(rect(cx - r, cy - r, 2 * r, 2 * r), r)
+    return box
+
+
+def art_files() -> list[Path]:
+    """The theme's pictures: installer/art next to this file (the AppImage carries it),
+    and ~/.local/share/RogueGalaxy/theme for pictures of your own."""
+    found: list[Path] = []
+    for folder in (Path(__file__).resolve().parent / "art", Path.home() / ".local/share/RogueGalaxy/theme"):
+        if folder.is_dir():
+            found += sorted(p for p in folder.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+    return found
+
+
+class Sky(Gtk.Widget):
+    __gtype_name__ = "RogueGalaxySky"
+    PERIOD, FADE = 9.0, 1.6  # seconds a picture stays, and its cross-fade
+
+    def __init__(self) -> None:
+        super().__init__(hexpand=True, vexpand=True)
+        self.art: list[Gdk.Texture] = []
+        for path in art_files():
+            try:
+                self.art.append(Gdk.Texture.new_from_filename(str(path)))
+            except GLib.Error:
+                continue
+        # wide pictures first: they fill the window, the tall ones become a poster
+        self.art.sort(key=lambda tex: tex.get_width() / tex.get_height() < 1.25)
+        rnd = random.Random(7)
+        colors = ((255, 255, 255), (255, 255, 255), (170, 205, 255), (255, 226, 180))
+        self.stars = [(rnd.random(), rnd.random(), rnd.choice((1, 1, 1, 2, 2, 3)), rnd.random() * 6.28,
+                       0.6 + rnd.random() * 1.8, rnd.choice(colors)) for _ in range(260)]
+        self.t0 = time.monotonic()
+        GLib.timeout_add(40 if self.art else 66, self.tick)
+
+    def tick(self) -> bool:
+        self.queue_draw()
+        return True
+
+    def ring(self, snap: Gtk.Snapshot, cx: float, cy: float, radius: float, front: bool) -> None:
+        snap.save()
+        snap.translate(point(cx, cy))
+        snap.rotate(-18)
+        if front:  # the half of the ring that passes in front of the planet
+            snap.push_clip(rect(-radius * 4, 0, radius * 8, radius * 4))
+        for scale, width, color in ((2.25, 2.0, rgba(255, 228, 160, 0.9)), (2.0, 11.0, rgba(255, 190, 110, 0.25)),
+                                    (1.7, 3.0, rgba(255, 214, 150, 0.65))):
+            rx, ry = radius * scale, radius * scale * 0.2
+            corner = Graphene.Size().init(rx, ry)
+            box = Gsk.RoundedRect()
+            box.init(rect(-rx, -ry, 2 * rx, 2 * ry), corner, corner, corner, corner)
+            snap.append_border(box, [width] * 4, [color] * 4)
+        if front:
+            snap.pop()
+        snap.restore()
+
+    def picture(self, snap: Gtk.Snapshot, tex: Gdk.Texture, w: float, h: float, progress: float,
+                alpha: float) -> None:
+        """One artwork: a wide one fills the window; a tall one is a poster on the right, over a dimmed
+        copy of itself. It drifts in slowly (progress 0 to 1)."""
+        tw, th = tex.get_width(), tex.get_height()
+        zoom = 1.0 + 0.07 * progress
+        flt = Gsk.ScalingFilter.TRILINEAR
+        snap.push_clip(rect(0, 0, w, h))
+        snap.push_opacity(alpha)
+        if tw / th >= 1.25:
+            scale = max(w / tw, h / th) * zoom
+            dw, dh = tw * scale, th * scale
+            snap.append_scaled_texture(tex, flt, rect((w - dw) / 2, (h - dh) / 2, dw, dh))
+        else:
+            scale = max(w / tw, h / th)
+            dw, dh = tw * scale, th * scale
+            snap.push_opacity(0.4)
+            snap.append_scaled_texture(tex, flt, rect((w - dw) / 2, (h - dh) / 2, dw, dh))
+            snap.pop()
+            scale = h / th * zoom
+            dw, dh = tw * scale, th * scale
+            snap.append_scaled_texture(tex, flt, rect(w - dw - 20, (h - dh) / 2, dw, dh))
+        snap.pop()
+        snap.pop()
+
+    def draw_art(self, snap: Gtk.Snapshot, w: float, h: float, t: float) -> None:
+        count = len(self.art)
+        index = int(t // self.PERIOD) % count
+        local = t % self.PERIOD
+        snap.append_color(rgba(3, 5, 22), rect(0, 0, w, h))
+        fading = count > 1 and t >= self.PERIOD  # the first picture appears at once
+        if fading and local < self.FADE:  # the previous one, finishing under the new one
+            self.picture(snap, self.art[(index - 1) % count], w, h, 1.0, 1.0)
+        self.picture(snap, self.art[index], w, h, local / self.PERIOD,
+                     min(1.0, local / self.FADE) if fading else 1.0)
+        # dark on the left, where the window's cards are; the picture shows on the right
+        full = rect(0, 0, w, h)
+        snap.append_linear_gradient(full, point(0, 0), point(w, 0),
+                                    stops((0, rgba(3, 5, 22, 0.92)), (0.42, rgba(3, 5, 22, 0.60)),
+                                          (0.68, rgba(3, 5, 22, 0.12)), (1, rgba(3, 5, 22, 0))))
+        snap.append_linear_gradient(full, point(0, 0), point(0, h),
+                                    stops((0, rgba(3, 5, 22, 0.35)), (0.25, rgba(3, 5, 22, 0)),
+                                          (1, rgba(3, 5, 22, 0.6))))
+
+    def do_snapshot(self, snap: Gtk.Snapshot) -> None:
+        w, h = float(self.get_width()), float(self.get_height())
+        if w < 2 or h < 2:
+            return
+        t = time.monotonic() - self.t0
+        if self.art:
+            self.draw_art(snap, w, h, t)
+        else:
+            self.draw_space(snap, w, h, t)
+
+    def draw_space(self, snap: Gtk.Snapshot, w: float, h: float, t: float) -> None:
+        """No picture found: the drawn sky."""
+        full = rect(0, 0, w, h)
+        snap.append_linear_gradient(full, point(0, 0), point(0, h),
+                                    stops((0, rgba(3, 5, 22)), (0.55, rgba(9, 8, 42)), (1, rgba(32, 12, 54))))
+        for fx, fy, size, (r, g, b, a) in ((0.12, 0.18, 0.60, (40, 110, 255, 0.24)),
+                                           (0.88, 0.30, 0.65, (190, 40, 200, 0.22)),
+                                           (0.50, 1.05, 0.75, (255, 120, 60, 0.20))):
+            snap.append_radial_gradient(full, point(fx * w, fy * h), size * w, size * w * 0.75, 0, 1,
+                                        stops((0, rgba(r, g, b, a)), (1, rgba(r, g, b, 0))))
+        for x, y, size, phase, speed, (r, g, b) in self.stars:
+            alpha = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(t * speed + phase))
+            snap.append_color(rgba(r, g, b, alpha), rect(x * w, y * h, size, size))
+            if size == 3:
+                snap.append_radial_gradient(rect(x * w - 8, y * h - 8, 16, 16), point(x * w + 1, y * h + 1), 8, 8, 0, 1,
+                                            stops((0, rgba(r, g, b, 0.35 * alpha)), (1, rgba(r, g, b, 0))))
+
+        # the planet, to the right, with its ring passing behind then in front
+        radius = min(w, h) * 0.27
+        cx, cy = w * 0.78, h * 0.62
+        snap.append_radial_gradient(rect(cx - radius * 1.6, cy - radius * 1.6, radius * 3.2, radius * 3.2),
+                                    point(cx, cy), radius * 1.6, radius * 1.6, 0, 1,
+                                    stops((0, rgba(255, 150, 80, 0)), (0.62, rgba(255, 140, 80, 0)),
+                                          (0.66, rgba(255, 160, 90, 0.35)), (1, rgba(255, 140, 80, 0))))
+        self.ring(snap, cx, cy, radius, False)
+        snap.push_rounded_clip(circle(cx, cy, radius))
+        snap.append_radial_gradient(rect(cx - radius, cy - radius, 2 * radius, 2 * radius),
+                                    point(cx - radius * 0.4, cy - radius * 0.45), radius * 1.8, radius * 1.8, 0, 1,
+                                    stops((0, rgba(255, 200, 125)), (0.28, rgba(226, 104, 62)),
+                                          (0.62, rgba(112, 40, 100)), (1, rgba(10, 5, 30))))
+        for offset, height, alpha in ((0.18, 0.05, 0.10), (0.34, 0.09, 0.08), (0.52, 0.04, 0.12),
+                                      (0.66, 0.08, 0.07)):
+            snap.append_color(rgba(255, 230, 190, alpha),
+                              rect(cx - radius, cy - radius + offset * 2 * radius, 2 * radius, height * 2 * radius))
+        snap.pop()
+        self.ring(snap, cx, cy, radius, True)
+        mx, my, mr = cx - radius * 1.55, cy - radius * 1.05, radius * 0.16
+        snap.push_rounded_clip(circle(mx, my, mr))
+        snap.append_radial_gradient(rect(mx - mr, my - mr, 2 * mr, 2 * mr), point(mx - mr * 0.4, my - mr * 0.4),
+                                    mr * 1.7, mr * 1.7, 0, 1,
+                                    stops((0, rgba(230, 240, 255)), (0.5, rgba(120, 140, 200)),
+                                          (1, rgba(12, 14, 40))))
+        snap.pop()
+
+        # a shooting star every 11 seconds
+        step = (t % 11.0) / 1.1
+        if step < 1.0:
+            snap.save()
+            snap.translate(point(w * (0.15 + 0.4 * ((int(t / 11.0) * 0.37) % 1)) + step * w * 0.35,
+                                 h * 0.08 + step * h * 0.28))
+            snap.rotate(34)
+            snap.append_linear_gradient(rect(-150, 0, 150, 2), point(-150, 0), point(0, 0),
+                                        stops((0, rgba(255, 255, 255, 0)), (1, rgba(255, 255, 255, 1 - step))))
+            snap.restore()
+
+
 # ---------------------------------------------------------------- the window
 
 
@@ -362,7 +671,9 @@ class Window(Gtk.ApplicationWindow):
         self.custom_dir: Path | None = None
         self.job: Job | None = None
         self.pulse_id = 0
-        self.set_default_size(900, 760)
+        self.set_default_size(1100, 760)
+        self.running = False
+        self.connect("close-request", self.on_close_request)
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(self.get_display(), provider,
@@ -370,9 +681,8 @@ class Window(Gtk.ApplicationWindow):
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, vexpand=True, hexpand=True)
         self.stack.add_named(self.build_setup(), "setup")
         self.stack.add_named(self.build_install(), "install")
-        root = Gtk.Box()
-        root.add_css_class("page")
-        root.append(self.stack)
+        root = Gtk.Overlay(child=Sky())
+        root.add_overlay(self.stack)
         self.set_child(root)
         self.update_buttons()
         if cfg.shots:
@@ -382,6 +692,8 @@ class Window(Gtk.ApplicationWindow):
                 GLib.timeout_add(3000, self.tour_install)
         if cfg.start:
             GLib.idle_add(self.begin)
+        if cfg.test_cancel:  # a test: cancel as the dialog's second button would
+            GLib.timeout_add_seconds(cfg.test_cancel, lambda: self.cancel_install() or False)
 
     # -- building blocks
     def section(self, number: int, title: str, hint: str) -> Gtk.Box:
@@ -394,7 +706,7 @@ class Window(Gtk.ApplicationWindow):
         texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
         name = Gtk.Label(label=title, xalign=0)
         name.add_css_class("section")
-        note = Gtk.Label(label=hint, xalign=0, wrap=True)
+        note = Gtk.Label(label=hint, xalign=0, wrap=True, max_width_chars=58)
         note.add_css_class("muted")
         texts.append(name)
         texts.append(note)
@@ -403,28 +715,43 @@ class Window(Gtk.ApplicationWindow):
         card.append(head)
         return card
 
+    def header(self, text: str | None = None) -> Gtk.Box:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        brand = Gtk.Label(label="ROGUE GALAXY", xalign=0)
+        brand.add_css_class("brand")
+        tagline = Gtk.Label(label="FOR THE STEAM DECK   \u00b7   INSTALLER", xalign=0)
+        tagline.add_css_class("tagline")
+        box.append(brand)
+        box.append(tagline)
+        if text:
+            sub = Gtk.Label(label=text, xalign=0, wrap=True, max_width_chars=58, margin_top=8)
+            sub.add_css_class("subtitle")
+            box.append(sub)
+        return box
+
+    def beside_art(self, column: Gtk.Widget) -> Gtk.Box:
+        """The column on the left at its own width; the rest of the window shows the picture."""
+        page = Gtk.Box()
+        page.append(column)
+        page.append(Gtk.Box(hexpand=True))
+        return page
+
     def build_setup(self) -> Gtk.Widget:
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, width_request=820,
-                          halign=Gtk.Align.CENTER, margin_top=18, margin_bottom=8, margin_start=24, margin_end=24)
-        title = Gtk.Label(label="Rogue Galaxy for the Steam Deck", xalign=0)
-        title.add_css_class("title")
-        sub = Gtk.Label(label="Installs the game from your own disc image. Nothing is uploaded; it is built on "
-                              "this Deck. Afterwards you play from Steam in game mode, and the game updates "
-                              "itself from its home screen.", xalign=0, wrap=True)
-        sub.add_css_class("subtitle")
-        content.append(title)
-        content.append(sub)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
+                          margin_top=14, margin_bottom=6, margin_start=56, margin_end=24)
+        content.append(self.header("Built on this Deck from your own disc image; nothing leaves it. Afterwards you "
+                                   "play from Steam, and the game updates itself."))
 
         # 1. the disc image
-        card = self.section(1, "Your disc image", "Rogue Galaxy, USA release (SCUS-97490), an uncompressed .iso.")
+        card = self.section(1, "Your disc image", "USA release, serial SCUS-97490, an uncompressed .iso (about 7 GB).")
         row = Gtk.Box(spacing=12)
         choose = Gtk.Button(label="Choose the .iso...")
         choose.connect("clicked", lambda *_: self.pick_file(self.set_iso, "Your Rogue Galaxy (USA) disc image"))
-        self.iso_label = Gtk.Label(label="No image chosen", xalign=0, hexpand=True, wrap=True)
+        self.iso_label = Gtk.Label(label="No image chosen", xalign=0, hexpand=True, wrap=True, max_width_chars=58)
         self.iso_label.add_css_class("muted")
         row.append(choose)
         row.append(self.iso_label)
-        self.iso_state = Gtk.Label(label="", xalign=0, wrap=True, visible=False)
+        self.iso_state = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=58, visible=False)
         card.append(row)
         card.append(self.iso_state)
         if self.cfg.dir_ready:
@@ -454,7 +781,7 @@ class Window(Gtk.ApplicationWindow):
             row.connect("toggled", lambda *_: self.update_buttons())
         other = Gtk.Button(label="Another folder...", halign=Gtk.Align.START)
         other.connect("clicked", lambda *_: self.pick_folder(self.set_folder))
-        self.where_note = Gtk.Label(label="", xalign=0, wrap=True, visible=False)
+        self.where_note = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=58, visible=False)
         card.append(other)
         card.append(self.where_note)
         content.append(card)
@@ -463,15 +790,15 @@ class Window(Gtk.ApplicationWindow):
         card = self.section(3, "Options", "Both can wait: the home screen can add them later.")
         self.steam_check = Gtk.CheckButton(label="Add Rogue Galaxy to Steam (play it from game mode)")
         self.steam_check.set_active(self.cfg.steam)
-        self.european_check = Gtk.CheckButton(label="Add the European image (French, German, Spanish and "
-                                                    "Italian texts)")
+        self.european_check = Gtk.CheckButton(label="Add the European disc (SCES-54552)")
         self.european_check.set_active(bool(self.cfg.european))
         self.european_check.connect("toggled", lambda *_: self.on_european_toggled())
         row = Gtk.Box(spacing=12, margin_start=28)
-        eu = Gtk.Button(label="Choose the European image...")
+        eu = Gtk.Button(label="Choose the European .iso...")
         eu.connect("clicked", lambda *_: self.pick_file(self.set_european, "Rogue Galaxy European disc"))
-        self.european_label = Gtk.Label(label=self.cfg.european.name if self.cfg.european else "No image chosen",
-                                        xalign=0, hexpand=True, wrap=True)
+        self.european_label = Gtk.Label(label=self.cfg.european.name if self.cfg.european else
+                                        "No image chosen. French, German, Spanish and Italian texts.",
+                                        xalign=0, hexpand=True, wrap=True, max_width_chars=58)
         self.european_label.add_css_class("muted")
         row.append(eu)
         row.append(self.european_label)
@@ -483,28 +810,28 @@ class Window(Gtk.ApplicationWindow):
         content.append(card)
 
         scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, child=content)
-        bar = Gtk.Box(spacing=12, margin_top=10, margin_bottom=16, margin_start=24, margin_end=24,
-                      halign=Gtk.Align.CENTER, width_request=820)
+        bar = Gtk.Box(spacing=12, margin_top=10, margin_bottom=18, margin_start=56, margin_end=24)
         self.summary = Gtk.Label(label=f"About {NEED_GB} GB and 10 to 30 minutes. Keep the Deck plugged in.",
-                                 xalign=0, hexpand=True, wrap=True)
+                                 xalign=0, hexpand=True, wrap=True, max_width_chars=58)
         self.summary.add_css_class("muted")
         self.install_button = Gtk.Button(label="Install")
         self.install_button.add_css_class("suggested-action")
         self.install_button.connect("clicked", lambda *_: self.begin())
         bar.append(self.summary)
         bar.append(self.install_button)
-        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        page.append(scroll)
-        page.append(bar)
-        return page
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=False, width_request=720)
+        left.append(scroll)
+        left.append(bar)
+        return self.beside_art(left)
 
     def build_install(self) -> Gtk.Widget:
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, width_request=820, vexpand=True,
-                          halign=Gtk.Align.CENTER, margin_top=24, margin_bottom=16, margin_start=24, margin_end=24)
-        self.install_title = Gtk.Label(label="Installing", xalign=0)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, width_request=720, vexpand=True,
+                          hexpand=False, margin_top=22, margin_bottom=18, margin_start=56, margin_end=24)
+        content.append(self.header())
+        self.install_title = Gtk.Label(label="Installing", xalign=0, margin_top=14)
         self.install_title.add_css_class("title")
         self.install_sub = Gtk.Label(label="Keep the Deck plugged in. You can leave this window open and do "
-                                           "something else.", xalign=0, wrap=True)
+                                           "something else.", xalign=0, wrap=True, max_width_chars=58)
         self.install_sub.add_css_class("subtitle")
         content.append(self.install_title)
         content.append(self.install_sub)
@@ -512,9 +839,9 @@ class Window(Gtk.ApplicationWindow):
         card.add_css_class("card")
         self.step_label = Gtk.Label(label="Starting", xalign=0)
         self.bar = Gtk.ProgressBar()
-        self.fail_label = Gtk.Label(label="", xalign=0, wrap=True, visible=False)
+        self.fail_label = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=58, visible=False)
         self.fail_label.add_css_class("bad")
-        self.done_label = Gtk.Label(label="", xalign=0, wrap=True, visible=False)
+        self.done_label = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=58, visible=False)
         card.append(self.step_label)
         card.append(self.bar)
         card.append(self.fail_label)
@@ -529,7 +856,7 @@ class Window(Gtk.ApplicationWindow):
         self.close_button.add_css_class("suggested-action")
         self.close_button.connect("clicked", lambda *_: self.get_application().quit())
         content.append(self.close_button)
-        return content
+        return self.beside_art(content)
 
     # -- choosing files
     def pick_file(self, callback, title: str) -> None:
@@ -591,11 +918,11 @@ class Window(Gtk.ApplicationWindow):
     def update_buttons(self) -> None:
         missing = []
         if self.cfg.iso is None and not self.cfg.dir_ready:
-            missing.append("a disc image")
+            missing.append("a disc image (SCUS-97490)")
         if self.chosen_dir() is None and not self.cfg.dir:
             missing.append("a folder")
         if self.european_check.get_active() and self.cfg.european is None:
-            missing.append("the European image (or untick it)")
+            missing.append("the European disc (SCES-54552), or untick it")
         self.install_button.set_sensitive(not missing)
         self.summary.set_text("Still to do: " + ", ".join(missing) + "." if missing else
                               f"Ready. About {NEED_GB} GB and 10 to 30 minutes; keep the Deck plugged in.")
@@ -609,7 +936,46 @@ class Window(Gtk.ApplicationWindow):
         self.stack.set_visible_child_name("install")
         self.pulse_id = GLib.timeout_add(120, self.pulse)
         self.job = Job(self.cfg, self)
+        self.running = True
         self.job.start()
+
+    # -- closing the window while it builds: ask, then really stop
+    def on_close_request(self, *_) -> bool:
+        if not self.running or self.cancelling:
+            return self.cancelling  # not building: close; being cancelled: wait for the end
+        job = self.job
+        where = job.cfg.dir if job else None
+        kept = ("The folder " + str(where) + " and everything built in it so far will be deleted."
+                if job and job.fresh else "Your earlier install in this folder stays as it was.")
+        dialog = Gtk.AlertDialog(message="Cancel the installation?",
+                                 detail="The build will be stopped. " + kept,
+                                 buttons=["Keep installing", "Cancel the installation"],
+                                 cancel_button=0, default_button=0, modal=True)
+        dialog.choose(self, None, self.on_close_answer)
+        return True
+
+    def on_close_answer(self, dialog, result) -> None:
+        try:
+            choice = dialog.choose_finish(result)
+        except GLib.Error:
+            return
+        if choice == 1:
+            self.cancel_install()
+
+    cancelling = False
+
+    def cancel_install(self) -> None:
+        if not self.running or self.cancelling or not self.job:
+            return
+        self.cancelling = True
+        self.step_label.set_text("Cancelling: stopping the build and deleting what it made")
+        self.pulsing = True
+        threading.Thread(target=self.job.cancel, daemon=True).start()
+
+    def on_cancelled(self) -> bool:
+        self.running = False
+        self.get_application().quit()
+        return False
 
     # -- the job's callbacks (on the main thread)
     pulsing = True
@@ -638,6 +1004,7 @@ class Window(Gtk.ApplicationWindow):
         return False
 
     def on_failed(self, message: str) -> bool:
+        self.running = False
         self.pulsing = False
         self.fail_label.set_text(message)
         self.fail_label.set_visible(True)
@@ -648,6 +1015,7 @@ class Window(Gtk.ApplicationWindow):
         return False
 
     def on_done(self) -> bool:
+        self.running = False
         self.pulsing = False
         self.bar.set_fraction(1.0)
         self.install_title.set_text("Done")
@@ -709,6 +1077,8 @@ def main() -> int:
     ap.add_argument("--start", action="store_true", help="skip the pages and install now (needs --dir)")
     ap.add_argument("--shots", help="save a PNG of each page in this folder")
     ap.add_argument("--tour", action="store_true", help="with --shots, show each page in turn")
+    ap.add_argument("--test-cancel", type=int, default=0, metavar="SECONDS",
+                    help="cancel the install after this many seconds (a test)")
     cfg = ap.parse_args()
     if cfg.start and not cfg.dir:
         ap.error("--start needs --dir")
