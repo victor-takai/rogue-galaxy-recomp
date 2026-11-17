@@ -914,11 +914,12 @@ class Window(Gtk.ApplicationWindow):
         content.append(card)
 
         scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, child=content)
-        bar = Gtk.Box(spacing=12, margin_top=10, margin_bottom=18, margin_start=56, margin_end=24)
-        self.summary = Gtk.Label(label=f"About {NEED_GB} GB and 10 to 30 minutes. Keep the Deck plugged in.",
-                                 xalign=0, hexpand=True, wrap=True, max_width_chars=58)
+        bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=6, margin_bottom=16,
+                      margin_start=56, margin_end=24)
+        self.summary = Gtk.Label(label="", xalign=0.5, justify=Gtk.Justification.CENTER, wrap=True,
+                                 max_width_chars=58)
         self.summary.add_css_class("muted")
-        self.install_button = Gtk.Button(label="Install")
+        self.install_button = Gtk.Button(label="Install", halign=Gtk.Align.CENTER)
         self.install_button.add_css_class("suggested-action")
         self.install_button.connect("clicked", lambda *_: self.begin())
         bar.append(self.summary)
@@ -1029,7 +1030,7 @@ class Window(Gtk.ApplicationWindow):
             missing.append("the European disc (SCES-54552), or untick it")
         self.install_button.set_sensitive(not missing)
         self.summary.set_text("Still to do: " + ", ".join(missing) + "." if missing else
-                              f"Ready. About {NEED_GB} GB and 10 to 30 minutes; keep the Deck plugged in.")
+                              f"Ready. About {NEED_GB} GB and 10 to 30 minutes.\nKeep the Deck plugged in.")
 
     def begin(self) -> None:
         self.cfg.dir = self.cfg.dir or self.chosen_dir()
