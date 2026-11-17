@@ -280,9 +280,21 @@ void Overlay::openHome() {
     if (!canPause())
         return;
     m_homeOpen = true;
+    m_toasts.clear(); // the menu's hint does not apply here
     // The button that started the game is still down: it must not press Play.
     m_gamepadNavHeld = true;
     applyPause();
+}
+
+void Overlay::closeHome() {
+    if (!m_homeOpen)
+        return;
+    m_homeOpen = false;
+    m_gamepadNavHeld = true;
+    applyPause();
+    // The hint that went unseen behind the home screen.
+    if (m_host.steamDeck)
+        notify("Press View + Menu for the menu", Icon::Info, 6.0);
 }
 
 void Overlay::toggleMenu(bool fromController) {
@@ -1096,11 +1108,8 @@ void Overlay::drawHome() {
 
         const ImVec2 buttonSize(em(16.0f), em(2.4f));
         ImGui::BeginDisabled(working);
-        if (ImGui::Button("Play", buttonSize)) {
-            m_homeOpen = false;
-            m_gamepadNavHeld = true;
-            applyPause();
-        }
+        if (ImGui::Button("Play", buttonSize))
+            closeHome();
         ImGui::SetItemDefaultFocus();
         ImGui::EndDisabled();
 
@@ -1109,6 +1118,10 @@ void Overlay::drawHome() {
             label = "Update to " + update.version;
         else if (update.state == State::UpToDate)
             label = "Up to date";
+        else if (update.state == State::Checking)
+            label = "Checking for updates...";
+        else if (update.state == State::Offline)
+            label = "Cannot check for updates";
         else if (working)
             label = "Updating...";
         else if (update.state == State::Failed)

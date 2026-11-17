@@ -108,8 +108,8 @@ struct HostServices {
     // The home screen shown before the game starts (Steam Deck fork: added):
     // what it says about an update, and what its Update button does.
     struct HomeUpdate {
-        enum class State : uint8_t { Unknown, UpToDate, Available, Working, Failed, Done };
-        State state = State::Unknown;
+        enum class State : uint8_t { Checking, Offline, UpToDate, Available, Working, Failed, Done };
+        State state = State::Checking;
         std::string version; // the newer release, when known
         std::string text;    // what is being done, or what went wrong
         float progress = 0.0f; // 0 to 1 while Working; negative when unknown
@@ -178,6 +178,8 @@ public:
     // until Play (Steam Deck fork: added).
     void openHome();
     bool homeOpen() const { return m_homeOpen; }
+    // Play: the game goes on.
+    void closeHome();
     // Picks the Controls page's controller or keyboard tab.
     void showBindings(bool keyboard);
     void notify(std::string text, Icon icon = Icon::Info, double seconds = 3.0);

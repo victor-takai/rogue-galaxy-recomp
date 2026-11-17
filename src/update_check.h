@@ -26,6 +26,9 @@ void start(const char *current, bool delayed = true);
 // Whether the check has answered, even with nothing newer or no network.
 bool checked();
 
+// Whether GitHub answered with a release (false: offline, or none published).
+bool reachable();
+
 void setEnabled(bool on);
 
 // The newer release found, once the check is done.

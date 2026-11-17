@@ -40,6 +40,7 @@ constexpr size_t kMostBytes = 1u << 20;
 
 std::atomic<bool> g_enabled{true};
 std::atomic<bool> g_checked{false};
+std::atomic<bool> g_reachable{false};
 std::mutex g_mutex;
 Release g_newer;
 
@@ -114,9 +115,12 @@ std::string fetch()
 std::string fetch()
 {
     std::string body;
+    // RG_UPDATE_API=URL reads the release list from elsewhere (a file:// URL, in a test).
+    const char *api = std::getenv("RG_UPDATE_API");
+    const std::string url = api && *api ? std::string(api)
+                                        : "https://api.github.com/repos/" + repo() + "/releases?per_page=10";
     const std::string command = "curl --silent --fail --location --max-time 5 --user-agent RogueGalaxyRecompiled "
-                                "--header 'Accept: application/vnd.github+json' "
-                                "'https://api.github.com/repos/" + repo() + "/releases?per_page=10' 2>/dev/null";
+                                "--header 'Accept: application/vnd.github+json' '" + url + "' 2>/dev/null";
     std::FILE *pipe = popen(command.c_str(), "r");
     if (!pipe)
     {
@@ -225,6 +229,7 @@ void start(const char *current, bool delayed)
             std::fprintf(stderr, "[updates] no release read from GitHub\n");
             return;
         }
+        g_reachable.store(true, std::memory_order_release);
         std::fprintf(stderr, "[updates] newest release %s, this is %s\n", tag.c_str(), version.c_str());
         if (isNewer(tag, version))
         {
@@ -238,6 +243,11 @@ void start(const char *current, bool delayed)
 void setEnabled(bool on)
 {
     g_enabled.store(on, std::memory_order_relaxed);
+}
+
+bool reachable()
+{
+    return g_reachable.load(std::memory_order_acquire);
 }
 
 bool checked()

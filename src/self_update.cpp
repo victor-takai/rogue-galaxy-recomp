@@ -25,7 +25,7 @@ namespace
 {
 
 std::mutex g_mutex;
-State g_state = State::Unknown; // Working, Failed or Done once started
+State g_state = State::Checking; // Working, Failed or Done once started
 std::string g_text;
 float g_progress = -1.0f;
 
@@ -131,9 +131,10 @@ void run()
 Status status()
 {
     Status result;
+    result.state = State::Checking;
     {
         const std::lock_guard<std::mutex> lock(g_mutex);
-        if (g_state != State::Unknown)
+        if (g_state != State::Checking)
         {
             result.state = g_state;
             result.text = g_text;
@@ -142,9 +143,11 @@ Status status()
     }
     const updates::Release newer = updates::newer();
     result.version = newer.version;
-    if (result.state == State::Unknown && updates::checked())
+    if (result.state == State::Checking && updates::checked())
     {
-        result.state = newer.version.empty() ? State::UpToDate : State::Available;
+        result.state = !updates::reachable() ? State::Offline
+                       : newer.version.empty() ? State::UpToDate
+                                               : State::Available;
     }
     // A failed update leaves the release Available again to retry.
     return result;

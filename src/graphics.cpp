@@ -1224,12 +1224,13 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         HostServices::HomeUpdate home;
         switch (status.state)
         {
+        case rg::selfupdate::State::Offline: home.state = HostServices::HomeUpdate::State::Offline; break;
         case rg::selfupdate::State::UpToDate: home.state = HostServices::HomeUpdate::State::UpToDate; break;
         case rg::selfupdate::State::Available: home.state = HostServices::HomeUpdate::State::Available; break;
         case rg::selfupdate::State::Working: home.state = HostServices::HomeUpdate::State::Working; break;
         case rg::selfupdate::State::Failed: home.state = HostServices::HomeUpdate::State::Failed; break;
         case rg::selfupdate::State::Done: home.state = HostServices::HomeUpdate::State::Done; break;
-        default: home.state = HostServices::HomeUpdate::State::Unknown; break;
+        default: home.state = HostServices::HomeUpdate::State::Checking; break;
         }
         home.version = status.version;
         home.text = status.text;

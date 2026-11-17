@@ -16,7 +16,8 @@ namespace rg::selfupdate
 
 enum class State
 {
-    Unknown,   // the release check has not answered, or there is no network
+    Checking,  // the release check has not answered yet
+    Offline,   // it answered with no release: no network, or none published
     UpToDate,
     Available,
     Working,
@@ -26,7 +27,7 @@ enum class State
 
 struct Status
 {
-    State state = State::Unknown;
+    State state = State::Checking;
     std::string version; // the newer release, when there is one
     std::string text;    // what is being done, or what went wrong
     float progress = -1.0f;

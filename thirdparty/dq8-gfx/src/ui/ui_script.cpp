@@ -160,6 +160,8 @@ void Overlay::runStep(const ScriptStep &step, uint64_t frame) {
             event.key.down = down;
             SDL_PushEvent(&event);
         }
+    } else if (command == "play") {
+        closeHome();
     } else if (command == "screenshot") {
         takeScreenshot(first == "menu");
     } else if (command == "notify") {
