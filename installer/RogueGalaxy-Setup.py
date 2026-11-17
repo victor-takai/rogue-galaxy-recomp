@@ -60,6 +60,7 @@ window { background: #04061a; color: #f2f3fc; }
 .title { font-size: 24px; font-weight: 700; color: #f2f3fc; }
 .subtitle { font-size: 14px; color: #b4bde0; }
 .muted { color: #9ea8cc; }
+.pill { color: #d4daf2; background: rgba(8,12,42,0.72); border-radius: 10px; padding: 6px 16px; }
 .section { font-size: 17px; font-weight: 700; color: #f2f3fc; }
 .badge { background-image: linear-gradient(#ffdf7a, #f0a82a); color: #1a1500; font-weight: 800;
          border-radius: 15px; min-width: 30px; min-height: 30px;
@@ -836,7 +837,7 @@ class Window(Gtk.ApplicationWindow):
 
     def beside_art(self, column: Gtk.Widget) -> Gtk.Box:
         """The column on the left at its own width; the rest of the window shows the picture."""
-        page = Gtk.Box()
+        page = Gtk.Box(vexpand=True)
         page.append(column)
         page.append(Gtk.Box(hexpand=True))
         return page
@@ -915,10 +916,10 @@ class Window(Gtk.ApplicationWindow):
 
         scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, child=content)
         bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=6, margin_bottom=16,
-                      margin_start=56, margin_end=24)
+                      halign=Gtk.Align.CENTER)  # centred in the window, not in the column
         self.summary = Gtk.Label(label="", xalign=0.5, justify=Gtk.Justification.CENTER, wrap=True,
                                  max_width_chars=58)
-        self.summary.add_css_class("muted")
+        self.summary.add_css_class("pill")
         self.install_button = Gtk.Button(label="Install", halign=Gtk.Align.CENTER)
         self.install_button.add_css_class("suggested-action")
         self.install_button.connect("clicked", lambda *_: self.begin())
@@ -926,8 +927,10 @@ class Window(Gtk.ApplicationWindow):
         bar.append(self.install_button)
         left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=False, width_request=720)
         left.append(scroll)
-        left.append(bar)
-        return self.beside_art(left)
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.append(self.beside_art(left))
+        page.append(bar)
+        return page
 
     def build_install(self) -> Gtk.Widget:
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, width_request=720, vexpand=True,
