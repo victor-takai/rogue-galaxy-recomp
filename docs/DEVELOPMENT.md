@@ -105,6 +105,9 @@ the project's fixes off to compare.
 | `RG_JUMP_TRACE=1` | Log the party leader's movement updates while off the ground (host time, position, step-scaled velocity, the motion's displacement, the action mode and the gravity flags, one line per `CharaMoveCollideMaybe`; `=2` logs the moves on the ground too, for the speed ramps; `=3` every character's, tagged with address and id, and for enemies every move with what drives it and every move request with its caller; `=4` every character's moves on the ground too, for a party following its leader): compares a jump's arc and timing between the 30 and 60 fps modes |
 | `RG_SCENE_TRACE=1` | Prints each change of the game's mode and phase and of the main menu's state (`[scene]` lines; the quick scenes go by the mode and the warp's script) |
 | `RG_UPDATE_AS=VERSION` | The check for a newer release (`src/update_check.h`, the menu's "Check for new versions") takes this build for that version, to see the notice; scripted runs (`RG_INPUT`) never check |
+| `RG_HOME=0` | Start the game without its home screen (Play, Update, Quit), as a scripted run does: `RG_INPUT` set also skips it |
+| `RG_UPDATE_REPO=owner/name` | The repository whose releases the check and `update.sh` read (default `thibault-lgm/deck-galaxy`) |
+| `RG_UPDATE_API=URL` | Read the release list from this URL instead of GitHub's API; a `file://` URL serves a test release (`update.sh` reads the same variable) |
 | `RG_SELFTEST=gs` | Check the code changed in vendored dependencies, then exit (`all` does the same; another value checks nothing) |
 | `RG_EE_CVT=round` | Diagnostic: float-to-int conversions round, as the runtime used to, instead of truncating as the EE does |
 | `PS2X_EE_ROUNDING=nearest` | Diagnostic: guest float math rounds to nearest, the host default, instead of toward zero as the EE does (patch 0003) |

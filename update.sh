@@ -77,14 +77,20 @@ rm -rf "$stage" "$archive"
 # The build: install.sh in the container, its ninja lines as the progress.
 progress 0.15 "Building"
 rm -f build/update.rc
+# Each step of setup.py has its share of the bar, its ninja counter filling it.
+lo=0.15 hi=0.3
 { sh install.sh --container 2>&1; echo $? >build/update.rc; } | while IFS= read -r line; do
     printf '%s\n' "$line"
     case "$line" in
         "["*/*"]"*)
             counts=${line#\[}
             counts=${counts%%\]*}
-            progress "$(awk -v n="${counts%/*}" -v m="${counts#*/}" 'BEGIN { if (m > 0) printf "%.3f", 0.15 + 0.85 * n / m; else print 0.15 }')" "Building $counts"
+            progress "$(awk -v n="${counts%/*}" -v m="${counts#*/}" -v lo="$lo" -v hi="$hi" 'BEGIN { if (m > 0) printf "%.3f", lo + (hi - lo) * n / m; else print lo }')" "Building $counts"
             ;;
+        "== build ps2_recomp"*) lo=0.15 hi=0.3; progress "$lo" "Building the recompiler" ;;
+        "== recompile"*) lo=0.3 hi=0.35; progress "$lo" "Recompiling the game's code" ;;
+        "== configure build/game"*) lo=0.35 hi=0.36; progress "$lo" "Preparing the game's build" ;;
+        "== build the game"*) lo=0.36 hi=0.99; progress "$lo" "Building the game" ;;
         "== "*) progress -1 "${line#== }" ;;
     esac
 done

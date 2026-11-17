@@ -73,15 +73,24 @@ stay as they are. It is experimental: report problems with a screenshot and
 
 ## Update
 
-The game tells you at start when a new version is out; nothing updates by
-itself. To update:
+The game opens on a home screen with **Play**, **Update** and **Quit**. When
+a newer release is out, Update names it ("Update to 0.4.0"). Press it and the
+game does the rest in its own window, with a progress bar: it downloads the
+release's source archive, checks its checksum, unpacks it over the folder and
+builds it (`update.sh`, the same build as `install.sh`; the first update
+after a new version of the game's code takes as long as the install, later
+ones less). When it is done the game starts again by itself. Your disc,
+saves and settings are kept.
+
+If the update fails, the message says why (`build/update.log` has the
+detail) and the game you had still plays; Update tries again.
+
+Without a controller, or from a terminal, the same thing is:
 
 ```bash
 git pull --recurse-submodules
 ./install.sh
 ```
-
-It keeps the extracted disc and rebuilds only what changed.
 
 ## Saves from PCSX2
 

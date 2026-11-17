@@ -4,6 +4,8 @@
 
 ### New
 
+- Steam Deck fork: the game opens on a home screen (Play, Update, Quit) and
+  updates itself from there, with a progress bar in the game's window.
 - Linux and the Steam Deck (untested): `install.sh` builds the game for
   Linux from your disc image, and `rogue-galaxy.sh` starts it. In a
   launcher such as QuiverLauncher, Play builds the game the first time, in
