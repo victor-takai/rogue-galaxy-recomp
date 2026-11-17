@@ -4,6 +4,9 @@
 
 ### New
 
+- Steam Deck fork: `installer/RogueGalaxy-Setup.py`, a window to run once in
+  desktop mode: it asks for the disc image and the folder, builds the game
+  and adds it to Steam.
 - Steam Deck fork: the game opens on a home screen (Play, Update, Quit) and
   updates itself from there, with a progress bar in the game's window.
 - Linux and the Steam Deck (untested): `install.sh` builds the game for

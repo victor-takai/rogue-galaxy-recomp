@@ -48,28 +48,20 @@ before is `build/last-run.prev.log`. Rules for issues and pull requests:
 
 ## Install (Steam Deck)
 
-You need about 20 GB free (the SD card is fine), an internet connection and
+You need about 24 GB free (the SD card is fine), an internet connection and
 your own uncompressed `.iso` of Rogue Galaxy USA (SCUS-97490).
 
-SteamOS has no compiler, so the installer builds in a container (distrobox)
-it sets up itself. The game then runs on the Deck as it is.
+1. In desktop mode, download `RogueGalaxy-Setup.py` from the
+   [releases](../../releases) page and double-click it (Execute).
+2. Pick your disc image and where to install the game. It builds on the Deck
+   in 10 to 30 minutes and adds the game to Steam.
+3. Switch to game mode and play. The game opens on a home screen with
+   **Play** and **Update**; nothing else needs desktop mode, and the
+   installer is not needed again.
 
-1. In desktop mode, open a terminal (Konsole) and get the source into a
-   folder of your choice (the SD card works), then enter it:
-
-   ```bash
-   git clone --recurse-submodules https://github.com/thibault-lgm/deck-galaxy.git
-   cd deck-galaxy
-   ```
-2. Run the installer and give it your disc image. It takes 10 to 30 minutes:
-
-   ```bash
-   ./install.sh --iso /path/to/rogue-galaxy.iso
-   ```
-3. Add `rogue-galaxy.sh` to Steam (Games > Add a Non-Steam Game), then
-   switch to game mode and play. View + Menu opens the game's menu.
-
-The log is `build/last-run.log`. More in
+SteamOS has no compiler, so the build runs in a container (distrobox) the
+installer sets up itself. The game then runs on the Deck as it is. View +
+Menu opens the game's menu; the log is `build/last-run.log`. More in
 [docs/INSTALL.md](docs/INSTALL.md) and
 [docs/BUILDING.md](docs/BUILDING.md#steam-deck).
 

@@ -14,39 +14,44 @@ date. The short version is on the [README](../README.md#install-steam-deck).
 
 You need:
 
-- A Steam Deck (SteamOS), about 20 GB free (the SD card works) and an
+- A Steam Deck (SteamOS), about 24 GB free (the SD card works) and an
   internet connection.
 - Your own image of Rogue Galaxy USA (SCUS-97490). It must be an
   uncompressed `.iso`, as Redump's (6,967,721,984 bytes); turn a `.chd` or
   `.cso` back into an `.iso` first. Which images work: [DISC.md](DISC.md).
 
-Then, in desktop mode, in Konsole:
+Then, in desktop mode:
 
-```bash
-git clone --recurse-submodules https://github.com/thibault-lgm/deck-galaxy.git
-cd deck-galaxy
-./install.sh --iso /path/to/rogue-galaxy.iso
-```
+1. Download `RogueGalaxy-Setup.py` from the
+   [releases](https://github.com/thibault-lgm/deck-galaxy/releases) page and
+   double-click it (Execute). It needs only what SteamOS has: Python with
+   GTK 4, curl, git and distrobox.
+2. Choose your disc image, then where to install: the internal storage or
+   the SD card, or another folder. Optionally add the Japanese or European
+   disc (below) and keep "Add Rogue Galaxy to Steam" on.
+3. Wait while the game is built (10 to 30 minutes; the window shows the
+   steps, and "Details" the log). If it stops, run the installer again with
+   the same folder: it goes on where it stopped. `build/setup.log` in the
+   game's folder keeps the whole log.
+4. Switch to game mode: Rogue Galaxy is in the library, under Non-Steam.
 
-SteamOS has a read-only root and no compiler, so `install.sh` creates a
+SteamOS has a read-only root and no compiler, so the installer creates a
 distrobox container named `rg-build` (Ubuntu 24.04), installs the build tools
-in it and builds there. It takes 10 to 30 minutes. The game it builds runs on
-SteamOS itself and needs nothing from the container. Then:
+in it and builds there. The game it builds runs on SteamOS itself and needs
+nothing from the container. The game opens on its home screen (Play, Update);
+View + Menu opens its menu. The log of the game is `build/last-run.log`.
 
-1. Add `rogue-galaxy.sh` to Steam as a non-Steam game (Games > Add a
-   Non-Steam Game > Browse). A game started from desktop mode gets Steam's
-   desktop layout, where the controller acts as a mouse and keyboard, so
-   switch to game mode to play.
-2. The game starts in fullscreen when Steam sets `SteamDeck=1` (game mode).
-   View + Menu opens its menu.
-
-If it stops, run `./install.sh` again: it goes on where it stopped. The log
-of the game is `build/last-run.log` (the run before: `build/last-run.prev.log`).
+Without the installer, from a terminal: `git clone --recurse-submodules
+https://github.com/thibault-lgm/deck-galaxy.git`, then `./install.sh --iso
+FILE` in the folder.
 
 ## Undub (optional)
 
 The Japanese voices and movies. You need your own image of the Japanese
 Director's Cut (SCPS-17013).
+
+The installer offers it on its Options page. Later, from a terminal in the
+game's folder:
 
 ```bash
 python3 setup.py extract-japanese --iso /path/to/japanese.iso
@@ -61,6 +66,8 @@ The Director's Cut's battle changes
 
 The text in French, German, Spanish or Italian. You need your own image of
 the European disc (SCES-54552).
+
+Also on the installer's Options page, or later:
 
 ```bash
 python3 setup.py extract-european --iso /path/to/european.iso
