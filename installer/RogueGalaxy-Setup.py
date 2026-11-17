@@ -310,10 +310,29 @@ class Job(threading.Thread):
                 self.log(f"The {label} could not be added; the game works without them.")
 
     # -- 4. Steam
+    def in_steam(self, script: Path) -> bool:
+        """Whether some Steam account already has this script as a non-Steam game."""
+        wanted = {str(script), str(script.resolve())}
+        for vdf in (Path.home() / ".local/share/Steam/userdata").glob("*/config/shortcuts.vdf"):
+            try:
+                data = vdf.read_bytes()
+            except OSError:
+                continue
+            if any(w.encode() in data for w in wanted):
+                return True
+        return False
+
     def steam(self) -> None:
         if not self.cfg.steam:
             return
+        script = self.cfg.dir / "rogue-galaxy.sh"
+        if self.in_steam(script):
+            self.log("The game is already in Steam: not added again.")
+            return
         self.say("Adding the game to Steam", 0.98)
+        # install.sh wrote the menu entry (named "Rogue Galaxy", with its icon);
+        # Steam takes its name, program and folder from it, with no question
+        # asked, as long as it is running (desktop mode).
         desktop = Path.home() / ".local/share/applications/rogue-galaxy.desktop"
         tool = shutil.which("steamos-add-to-steam")
         if not tool or not desktop.exists():
