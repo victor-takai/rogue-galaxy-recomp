@@ -121,7 +121,8 @@ def main() -> int:
                f'width="70%" alt="The F1 menu\'s Game page"></p>\n\n')
     out = args.out or ROOT / "build" / "release" / f"RogueGalaxy-{args.version}-notes.md"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(picture + body, encoding="utf-8", newline="\n")
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(picture + body)
     print(out)
     return 0
 
