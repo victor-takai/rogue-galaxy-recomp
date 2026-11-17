@@ -130,6 +130,59 @@ def looks_like_iso(path: Path) -> str | None:
     return None
 
 
+class KeepAwake:
+    """No sleep and no dimming while it is held (an install takes 10 to 30 minutes). Three inhibitors:
+    systemd's (a systemd-inhibit that lasts as long as its stdin stays open, so it also ends if this
+    program dies), and, in desktop mode, KDE's power and screen-saver ones."""
+
+    KDE = (("org.freedesktop.PowerManagement.Inhibit", "/org/freedesktop/PowerManagement/Inhibit",
+            "org.freedesktop.PowerManagement.Inhibit"),
+           ("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver"))
+
+    def __init__(self) -> None:
+        self.process: subprocess.Popen | None = None
+        self.bus = None
+        self.cookies: list[tuple[str, str, str, int]] = []
+
+    def start(self, reason: str) -> None:
+        if shutil.which("systemd-inhibit"):
+            try:
+                self.process = subprocess.Popen(
+                    ["systemd-inhibit", "--what=sleep:idle", "--who=Rogue Galaxy Setup", f"--why={reason}",
+                     "--mode=block", "cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL)
+            except OSError:
+                self.process = None
+        try:
+            self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        except GLib.Error:
+            return
+        for name, path, iface in self.KDE:
+            try:
+                answer = self.bus.call_sync(name, path, iface, "Inhibit",
+                                            GLib.Variant("(ss)", ("Rogue Galaxy Setup", reason)),
+                                            GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, 2000, None)
+                self.cookies.append((name, path, iface, answer.unpack()[0]))
+            except GLib.Error:
+                continue  # not running (game mode has no KDE)
+
+    def stop(self) -> None:
+        for name, path, iface, cookie in self.cookies:
+            try:
+                self.bus.call_sync(name, path, iface, "UnInhibit", GLib.Variant("(u)", (cookie,)), None,
+                                   Gio.DBusCallFlags.NONE, 2000, None)
+            except GLib.Error:
+                pass
+        self.cookies = []
+        if self.process:
+            try:
+                self.process.stdin.close()
+                self.process.wait(timeout=3)
+            except (OSError, subprocess.SubprocessError):
+                self.process.kill()
+            self.process = None
+
+
 class Failure(Exception):
     pass
 
@@ -497,36 +550,36 @@ def circle(cx: float, cy: float, r: float) -> Gsk.RoundedRect:
     return box
 
 
-def art_files() -> list[Path]:
-    """The theme's pictures: installer/art next to this file (the AppImage carries it),
-    and ~/.local/share/RogueGalaxy/theme for pictures of your own."""
-    found: list[Path] = []
-    for folder in (Path(__file__).resolve().parent / "art", Path.home() / ".local/share/RogueGalaxy/theme"):
+def art_file() -> Path | None:
+    """The background picture: one of your own in ~/.local/share/RogueGalaxy/theme, else installer/art
+    next to this file (the AppImage carries it)."""
+    for folder in (Path.home() / ".local/share/RogueGalaxy/theme", Path(__file__).resolve().parent / "art"):
         if folder.is_dir():
-            found += sorted(p for p in folder.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
-    return found
+            for path in sorted(folder.iterdir()):
+                if path.suffix.lower() in (".jpg", ".jpeg", ".png"):
+                    return path
+    return None
 
 
 class Sky(Gtk.Widget):
     __gtype_name__ = "RogueGalaxySky"
-    PERIOD, FADE = 9.0, 1.6  # seconds a picture stays, and its cross-fade
 
     def __init__(self) -> None:
         super().__init__(hexpand=True, vexpand=True)
-        self.art: list[Gdk.Texture] = []
-        for path in art_files():
+        self.art: Gdk.Texture | None = None
+        path = art_file()
+        if path:
             try:
-                self.art.append(Gdk.Texture.new_from_filename(str(path)))
+                self.art = Gdk.Texture.new_from_filename(str(path))
             except GLib.Error:
-                continue
-        # wide pictures first: they fill the window, the tall ones become a poster
-        self.art.sort(key=lambda tex: tex.get_width() / tex.get_height() < 1.25)
+                pass
         rnd = random.Random(7)
         colors = ((255, 255, 255), (255, 255, 255), (170, 205, 255), (255, 226, 180))
         self.stars = [(rnd.random(), rnd.random(), rnd.choice((1, 1, 1, 2, 2, 3)), rnd.random() * 6.28,
                        0.6 + rnd.random() * 1.8, rnd.choice(colors)) for _ in range(260)]
         self.t0 = time.monotonic()
-        GLib.timeout_add(40 if self.art else 66, self.tick)
+        if not self.art:  # the drawn sky twinkles; a picture stays still
+            GLib.timeout_add(66, self.tick)
 
     def tick(self) -> bool:
         self.queue_draw()
@@ -549,42 +602,13 @@ class Sky(Gtk.Widget):
             snap.pop()
         snap.restore()
 
-    def picture(self, snap: Gtk.Snapshot, tex: Gdk.Texture, w: float, h: float, progress: float,
-                alpha: float) -> None:
-        """One artwork: a wide one fills the window; a tall one is a poster on the right, over a dimmed
-        copy of itself. It drifts in slowly (progress 0 to 1)."""
-        tw, th = tex.get_width(), tex.get_height()
-        zoom = 1.0 + 0.07 * progress
-        flt = Gsk.ScalingFilter.TRILINEAR
-        snap.push_clip(rect(0, 0, w, h))
-        snap.push_opacity(alpha)
-        if tw / th >= 1.25:
-            scale = max(w / tw, h / th) * zoom
-            dw, dh = tw * scale, th * scale
-            snap.append_scaled_texture(tex, flt, rect((w - dw) / 2, (h - dh) / 2, dw, dh))
-        else:
-            scale = max(w / tw, h / th)
-            dw, dh = tw * scale, th * scale
-            snap.push_opacity(0.4)
-            snap.append_scaled_texture(tex, flt, rect((w - dw) / 2, (h - dh) / 2, dw, dh))
-            snap.pop()
-            scale = h / th * zoom
-            dw, dh = tw * scale, th * scale
-            snap.append_scaled_texture(tex, flt, rect(w - dw - 20, (h - dh) / 2, dw, dh))
-        snap.pop()
-        snap.pop()
-
-    def draw_art(self, snap: Gtk.Snapshot, w: float, h: float, t: float) -> None:
-        count = len(self.art)
-        index = int(t // self.PERIOD) % count
-        local = t % self.PERIOD
-        snap.append_color(rgba(3, 5, 22), rect(0, 0, w, h))
-        fading = count > 1 and t >= self.PERIOD  # the first picture appears at once
-        if fading and local < self.FADE:  # the previous one, finishing under the new one
-            self.picture(snap, self.art[(index - 1) % count], w, h, 1.0, 1.0)
-        self.picture(snap, self.art[index], w, h, local / self.PERIOD,
-                     min(1.0, local / self.FADE) if fading else 1.0)
-        # dark on the left, where the window's cards are; the picture shows on the right
+    def draw_art(self, snap: Gtk.Snapshot, w: float, h: float) -> None:
+        """The picture fills the window, cropped mostly on the right, under a dark veil on the left, where
+        the window's cards are."""
+        tex = self.art
+        scale = max(w / tex.get_width(), h / tex.get_height())
+        dw, dh = tex.get_width() * scale, tex.get_height() * scale
+        snap.append_scaled_texture(tex, Gsk.ScalingFilter.TRILINEAR, rect((w - dw) * 0.25, (h - dh) / 2, dw, dh))
         full = rect(0, 0, w, h)
         snap.append_linear_gradient(full, point(0, 0), point(w, 0),
                                     stops((0, rgba(3, 5, 22, 0.92)), (0.42, rgba(3, 5, 22, 0.60)),
@@ -599,7 +623,7 @@ class Sky(Gtk.Widget):
             return
         t = time.monotonic() - self.t0
         if self.art:
-            self.draw_art(snap, w, h, t)
+            self.draw_art(snap, w, h)
         else:
             self.draw_space(snap, w, h, t)
 
@@ -939,6 +963,8 @@ class Window(Gtk.ApplicationWindow):
         self.pulse_id = GLib.timeout_add(120, self.pulse)
         self.job = Job(self.cfg, self)
         self.running = True
+        self.awake = KeepAwake()
+        self.awake.start("Installing Rogue Galaxy")
         self.job.start()
 
     # -- closing the window while it builds: ask, then really stop
@@ -965,6 +991,12 @@ class Window(Gtk.ApplicationWindow):
             self.cancel_install()
 
     cancelling = False
+    awake: KeepAwake | None = None
+
+    def release_awake(self) -> None:
+        if self.awake:
+            self.awake.stop()
+            self.awake = None
 
     def cancel_install(self) -> None:
         if not self.running or self.cancelling or not self.job:
@@ -976,6 +1008,7 @@ class Window(Gtk.ApplicationWindow):
 
     def on_cancelled(self) -> bool:
         self.running = False
+        self.release_awake()
         self.get_application().quit()
         return False
 
@@ -1007,6 +1040,7 @@ class Window(Gtk.ApplicationWindow):
 
     def on_failed(self, message: str) -> bool:
         self.running = False
+        self.release_awake()
         self.pulsing = False
         self.fail_label.set_text(message)
         self.fail_label.set_visible(True)
@@ -1018,6 +1052,7 @@ class Window(Gtk.ApplicationWindow):
 
     def on_done(self) -> bool:
         self.running = False
+        self.release_awake()
         self.pulsing = False
         self.bar.set_fraction(1.0)
         self.install_title.set_text("Done")
