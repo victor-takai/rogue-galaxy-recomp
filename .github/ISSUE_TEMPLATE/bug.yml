@@ -78,7 +78,7 @@ body:
       description: >-
         Drag `build/last-run.log` here (in the game's folder). If you started the
         game again since, `build/last-run.prev.log` too. For an install or update
-        problem, `install.log` or `update.log`.
+        problem, the output of `./install.sh`.
     validations:
       required: true
 
