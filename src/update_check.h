@@ -18,8 +18,13 @@ struct Release
     std::string url;
 };
 
-// Starts the check; `current` is this build's version (RG_APP_VERSION).
-void start(const char *current);
+// Starts the check; `current` is this build's version (RG_APP_VERSION). The
+// home screen asks at once (`delayed` false); in the game it waits a few
+// seconds.
+void start(const char *current, bool delayed = true);
+
+// Whether the check has answered, even with nothing newer or no network.
+bool checked();
 
 void setEnabled(bool on);
 

@@ -20,6 +20,7 @@
 #include "gs_tripwire.h"
 #include "battle_rates.h"
 #include "button_glyphs.h"
+#include "self_update.h"
 #include "update_check.h"
 #include "camera_view.h"
 #include "dc_balance.h"
@@ -1217,6 +1218,25 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         rg::updates::Release newer = rg::updates::newer();
         return std::make_pair(std::move(newer.version), std::move(newer.url));
     };
+    host.homeUpdate = [] {
+        using dq8::ui::HostServices;
+        const rg::selfupdate::Status status = rg::selfupdate::status();
+        HostServices::HomeUpdate home;
+        switch (status.state)
+        {
+        case rg::selfupdate::State::UpToDate: home.state = HostServices::HomeUpdate::State::UpToDate; break;
+        case rg::selfupdate::State::Available: home.state = HostServices::HomeUpdate::State::Available; break;
+        case rg::selfupdate::State::Working: home.state = HostServices::HomeUpdate::State::Working; break;
+        case rg::selfupdate::State::Failed: home.state = HostServices::HomeUpdate::State::Failed; break;
+        case rg::selfupdate::State::Done: home.state = HostServices::HomeUpdate::State::Done; break;
+        default: home.state = HostServices::HomeUpdate::State::Unknown; break;
+        }
+        home.version = status.version;
+        home.text = status.text;
+        home.progress = status.progress;
+        return home;
+    };
+    host.startUpdate = [] { rg::selfupdate::start(); };
     auto menu = std::make_unique<dq8::ui::Overlay>(backend, std::move(settings), settingsPath, std::move(host));
     std::string error;
     if (!menu->initialize(backend.window(), backend.windowTextureFormat(), error))
@@ -1229,7 +1249,14 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     // Not in a scripted run: the benchmarks ask nothing of GitHub.
     if (env("RG_INPUT", "").empty())
     {
-        rg::updates::start(RG_APP_VERSION);
+        // The game starts on the home screen (Play, Update, Quit) unless
+        // RG_HOME=0; its release check goes at once, since it is waiting.
+        const bool home = env("RG_HOME", "1") != "0";
+        rg::updates::start(RG_APP_VERSION, !home);
+        if (home)
+        {
+            menu->openHome();
+        }
     }
     return menu;
 }

@@ -23,13 +23,23 @@ namespace
 constexpr const wchar_t *kHost = L"api.github.com";
 constexpr const wchar_t *kPath = L"/repos/victor-takai/rogue-galaxy-recomp/releases?per_page=10";
 #endif
-constexpr const char *kReleasePage = "https://github.com/victor-takai/rogue-galaxy-recomp/releases/tag/";
+// This fork's releases; RG_UPDATE_REPO=owner/name points the check elsewhere (a test).
+std::string repo()
+{
+    const char *given = std::getenv("RG_UPDATE_REPO");
+    return given && *given ? given : "thibault-lgm/deck-galaxy";
+}
+std::string releasePage()
+{
+    return "https://github.com/" + repo() + "/releases/tag/";
+}
 // Long enough for the menu to have applied its settings, and for the game's
 // first loading to be under way.
 constexpr auto kDelay = std::chrono::seconds(4);
 constexpr size_t kMostBytes = 1u << 20;
 
 std::atomic<bool> g_enabled{true};
+std::atomic<bool> g_checked{false};
 std::mutex g_mutex;
 Release g_newer;
 
@@ -104,11 +114,10 @@ std::string fetch()
 std::string fetch()
 {
     std::string body;
-    std::FILE *pipe = popen("curl --silent --fail --location --max-time 5 --user-agent RogueGalaxyRecompiled "
-                            "--header 'Accept: application/vnd.github+json' "
-                            "'https://api.github.com/repos/victor-takai/rogue-galaxy-recomp/releases?per_page=10' "
-                            "2>/dev/null",
-                            "r");
+    const std::string command = "curl --silent --fail --location --max-time 5 --user-agent RogueGalaxyRecompiled "
+                                "--header 'Accept: application/vnd.github+json' "
+                                "'https://api.github.com/repos/" + repo() + "/releases?per_page=10' 2>/dev/null";
+    std::FILE *pipe = popen(command.c_str(), "r");
     if (!pipe)
     {
         return body;
@@ -193,20 +202,24 @@ bool isNewer(const std::string &tag, const std::string &current)
 
 } // namespace
 
-void start(const char *current)
+void start(const char *current, bool delayed)
 {
     // RG_UPDATE_AS=VERSION checks as that version, to see the notice.
     if (const char *as = std::getenv("RG_UPDATE_AS"); as && *as)
     {
         current = as;
     }
-    std::thread([version = std::string(current ? current : "")] {
-        std::this_thread::sleep_for(kDelay);
+    std::thread([version = std::string(current ? current : ""), delayed] {
+        if (delayed)
+        {
+            std::this_thread::sleep_for(kDelay);
+        }
         if (!g_enabled.load(std::memory_order_relaxed))
         {
             return;
         }
         const std::string tag = firstTag(fetch());
+        g_checked.store(true, std::memory_order_release);
         if (tag.empty())
         {
             std::fprintf(stderr, "[updates] no release read from GitHub\n");
@@ -217,7 +230,7 @@ void start(const char *current)
         {
             const std::lock_guard<std::mutex> lock(g_mutex);
             g_newer.version = tag[0] == 'v' || tag[0] == 'V' ? tag.substr(1) : tag;
-            g_newer.url = kReleasePage + tag;
+            g_newer.url = releasePage() + tag;
         }
     }).detach();
 }
@@ -225,6 +238,11 @@ void start(const char *current)
 void setEnabled(bool on)
 {
     g_enabled.store(on, std::memory_order_relaxed);
+}
+
+bool checked()
+{
+    return g_checked.load(std::memory_order_acquire);
 }
 
 Release newer()

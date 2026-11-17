@@ -105,6 +105,17 @@ struct HostServices {
     // A newer release than this build, its version and page, empty while
     // none is known: the About window says so (Rogue Galaxy: added).
     std::function<std::pair<std::string, std::string>()> newerRelease;
+    // The home screen shown before the game starts (Steam Deck fork: added):
+    // what it says about an update, and what its Update button does.
+    struct HomeUpdate {
+        enum class State : uint8_t { Unknown, UpToDate, Available, Working, Failed, Done };
+        State state = State::Unknown;
+        std::string version; // the newer release, when known
+        std::string text;    // what is being done, or what went wrong
+        float progress = 0.0f; // 0 to 1 while Working; negative when unknown
+    };
+    std::function<HomeUpdate()> homeUpdate;
+    std::function<void()> startUpdate;
     // A Steam Deck, whose Steam button belongs to Steam: Back + Start is the
     // only way to the menu there, so it cannot be turned off, and the menu
     // names the Deck's buttons (Rogue Galaxy: added).
@@ -163,6 +174,10 @@ public:
     void showMenu(const char *label);
     void openAbout();
     void openShortcuts();
+    // The home screen (Play, Update, Quit): the game waits, paused, behind it
+    // until Play (Steam Deck fork: added).
+    void openHome();
+    bool homeOpen() const { return m_homeOpen; }
     // Picks the Controls page's controller or keyboard tab.
     void showBindings(bool keyboard);
     void notify(std::string text, Icon icon = Icon::Info, double seconds = 3.0);
@@ -236,6 +251,7 @@ private:
     // The row of button hints along the settings window's bottom edge.
     void drawPadHints(float height);
     void drawQuitPrompt();
+    void drawHome();
 
     // Frame side.
     void updateScale();
@@ -338,6 +354,7 @@ private:
     bool m_focusList = false;
     bool m_focusPage = false;
     bool m_quitAsk = false;
+    bool m_homeOpen = false;
     bool m_cancelQuit = false;
     NavBefore m_navBefore;
     // The last input was a controller's, so the hints show its buttons.

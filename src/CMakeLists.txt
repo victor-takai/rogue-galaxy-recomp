@@ -97,6 +97,7 @@ add_executable(roguegalaxy
     hud_size.cpp
     inventory.cpp
     update_check.cpp
+    self_update.cpp
     scene_timing.cpp
     settings_pages.cpp
     shop_prices.cpp

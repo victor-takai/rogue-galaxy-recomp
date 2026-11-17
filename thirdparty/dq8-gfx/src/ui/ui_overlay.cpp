@@ -227,7 +227,7 @@ int Overlay::gameNumber(const GameOption &option) const {
     return std::clamp(value, option.minimum, option.maximum);
 }
 
-bool Overlay::capturesInput() const { return m_menuOpen || m_capture.active; }
+bool Overlay::capturesInput() const { return m_menuOpen || m_capture.active || m_homeOpen; }
 
 bool Overlay::wantsFrames() {
     if (!m_context)
@@ -235,7 +235,7 @@ bool Overlay::wantsFrames() {
     // Queued input has to be consumed by a frame, or it replays later.
     const bool scriptWaiting = std::any_of(m_script.begin(), m_script.end(),
                                            [](const ScriptStep &step) { return !step.done && step.seconds >= 0.0; });
-    return m_menuOpen || m_capture.active || !m_toasts.empty() || m_settings.showFps || m_statsOpen ||
+    return m_menuOpen || m_homeOpen || m_capture.active || !m_toasts.empty() || m_settings.showFps || m_statsOpen ||
            m_iconSheet || pausing() || scriptWaiting || !m_context->InputEventsQueue.empty();
 }
 
@@ -276,7 +276,18 @@ void Overlay::openShortcuts() {
 
 void Overlay::showBindings(bool keyboard) { m_selectBindings = keyboard ? 1 : 0; }
 
+void Overlay::openHome() {
+    if (!canPause())
+        return;
+    m_homeOpen = true;
+    // The button that started the game is still down: it must not press Play.
+    m_gamepadNavHeld = true;
+    applyPause();
+}
+
 void Overlay::toggleMenu(bool fromController) {
+    if (m_homeOpen)
+        return;
     if (m_menuOpen) {
         setMenuOpen(false);
         return;
@@ -787,7 +798,7 @@ void Overlay::updateNavigation() {
         m_gamepadNavHeld = down;
     }
     io.ConfigFlags &= ~(ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
-    if (m_menuOpen && !m_capture.active) {
+    if ((m_menuOpen || m_homeOpen) && !m_capture.active) {
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         if (!m_gamepadNavHeld)
             io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -829,6 +840,8 @@ void Overlay::drawFrame() {
     if (m_menuOpen && !m_capture.active && !m_navBefore.modalOpen &&
         (io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))
         toggleBarFocus();
+    if (m_homeOpen)
+        drawHome();
     if (m_menuOpen)
         drawMenuBar();
     if (m_settingsOpen)
@@ -1042,6 +1055,90 @@ void Overlay::drawQuitPrompt() {
     ImGui::PopStyleVar();
 }
 
+// The screen the game starts on: Play, Update, Quit. It covers the window
+// with a dark background (the game has drawn nothing yet) and keeps the game
+// paused until Play. Everything is reached with the controller (A selects).
+void Overlay::drawHome() {
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(5, 8, 22, 255));
+    ImGui::Begin("##homebg", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+
+    const HostServices::HomeUpdate update = m_host.homeUpdate ? m_host.homeUpdate() : HostServices::HomeUpdate{};
+    using State = HostServices::HomeUpdate::State;
+    const bool working = update.state == State::Working;
+
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(2.4f), em(1.8f)));
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
+    if (ImGui::Begin("##home", nullptr, flags)) {
+        decorateWindow();
+        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.9f);
+        ImGui::TextUnformatted("Rogue Galaxy");
+        ImGui::PopFont();
+        mutedText("Recompiled for the Steam Deck  -  %s", m_host.version.c_str());
+        ImGui::Dummy(ImVec2(0.0f, em(0.9f)));
+
+        const ImVec2 buttonSize(em(16.0f), em(2.4f));
+        ImGui::BeginDisabled(working);
+        if (ImGui::Button("Play", buttonSize)) {
+            m_homeOpen = false;
+            m_gamepadNavHeld = true;
+            applyPause();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::EndDisabled();
+
+        std::string label = "Update";
+        if (update.state == State::Available)
+            label = "Update to " + update.version;
+        else if (update.state == State::UpToDate)
+            label = "Up to date";
+        else if (working)
+            label = "Updating...";
+        else if (update.state == State::Failed)
+            label = "Update failed: try again";
+        else if (update.state == State::Done)
+            label = "Restart to finish";
+        const bool canUpdate = static_cast<bool>(m_host.startUpdate) &&
+                               (update.state == State::Available || update.state == State::Failed);
+        ImGui::BeginDisabled(!canUpdate);
+        if (ImGui::Button((label + "##update").c_str(), buttonSize))
+            m_host.startUpdate();
+        ImGui::EndDisabled();
+
+        ImGui::BeginDisabled(working);
+        if (ImGui::Button("Quit", buttonSize)) {
+            SDL_Event quit{};
+            quit.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&quit);
+        }
+        ImGui::EndDisabled();
+
+        if (working || update.state == State::Failed || update.state == State::Done) {
+            ImGui::Dummy(ImVec2(0.0f, em(0.6f)));
+            if (working)
+                ImGui::ProgressBar(update.progress < 0.0f ? -1.0f * static_cast<float>(ImGui::GetTime()) : update.progress,
+                                   ImVec2(buttonSize.x, em(0.9f)), "");
+            mutedText("%s", update.text.c_str());
+        }
+        ImGui::End();
+    } else {
+        ImGui::End();
+    }
+    ImGui::PopStyleVar();
+}
+
 void Overlay::drawCapturePrompt() {
     constexpr const char *kName = "##capture";
     if (m_capture.active && now() - m_capture.startedAt > kCaptureSeconds)
@@ -1214,7 +1311,7 @@ void Overlay::drawSpeedBadge() {
 }
 
 void Overlay::drawPauseBanner() {
-    if (!canPause() || m_menuOpen)
+    if (!canPause() || m_menuOpen || m_homeOpen)
         return;
     const bool background = m_settings.pauseInBackground && !m_windowFocused;
     if (!m_userPaused && !background)
@@ -1438,7 +1535,7 @@ void Overlay::applyVolume() {
 }
 
 bool Overlay::pausing() const {
-    return canPause() && (m_userPaused || (m_settings.pauseInMenu && m_menuOpen) ||
+    return canPause() && (m_homeOpen || m_userPaused || (m_settings.pauseInMenu && m_menuOpen) ||
                           (m_settings.pauseInBackground && !m_windowFocused));
 }
 
