@@ -162,6 +162,9 @@ void Overlay::runStep(const ScriptStep &step, uint64_t frame) {
         }
     } else if (command == "play") {
         closeHome();
+    } else if (command == "update") {
+        if (m_host.startUpdate)
+            m_host.startUpdate();
     } else if (command == "screenshot") {
         takeScreenshot(first == "menu");
     } else if (command == "notify") {
