@@ -22,10 +22,11 @@ You need:
 
 Then, in desktop mode:
 
-1. Download `RogueGalaxy-Setup.py` from the
+1. Download `RogueGalaxy-Setup-x86_64.AppImage` from the
    [releases](https://github.com/touyoo0/deck-galaxy/releases) page and
    double-click it (Execute). It needs only what SteamOS has: Python with
-   GTK 4, curl, git and distrobox.
+   GTK 4, curl, git and distrobox. (`RogueGalaxy-Setup.py` is the same
+   installer as a script: `python3 RogueGalaxy-Setup.py`.)
 2. Choose your disc image, then where to install: the internal storage or
    the SD card, or another folder. Optionally add the Japanese or European
    disc (below) and keep "Add Rogue Galaxy to Steam" on.

@@ -154,7 +154,9 @@ changes the generated code needs `setup.py tools`, `recompile` and `build`.
 - **A release is source only.** The game's generated code comes from the
   player's disc, so no binary is distributed: a release is
   `tools/release/source_zip.py`'s zip (with `FILES`, `REVISION`,
-  `SUBMODULES`) and its `.sha256`, plus `installer/RogueGalaxy-Setup.py`.
+  `SUBMODULES`) and its `.sha256`, plus the installer: `RogueGalaxy-Setup-x86_64.AppImage` and its `.sha256`
+  (`tools/release/build_appimage.sh`, run on the Deck) and
+  `installer/RogueGalaxy-Setup.py`.
 - **The emulated GS/VU1 path stays intact.** Native rendering work goes
   behind the native renderer switch, off by default
   ([docs/NATIVE-RENDERER.md](docs/NATIVE-RENDERER.md)).

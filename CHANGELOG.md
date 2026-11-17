@@ -4,6 +4,9 @@
 
 ### New
 
+- Steam Deck fork: the installer comes as an AppImage
+  (`RogueGalaxy-Setup-x86_64.AppImage`, built by
+  `tools/release/build_appimage.sh`): download it and double-click.
 - Steam Deck fork: `installer/RogueGalaxy-Setup.py`, a window to run once in
   desktop mode: it asks for the disc image and the folder, builds the game
   and adds it to Steam.

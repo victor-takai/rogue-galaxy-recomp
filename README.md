@@ -51,7 +51,7 @@ before is `build/last-run.prev.log`. Rules for issues and pull requests:
 You need about 24 GB free (the SD card is fine), an internet connection and
 your own uncompressed `.iso` of Rogue Galaxy USA (SCUS-97490).
 
-1. In desktop mode, download `RogueGalaxy-Setup.py` from the
+1. In desktop mode, download `RogueGalaxy-Setup-x86_64.AppImage` from the
    [releases](../../releases) page and double-click it (Execute).
 2. Pick your disc image and where to install the game. It builds on the Deck
    in 10 to 30 minutes and adds the game to Steam.
