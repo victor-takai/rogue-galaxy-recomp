@@ -22,6 +22,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -312,14 +313,19 @@ class Job(threading.Thread):
     # -- 4. Steam
     def in_steam(self, script: Path) -> bool:
         """Whether some Steam account already has this script as a non-Steam game."""
-        wanted = {str(script), str(script.resolve())}
         for vdf in (Path.home() / ".local/share/Steam/userdata").glob("*/config/shortcuts.vdf"):
             try:
                 data = vdf.read_bytes()
             except OSError:
                 continue
-            if any(w.encode() in data for w in wanted):
-                return True
+            # The same file may be named by another path (/run/media/SD, /run/media/deck/SD).
+            for match in re.finditer(rb"\x01[Ee]xe\x00(.*?)\x00", data):
+                exe = Path(match.group(1).decode(errors="replace").strip('"'))
+                try:
+                    if exe.exists() and script.exists() and os.path.samefile(exe, script):
+                        return True
+                except OSError:
+                    continue
         return False
 
     def steam(self) -> None:
