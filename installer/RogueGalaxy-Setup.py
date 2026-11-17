@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Rogue Galaxy for the Steam Deck: the installer.
 
-One file, to run once in desktop mode (double-click, "Execute"). It asks for
-your disc image and where to put the game, downloads the game's sources,
-builds them on the Deck (in a container, 10 to 30 minutes), and adds the game
+One file, to run once in desktop mode (double-click, "Execute"). One page
+asks for your disc image, where to put the game and the options; then it
+downloads the game's sources, builds them on the Deck (in a container, 10 to 30 minutes), and adds the game
 to Steam. Afterwards it is not needed any more: the game starts on its own
 home screen, which updates it, in game mode.
 
@@ -11,7 +11,8 @@ Needs what SteamOS has: python3 with GTK 4 (PyGObject), curl, git, distrobox.
 
 For tests: --iso FILE, --dir FOLDER, --zip ARCHIVE (a release's source
 archive instead of the download), --no-steam, --start (skip the pages),
---shots FOLDER (a PNG of each page; --tour steps through the pages). RG_UPDATE_REPO=owner/name and
+--shots FOLDER (a PNG of the window; --tour also shows the European option
+and the install page). RG_UPDATE_REPO=owner/name and
 RG_UPDATE_API=URL point the release lookup elsewhere; RG_SETUP_REF=BRANCH is
 the branch cloned when the repository has no release yet.
 """
@@ -47,6 +48,8 @@ window, .page { background: #060a1e; color: #f2f3fc; }
 .title { font-size: 26px; font-weight: 700; color: #f2f3fc; }
 .subtitle { font-size: 14px; color: #9ea8cc; }
 .muted { color: #9ea8cc; }
+.section { font-size: 17px; font-weight: 700; color: #f2f3fc; }
+.badge { background: #f4cb52; color: #1a1500; font-weight: 700; border-radius: 14px; min-width: 28px; min-height: 28px; }
 .good { color: #70de8e; }
 .warn { color: #f6b640; }
 .bad { color: #ff7b72; }
@@ -351,93 +354,85 @@ class Job(threading.Thread):
 
 
 class Window(Gtk.ApplicationWindow):
-    PAGES = ["welcome", "disc", "where", "options", "install", "done"]
+    """One page for everything to choose, then the same window shows the install."""
 
     def __init__(self, app: Gtk.Application, cfg: argparse.Namespace):
         super().__init__(application=app, title="Rogue Galaxy: install")
         self.cfg = cfg
-        self.set_default_size(880, 640)
+        self.custom_dir: Path | None = None
+        self.job: Job | None = None
+        self.pulse_id = 0
+        self.set_default_size(900, 760)
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(self.get_display(), provider,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.SLIDE_LEFT_RIGHT, vexpand=True,
-                               halign=Gtk.Align.CENTER, width_request=800)
-        self.back = Gtk.Button(label="Back")
-        self.next = Gtk.Button(label="Continue")
-        self.next.add_css_class("suggested-action")
-        self.back.connect("clicked", lambda *_: self.go(-1))
-        self.next.connect("clicked", lambda *_: self.on_next())
-        buttons = Gtk.Box(spacing=10, halign=Gtk.Align.END, margin_top=8)
-        buttons.append(self.back)
-        buttons.append(self.next)
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin_top=28, margin_bottom=22,
-                       margin_start=36, margin_end=36, spacing=12)
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, vexpand=True, hexpand=True)
+        self.stack.add_named(self.build_setup(), "setup")
+        self.stack.add_named(self.build_install(), "install")
+        root = Gtk.Box()
         root.add_css_class("page")
         root.append(self.stack)
-        root.append(buttons)
         self.set_child(root)
-
-        self.index = 0
-        self.job: Job | None = None
-        self.pulse_id = 0
-        self.build_pages()
-        self.show_page(0)
+        self.update_buttons()
+        if cfg.shots:
+            GLib.timeout_add(700, self.shoot, "setup")
+            if cfg.tour:
+                GLib.timeout_add(1500, self.tour_european)
+                GLib.timeout_add(3000, self.tour_install)
         if cfg.start:
             GLib.idle_add(self.begin)
-        if cfg.shots and cfg.tour:
-            for i in range(1, 4):
-                GLib.timeout_add(1500 * i, lambda n=i: self.show_page(n) and False)
 
-    # -- page building
-    def heading(self, title: str, subtitle: str) -> Gtk.Box:
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, vexpand=True)
-        label = Gtk.Label(label=title, xalign=0)
-        label.add_css_class("title")
-        sub = Gtk.Label(label=subtitle, xalign=0, wrap=True)
+    # -- building blocks
+    def section(self, number: int, title: str, hint: str) -> Gtk.Box:
+        """A card with a numbered heading; the content is appended to it."""
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.add_css_class("card")
+        head = Gtk.Box(spacing=12)
+        badge = Gtk.Label(label=str(number), valign=Gtk.Align.CENTER)
+        badge.add_css_class("badge")
+        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+        name = Gtk.Label(label=title, xalign=0)
+        name.add_css_class("section")
+        note = Gtk.Label(label=hint, xalign=0, wrap=True)
+        note.add_css_class("muted")
+        texts.append(name)
+        texts.append(note)
+        head.append(badge)
+        head.append(texts)
+        card.append(head)
+        return card
+
+    def build_setup(self) -> Gtk.Widget:
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, width_request=820,
+                          halign=Gtk.Align.CENTER, margin_top=18, margin_bottom=8, margin_start=24, margin_end=24)
+        title = Gtk.Label(label="Rogue Galaxy for the Steam Deck", xalign=0)
+        title.add_css_class("title")
+        sub = Gtk.Label(label="Installs the game from your own disc image. Nothing is uploaded; it is built on "
+                              "this Deck. Afterwards you play from Steam in game mode, and the game updates "
+                              "itself from its home screen.", xalign=0, wrap=True)
         sub.add_css_class("subtitle")
-        box.append(label)
-        box.append(sub)
-        box.append(Gtk.Box(margin_top=8))
-        return box
+        content.append(title)
+        content.append(sub)
 
-    def card(self) -> Gtk.Box:
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.add_css_class("card")
-        return box
-
-    def build_pages(self) -> None:
-        # welcome
-        page = self.heading("Rogue Galaxy for the Steam Deck",
-                            "This installs the game from your own disc image. It takes 10 to 30 minutes, "
-                            "needs about 24 GB, and an internet connection. Afterwards you play from Steam in "
-                            "game mode, and the game updates itself from its home screen.")
-        card = self.card()
-        for line in ("1. Pick your Rogue Galaxy (USA) disc image, an uncompressed .iso.",
-                     "2. Pick where to install the game.",
-                     "3. Wait while it is built on your Deck. You can keep using the Deck."):
-            card.append(Gtk.Label(label=line, xalign=0))
-        page.append(card)
-        self.stack.add_named(page, "welcome")
-
-        # disc
-        page = self.heading("Your disc image",
-                            "Rogue Galaxy, USA release (SCUS-97490), as an uncompressed .iso. Nothing is "
-                            "uploaded: the image is read on this Deck only.")
-        card = self.card()
-        self.iso_label = Gtk.Label(label="No image chosen", xalign=0, wrap=True)
-        self.iso_state = Gtk.Label(label="", xalign=0, wrap=True)
-        choose = Gtk.Button(label="Choose the .iso...", halign=Gtk.Align.START)
+        # 1. the disc image
+        card = self.section(1, "Your disc image", "Rogue Galaxy, USA release (SCUS-97490), an uncompressed .iso.")
+        row = Gtk.Box(spacing=12)
+        choose = Gtk.Button(label="Choose the .iso...")
         choose.connect("clicked", lambda *_: self.pick_file(self.set_iso, "Your Rogue Galaxy (USA) disc image"))
-        card.append(choose)
-        card.append(self.iso_label)
+        self.iso_label = Gtk.Label(label="No image chosen", xalign=0, hexpand=True, wrap=True)
+        self.iso_label.add_css_class("muted")
+        row.append(choose)
+        row.append(self.iso_label)
+        self.iso_state = Gtk.Label(label="", xalign=0, wrap=True, visible=False)
+        card.append(row)
         card.append(self.iso_state)
-        page.append(card)
-        self.stack.add_named(page, "disc")
+        if self.cfg.dir_ready:
+            self.iso_label.set_text("Already extracted in the folder: no image needed.")
+        content.append(card)
 
-        # where
-        page = self.heading("Where to install", "The game, its saves and its build go in one folder.")
-        card = self.card()
+        # 2. where
+        card = self.section(2, "Where to install", "The game, its saves and its build go in one folder.")
         self.where_buttons: list[tuple[Gtk.CheckButton, Path]] = []
         group = None
         for label, path in storage_choices():
@@ -452,64 +447,89 @@ class Window(Gtk.ApplicationWindow):
                 row.set_label(row.get_label() + "   (not enough room)")
             card.append(row)
             self.where_buttons.append((row, path))
-        # the roomiest allowed one starts selected, the SD card over the internal storage
         usable = [(b, p) for b, p in self.where_buttons if b.get_sensitive()]
-        if usable:
+        if usable:  # the roomiest allowed one starts selected, the SD card over the internal storage
             usable[-1][0].set_active(True)
+        for row, _ in self.where_buttons:
+            row.connect("toggled", lambda *_: self.update_buttons())
         other = Gtk.Button(label="Another folder...", halign=Gtk.Align.START)
         other.connect("clicked", lambda *_: self.pick_folder(self.set_folder))
+        self.where_note = Gtk.Label(label="", xalign=0, wrap=True, visible=False)
         card.append(other)
-        self.where_note = Gtk.Label(label="", xalign=0, wrap=True)
         card.append(self.where_note)
-        page.append(card)
-        self.stack.add_named(page, "where")
-        self.custom_dir: Path | None = None
+        content.append(card)
 
-        # options
-        page = self.heading("Options", "All of this can wait: the home screen can add it later.")
-        card = self.card()
+        # 3. options
+        card = self.section(3, "Options", "Both can wait: the home screen can add them later.")
         self.steam_check = Gtk.CheckButton(label="Add Rogue Galaxy to Steam (play it from game mode)")
         self.steam_check.set_active(self.cfg.steam)
-        card.append(self.steam_check)
-        self.japanese_label = Gtk.Label(label="Japanese voices and movies: no image chosen (optional)", xalign=0)
-        jp = Gtk.Button(label="Add the Japanese Director's Cut image...", halign=Gtk.Align.START)
-        jp.connect("clicked", lambda *_: self.pick_file(self.set_japanese, "Rogue Galaxy Japanese Director's Cut"))
-        self.european_label = Gtk.Label(label="French, German, Spanish and Italian texts: no image chosen (optional)",
-                                        xalign=0)
-        eu = Gtk.Button(label="Add the European image...", halign=Gtk.Align.START)
+        self.european_check = Gtk.CheckButton(label="Add the European image (French, German, Spanish and "
+                                                    "Italian texts)")
+        self.european_check.set_active(bool(self.cfg.european))
+        self.european_check.connect("toggled", lambda *_: self.on_european_toggled())
+        row = Gtk.Box(spacing=12, margin_start=28)
+        eu = Gtk.Button(label="Choose the European image...")
         eu.connect("clicked", lambda *_: self.pick_file(self.set_european, "Rogue Galaxy European disc"))
-        for widget in (jp, self.japanese_label, eu, self.european_label):
-            card.append(widget)
-        page.append(card)
-        self.stack.add_named(page, "options")
+        self.european_label = Gtk.Label(label=self.cfg.european.name if self.cfg.european else "No image chosen",
+                                        xalign=0, hexpand=True, wrap=True)
+        self.european_label.add_css_class("muted")
+        row.append(eu)
+        row.append(self.european_label)
+        self.european_reveal = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN,
+                                            child=row, reveal_child=self.european_check.get_active())
+        card.append(self.steam_check)
+        card.append(self.european_check)
+        card.append(self.european_reveal)
+        content.append(card)
 
-        # install
-        page = self.heading("Installing", "Keep the Deck plugged in. You can leave this window open and do "
-                                          "something else.")
-        card = self.card()
+        scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, child=content)
+        bar = Gtk.Box(spacing=12, margin_top=10, margin_bottom=16, margin_start=24, margin_end=24,
+                      halign=Gtk.Align.CENTER, width_request=820)
+        self.summary = Gtk.Label(label=f"About {NEED_GB} GB and 10 to 30 minutes. Keep the Deck plugged in.",
+                                 xalign=0, hexpand=True, wrap=True)
+        self.summary.add_css_class("muted")
+        self.install_button = Gtk.Button(label="Install")
+        self.install_button.add_css_class("suggested-action")
+        self.install_button.connect("clicked", lambda *_: self.begin())
+        bar.append(self.summary)
+        bar.append(self.install_button)
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.append(scroll)
+        page.append(bar)
+        return page
+
+    def build_install(self) -> Gtk.Widget:
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, width_request=820, vexpand=True,
+                          halign=Gtk.Align.CENTER, margin_top=24, margin_bottom=16, margin_start=24, margin_end=24)
+        self.install_title = Gtk.Label(label="Installing", xalign=0)
+        self.install_title.add_css_class("title")
+        self.install_sub = Gtk.Label(label="Keep the Deck plugged in. You can leave this window open and do "
+                                           "something else.", xalign=0, wrap=True)
+        self.install_sub.add_css_class("subtitle")
+        content.append(self.install_title)
+        content.append(self.install_sub)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.add_css_class("card")
         self.step_label = Gtk.Label(label="Starting", xalign=0)
         self.bar = Gtk.ProgressBar()
-        self.fail_label = Gtk.Label(label="", xalign=0, wrap=True)
+        self.fail_label = Gtk.Label(label="", xalign=0, wrap=True, visible=False)
         self.fail_label.add_css_class("bad")
+        self.done_label = Gtk.Label(label="", xalign=0, wrap=True, visible=False)
         card.append(self.step_label)
         card.append(self.bar)
         card.append(self.fail_label)
-        page.append(card)
-        expander = Gtk.Expander(label="Details")
-        self.log_view = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.CHAR)
-        scroll = Gtk.ScrolledWindow(min_content_height=170, child=self.log_view)
-        expander.set_child(scroll)
-        page.append(expander)
-        self.log_scroll = scroll
-        self.stack.add_named(page, "install")
-
-        # done
-        page = self.heading("Done", "Rogue Galaxy is installed.")
-        card = self.card()
-        self.done_label = Gtk.Label(label="", xalign=0, wrap=True)
         card.append(self.done_label)
-        page.append(card)
-        self.stack.add_named(page, "done")
+        content.append(card)
+        expander = Gtk.Expander(label="Details", vexpand=True)
+        self.log_view = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.CHAR)
+        self.log_scroll = Gtk.ScrolledWindow(min_content_height=200, child=self.log_view)
+        expander.set_child(self.log_scroll)
+        content.append(expander)
+        self.close_button = Gtk.Button(label="Close", halign=Gtk.Align.END, visible=False)
+        self.close_button.add_css_class("suggested-action")
+        self.close_button.connect("clicked", lambda *_: self.get_application().quit())
+        content.append(self.close_button)
+        return content
 
     # -- choosing files
     def pick_file(self, callback, title: str) -> None:
@@ -533,6 +553,7 @@ class Window(Gtk.ApplicationWindow):
         self.cfg.iso = None if problem else path
         self.iso_label.set_text(str(path))
         self.iso_state.set_text(problem or "This looks like a disc image. It is checked in full while installing.")
+        self.iso_state.set_visible(True)
         for cls in ("good", "bad"):
             self.iso_state.remove_css_class(cls)
         self.iso_state.add_css_class("bad" if problem else "good")
@@ -544,19 +565,21 @@ class Window(Gtk.ApplicationWindow):
         for row, _ in self.where_buttons:
             row.set_active(False)
         enough = free >= NEED_GB
+        self.where_note.set_visible(True)
         self.where_note.set_text(f"{self.custom_dir}   ({free:.0f} GB free"
                                  + ("" if enough else ", not enough") + ")")
         self.update_buttons()
 
-    def set_japanese(self, path: Path) -> None:
-        self.cfg.japanese = path
-        self.japanese_label.set_text(f"Japanese voices and movies: {path.name}")
-
     def set_european(self, path: Path) -> None:
         self.cfg.european = path
-        self.european_label.set_text(f"European texts: {path.name}")
+        self.european_label.set_text(path.name)
+        self.update_buttons()
 
-    # -- navigation
+    def on_european_toggled(self) -> None:
+        self.european_reveal.set_reveal_child(self.european_check.get_active())
+        self.update_buttons()
+
+    # -- what is chosen
     def chosen_dir(self) -> Path | None:
         if self.custom_dir and not any(b.get_active() for b, _ in self.where_buttons):
             return self.custom_dir if free_gb(self.custom_dir) >= NEED_GB else None
@@ -566,52 +589,35 @@ class Window(Gtk.ApplicationWindow):
         return None
 
     def update_buttons(self) -> None:
-        name = self.PAGES[self.index]
-        self.back.set_visible(name in ("disc", "where", "options"))
-        self.next.set_visible(name != "install")
-        ok = True
-        if name == "disc":
-            ok = self.cfg.iso is not None or self.cfg.dir_ready
-        if name == "where":
-            ok = self.chosen_dir() is not None
-        self.next.set_sensitive(ok)
-        self.next.set_label({"options": "Install", "done": "Close"}.get(name, "Continue"))
-
-    def show_page(self, index: int) -> None:
-        self.index = index
-        name = self.PAGES[index]
-        self.stack.set_visible_child_name(name)
-        self.update_buttons()
-        if self.cfg.shots:
-            GLib.timeout_add(500, self.shoot, name)
-
-    def go(self, step: int) -> None:
-        self.show_page(max(0, min(len(self.PAGES) - 1, self.index + step)))
-
-    def on_next(self) -> None:
-        name = self.PAGES[self.index]
-        if name == "options":
-            self.begin()
-        elif name == "done":
-            self.get_application().quit()
-        else:
-            self.go(1)
+        missing = []
+        if self.cfg.iso is None and not self.cfg.dir_ready:
+            missing.append("a disc image")
+        if self.chosen_dir() is None and not self.cfg.dir:
+            missing.append("a folder")
+        if self.european_check.get_active() and self.cfg.european is None:
+            missing.append("the European image (or untick it)")
+        self.install_button.set_sensitive(not missing)
+        self.summary.set_text("Still to do: " + ", ".join(missing) + "." if missing else
+                              f"Ready. About {NEED_GB} GB and 10 to 30 minutes; keep the Deck plugged in.")
 
     def begin(self) -> None:
         self.cfg.dir = self.cfg.dir or self.chosen_dir()
-        self.cfg.steam = self.steam_check.get_active() if not self.cfg.start else self.cfg.steam
-        self.show_page(self.PAGES.index("install"))
+        if not self.cfg.start:
+            self.cfg.steam = self.steam_check.get_active()
+        if not self.european_check.get_active():
+            self.cfg.european = None
+        self.stack.set_visible_child_name("install")
         self.pulse_id = GLib.timeout_add(120, self.pulse)
         self.job = Job(self.cfg, self)
         self.job.start()
 
     # -- the job's callbacks (on the main thread)
+    pulsing = True
+
     def pulse(self) -> bool:
         if self.pulsing:
             self.bar.pulse()
         return True
-
-    pulsing = True
 
     def on_progress(self, text: str, fraction: float | None) -> bool:
         self.step_label.set_text(text)
@@ -634,12 +640,9 @@ class Window(Gtk.ApplicationWindow):
     def on_failed(self, message: str) -> bool:
         self.pulsing = False
         self.fail_label.set_text(message)
+        self.fail_label.set_visible(True)
         self.step_label.set_text("The install stopped")
-        self.next.set_visible(True)
-        self.next.set_label("Close")
-        self.next.set_sensitive(True)
-        self.index = self.PAGES.index("done")  # Close quits
-        self.back.set_visible(False)
+        self.close_button.set_visible(True)
         if self.cfg.shots:
             GLib.timeout_add(500, self.shoot, "failed")
         return False
@@ -647,15 +650,29 @@ class Window(Gtk.ApplicationWindow):
     def on_done(self) -> bool:
         self.pulsing = False
         self.bar.set_fraction(1.0)
+        self.install_title.set_text("Done")
+        self.install_sub.set_text("Rogue Galaxy is installed.")
+        self.step_label.set_text("")
         steam = ("It is in your Steam library, under Non-Steam. Switch to game mode and play. "
                  if self.cfg.steam else "Add rogue-galaxy.sh to Steam as a non-Steam game, then switch to game "
                                         "mode and play. ")
         self.done_label.set_text(steam + "The game opens on a home screen with Play and Update; this installer "
                                          "is not needed any more.")
-        self.show_page(self.PAGES.index("done"))
+        self.done_label.set_visible(True)
+        self.close_button.set_visible(True)
         return False
 
-    # -- a PNG of a page, for checking the look without a screen
+    # -- a PNG of the window, for checking the look without a screen
+    def tour_european(self) -> bool:
+        self.european_check.set_active(True)
+        GLib.timeout_add(700, self.shoot, "setup-european")
+        return False
+
+    def tour_install(self) -> bool:
+        self.stack.set_visible_child_name("install")
+        GLib.timeout_add(500, self.shoot, "install")
+        return False
+
     def shoot(self, name: str) -> bool:
         from gi.repository import Graphene  # noqa: PLC0415
 

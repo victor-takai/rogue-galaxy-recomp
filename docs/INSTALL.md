@@ -27,9 +27,11 @@ Then, in desktop mode:
    double-click it (Execute). It needs only what SteamOS has: Python with
    GTK 4, curl, git and distrobox. (`RogueGalaxy-Setup.py` is the same
    installer as a script: `python3 RogueGalaxy-Setup.py`.)
-2. Choose your disc image, then where to install: the internal storage or
-   the SD card, or another folder. Optionally add the Japanese or European
-   disc (below) and keep "Add Rogue Galaxy to Steam" on.
+2. One window asks for everything: your disc image, where to install (the
+   internal storage, the SD card or another folder) and the options. Keep
+   "Add Rogue Galaxy to Steam" on; tick "Add the European image" to choose
+   that disc too (see below). The Japanese voices are added afterwards (see
+   below). Then press Install.
 3. Wait while the game is built (10 to 30 minutes; the window shows the
    steps, and "Details" the log). If it stops, run the installer again with
    the same folder: it goes on where it stopped. `build/setup.log` in the
