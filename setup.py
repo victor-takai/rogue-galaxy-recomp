@@ -52,9 +52,6 @@ import zlib
 from datetime import date
 from pathlib import Path
 
-# Not resolve(): Install.bat may run this through a short name for a long
-# folder (a junction, tools/install/short-name.ps1), which resolve() would
-# turn back into the long path the build tools cannot use.
 ROOT = Path(os.path.abspath(__file__)).parent
 sys.path.insert(0, str(ROOT / "tools"))
 
@@ -552,7 +549,6 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def find_recompiler(given: str | None) -> Path:
     candidates = [Path(given)] if given else [
-        ROOT / "build" / "tools" / "ps2xRecomp" / "ps2_recomp.exe",
         ROOT / "build" / "tools" / "ps2xRecomp" / "ps2_recomp",
     ]
     for c in candidates:
@@ -892,107 +888,8 @@ def cmd_build(args: argparse.Namespace) -> int:
         run_step("configure build/game", [
             "cmake", "-S", str(ROOT), "-B", str(GAME_BUILD), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", *COMPILERS])
     run_step("build the game", ["cmake", "--build", str(GAME_BUILD)])
-    launcher = "Rogue Galaxy.exe" if os.name == "nt" else "rogue-galaxy.sh"
-    print(f"built {GAME_BUILD / 'src' / GAME_EXE}; start it with \"{launcher}\"")
+    print(f"built {GAME_BUILD / 'src' / GAME_EXE}; start it with \"rogue-galaxy.sh\"")
     return 0
-
-
-def cmd_portable(args: argparse.Namespace) -> int:
-    """The built game in a folder of its own, to copy to another machine (a Steam Deck, through Proton)."""
-    out = Path(args.out).resolve()
-    game_dir = GAME_BUILD / "src"
-    launcher = ROOT / "Rogue Galaxy.exe"
-    disc = ROOT / "disc"
-    for needed in (game_dir / "roguegalaxy.exe", launcher, disc / "manifest.json"):
-        if not needed.is_file():
-            sys.exit(f"{needed} is missing: install and build the game first")
-    if out.exists() and any(out.iterdir()):
-        sys.exit(f"{out} is not empty; pick a new folder")
-    (out / "build" / "game" / "src").mkdir(parents=True, exist_ok=True)
-    shutil.copy2(launcher, out)
-    shutil.copy2(game_dir / "roguegalaxy.exe", out / "build" / "game" / "src")
-    for dll in game_dir.glob("*.dll"):
-        shutil.copy2(dll, out / "build" / "game" / "src")
-    # The memory cards only when asked: the copy's saves then go their own way.
-    skip = () if args.saves else ("mc0", "mc1")
-    print(f"== copying disc/ (about 6.3 GiB){' with the memory cards' if args.saves else ''}", flush=True)
-    shutil.copytree(disc, out / "disc", ignore=lambda folder, names: [n for n in names
-                                                                       if Path(folder) == disc and n in skip])
-    if (ROOT / "borders").is_dir():
-        shutil.copytree(ROOT / "borders", out / "borders")
-    print(f"done: {out}\n"
-          "On a Steam Deck: copy the folder over, add \"Rogue Galaxy.exe\" to Steam as a non-Steam game, and in its "
-          "Properties > Compatibility force a Proton version. It starts in fullscreen there.")
-    return 0
-
-
-def undub_image(disc: Path) -> str | None:
-    """The Japanese disc image the undub was installed from, when it is still where it was."""
-    try:
-        image = json.loads((disc / "JA" / "manifest.json").read_text(encoding="utf-8")).get("image")
-    except (OSError, ValueError, AttributeError):
-        return None
-    return image if isinstance(image, str) and Path(image).is_file() else None
-
-
-def balance_languages(version: str, disc: Path) -> str:
-    """The Director's Cut balance's tables for each text that lacks them (a European text in
-    <disc>/EU made or built again after the balance, or a table gone), from the Japanese tables
-    the balance keeps, or else from the Japanese image the undub came from. Returns "none"
-    (nothing to do, or no balance), "made", "needs disc" or "failed"; a European text left
-    without them is taken out of tables.txt, so the game's log says so. Never stops the step
-    it is part of."""
-    from disc import balance
-
-    out = disc / "JA" / "balance"
-    stale: list[str] = []
-    try:
-        if not (out / "tables.txt").is_file():
-            return "none"
-        stale = balance.languages_stale(disc, out)
-        if not stale:
-            return "none"
-        print(f"== the Director's Cut balance's tables for the text in {', '.join(stale)}", flush=True)
-        report = balance.rebuild(disc, out)
-        if report is not None:
-            for line in report:
-                print(f"   {line}", flush=True)
-            return "made"
-        # The kept Japanese tables missing or damaged: the four from the image, not the enemy files.
-        image = undub_image(disc)
-        if image:
-            print("   from the Japanese disc image the undub came from", flush=True)
-            if make_balance(argparse.Namespace(version=version, iso=image, disc=str(disc), tables_only=True)):
-                return "made"
-        balance.forget(out, stale)
-        print("   they need your Japanese disc once more: run Install-Undub.bat (the voices it copied stay)")
-        return "needs disc"
-    except Exception as error:  # a damaged balance or text: whatever reading them raises
-        print(f"   not made: {type(error).__name__}: {error}")
-        try:
-            balance.forget(out, stale)
-        except Exception:
-            pass
-        return "failed"
-
-
-def balance_for_undub(version: str, disc: Path) -> None:
-    """An undub installed before the Director's Cut options existed gets their files, from the
-    Japanese image it came from when that is still where it was, and a balance whose texts lack
-    tables gets them; never stops the install."""
-    ja = disc / "JA"
-    whole = all((ja / "balance" / name).is_file() for name in ("tables.txt", "files.idx", "files.dat"))
-    if whole or not (ja / "manifest.json").is_file():
-        balance_languages(version, disc)
-        return
-    image = undub_image(disc)
-    if not image:
-        print("== the Director's Cut options need your Japanese disc once: run Install-Undub.bat")
-        balance_languages(version, disc)
-        return
-    print("== the Director's Cut options' files, from the Japanese disc image the undub came from", flush=True)
-    if not make_balance(argparse.Namespace(version=version, iso=image, disc=str(disc))):
-        print("   Install-Undub.bat makes it")
 
 
 def cmd_install(args: argparse.Namespace) -> int:
@@ -1084,11 +981,6 @@ def main() -> int:
     p = sub.add_parser("install", help="from a dump to the game: verify, extract, tools, recompile, build")
     p.add_argument("--iso", help="your dump of the game (not needed once disc/ is extracted)")
     p.set_defaults(func=cmd_install)
-
-    p = sub.add_parser("portable", help="copy the built game to a folder of its own (for a Steam Deck, through Proton)")
-    p.add_argument("--out", required=True, help="a new or empty folder")
-    p.add_argument("--saves", action="store_true", help="also copy the memory cards (disc/mc0, disc/mc1)")
-    p.set_defaults(func=cmd_portable)
 
     p = sub.add_parser("make-hashes", help="(maintainers) regenerate hashes.json from a known-good dump")
     p.add_argument("--iso", required=True)
