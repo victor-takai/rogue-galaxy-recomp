@@ -960,11 +960,13 @@ class Window(Gtk.ApplicationWindow):
         self.log_scroll = Gtk.ScrolledWindow(min_content_height=200, child=self.log_view)
         expander.set_child(self.log_scroll)
         content.append(expander)
-        self.close_button = Gtk.Button(label="Close", halign=Gtk.Align.END, visible=False)
+        self.close_button = Gtk.Button(label="Close", halign=Gtk.Align.CENTER, visible=False, margin_bottom=16)
         self.close_button.add_css_class("suggested-action")
         self.close_button.connect("clicked", lambda *_: self.get_application().quit())
-        content.append(self.close_button)
-        return self.beside_art(content)
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.append(self.beside_art(content))
+        page.append(self.close_button)  # centred in the window, like Install
+        return page
 
     # -- choosing files
     def pick_file(self, callback, title: str) -> None:
@@ -1139,7 +1141,7 @@ class Window(Gtk.ApplicationWindow):
         self.bar.set_fraction(1.0)
         self.install_title.set_text("Done")
         self.install_sub.set_text("Rogue Galaxy is installed.")
-        self.step_label.set_text("")
+        self.step_label.set_visible(False)
         steam = ("It is in your Steam library, under Non-Steam. Switch to game mode and play. "
                  if self.cfg.steam else "Add rogue-galaxy.sh to Steam as a non-Steam game, then switch to game "
                                         "mode and play. ")
