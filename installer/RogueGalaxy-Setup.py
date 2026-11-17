@@ -36,9 +36,9 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk  # noqa: E402
 
-REPO = os.environ.get("RG_UPDATE_REPO", "thibault-lgm/deck-galaxy")
+REPO = os.environ.get("RG_UPDATE_REPO", "touyoo0/deck-galaxy")
 API = os.environ.get("RG_UPDATE_API", f"https://api.github.com/repos/{REPO}/releases?per_page=10")
-REF = os.environ.get("RG_SETUP_REF", "main")
+REF = os.environ.get("RG_SETUP_REF", "steamdeck-only")
 NEED_GB = 24  # the extracted disc, the generated code, the build
 ISO_BYTES = 6_967_721_984  # Redump's image of the USA release
 

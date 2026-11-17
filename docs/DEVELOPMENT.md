@@ -106,7 +106,7 @@ the project's fixes off to compare.
 | `RG_SCENE_TRACE=1` | Prints each change of the game's mode and phase and of the main menu's state (`[scene]` lines; the quick scenes go by the mode and the warp's script) |
 | `RG_UPDATE_AS=VERSION` | The check for a newer release (`src/update_check.h`, the menu's "Check for new versions") takes this build for that version, to see the notice; scripted runs (`RG_INPUT`) never check |
 | `RG_HOME=0` | Start the game without its home screen (Play, Update, Quit), as a scripted run does: `RG_INPUT` set also skips it |
-| `RG_UPDATE_REPO=owner/name` | The repository whose releases the check and `update.sh` read (default `thibault-lgm/deck-galaxy`) |
+| `RG_UPDATE_REPO=owner/name` | The repository whose releases the check and `update.sh` read (default `touyoo0/deck-galaxy`) |
 | `RG_UPDATE_API=URL` | Read the release list from this URL instead of GitHub's API; a `file://` URL serves a test release (`update.sh` reads the same variable) |
 | `RG_SELFTEST=gs` | Check the code changed in vendored dependencies, then exit (`all` does the same; another value checks nothing) |
 | `RG_EE_CVT=round` | Diagnostic: float-to-int conversions round, as the runtime used to, instead of truncating as the EE does |

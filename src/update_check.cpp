@@ -19,7 +19,7 @@ namespace
 std::string repo()
 {
     const char *given = std::getenv("RG_UPDATE_REPO");
-    return given && *given ? given : "thibault-lgm/deck-galaxy";
+    return given && *given ? given : "touyoo0/deck-galaxy";
 }
 std::string releasePage()
 {

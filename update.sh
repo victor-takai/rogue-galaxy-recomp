@@ -11,7 +11,7 @@
 # RG_UPDATE_REPO=owner/name picks the repository.
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
 mkdir -p build
-repo=${RG_UPDATE_REPO:-thibault-lgm/deck-galaxy}
+repo=${RG_UPDATE_REPO:-touyoo0/deck-galaxy}
 api=${RG_UPDATE_API:-https://api.github.com/repos/$repo/releases?per_page=10}
 archive=build/update-download.zip
 

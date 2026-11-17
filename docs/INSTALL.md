@@ -23,7 +23,7 @@ You need:
 Then, in desktop mode:
 
 1. Download `RogueGalaxy-Setup.py` from the
-   [releases](https://github.com/thibault-lgm/deck-galaxy/releases) page and
+   [releases](https://github.com/touyoo0/deck-galaxy/releases) page and
    double-click it (Execute). It needs only what SteamOS has: Python with
    GTK 4, curl, git and distrobox.
 2. Choose your disc image, then where to install: the internal storage or
@@ -42,7 +42,7 @@ nothing from the container. The game opens on its home screen (Play, Update);
 View + Menu opens its menu. The log of the game is `build/last-run.log`.
 
 Without the installer, from a terminal: `git clone --recurse-submodules
-https://github.com/thibault-lgm/deck-galaxy.git`, then `./install.sh --iso
+https://github.com/touyoo0/deck-galaxy.git`, then `./install.sh --iso
 FILE` in the folder.
 
 ## Undub (optional)
