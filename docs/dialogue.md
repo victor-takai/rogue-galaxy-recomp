@@ -11,7 +11,7 @@ guest addresses in the same executable.
 
 ## What shipped
 
-The Japanese voices and movies, as the undub. `Install-Undub.bat` (through
+The Japanese voices and movies, as the undub. `setup.py extract-japanese` (through
 `tools/install/install-undub.ps1`) runs `python setup.py extract-japanese`.
 It checks that the image is the Japanese Director's Cut by its two voice
 indexes (`config/SCUS_974.90/japanese.json`), then copies the voice archives

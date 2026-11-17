@@ -52,15 +52,15 @@ The C++ our build runs is in `build/generated/main/`, one file per function
 
 ## Watch it run
 
-These variables go in `debug\RogueGalaxy.bat`, which has examples, and print
-to `build/last-run.log`. Their details, defaults and limits are in
+These variables go in the environment (or in Steam's launch options for
+the game, `RG_TRACE=0x... %command%`), and print to `build/last-run.log`. Their details, defaults and limits are in
 [DEVELOPMENT.md](DEVELOPMENT.md#diagnosis), with the rest of the tools.
 
 | Variable | What it shows |
 |---|---|
 | `RG_TRACE=0xADDR,...` | The first calls of those functions: arguments, return address and result. `RG_TRACE_ARG0=0xOFF` adds the word at a0+OFF, handy when a0 points at a structure |
 | `RG_WATCH=0xADDR,...` | Those memory words, every second |
-| `RG_HWWATCH=0xADDR` | Who writes a memory word, with the writer's call stack. Add `RG_HWWATCH_RANGE=0-0xFFFFFFFF` to catch every write: by default it reports only values that point into the main stack. Windows only |
+| `RG_HWWATCH=0xADDR` | Who writes a memory word, with the writer's call stack. Add `RG_HWWATCH_RANGE=0-0xFFFFFFFF` to catch every write: by default it reports only values that point into the main stack. Not available on the Deck (a stub) |
 | `RG_SCENE_TRACE=1` | Each change of the game's mode and phase, and the main menu's state |
 
 `RG_TRACE`, like a hook, sees only the calls that go through the function
@@ -69,17 +69,10 @@ table: a function reached by a tail `j` does not show
 
 ## Look at memory from outside
 
-The game's 32 MB of memory is one block inside `roguegalaxy.exe`, which can
-sit at a different place on each run. `tools\hang\dumpmem.ps1` finds it, prints
-`rdram at <address>`, and saves it to `rdram.bin`:
-
-```
-powershell -File tools\hang\dumpmem.ps1 -ProcId <pid> -OutDir build\run\hang -Gp 0x00485170
-```
-
-A game address A is at that host address plus A, which is also what a tool
-such as Cheat Engine needs as its base for the run. In `rdram.bin`, A is
-simply the offset.
+The old way to dump the game's memory from outside (`dumpmem.ps1`) was
+Windows only and is gone from this fork. On the Deck, `RG_WATCH`, `RG_TRACE`
+and `tools/hang/stackwalk.py` on a dump you make yourself (`gdb` or
+`/proc/<pid>/mem` in the container) cover the same ground.
 
 ## A real case: instant text
 

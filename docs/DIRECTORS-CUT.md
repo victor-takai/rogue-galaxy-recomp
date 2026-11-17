@@ -13,7 +13,7 @@ Japanese disc:
 | Director's Cut party AI | The allies' AI: [below](#party-ai) |
 
 They are in F1 > Settings > Game, under Battles and rewards, off by
-default, and take effect at the next start. Each needs `Install-Undub.bat`
+default, and take effect at the next start. Each needs `setup.py extract-japanese`
 to have read your image of the Director's Cut
 ([INSTALL.md](INSTALL.md#undub-optional)); until then the menu greys them
 out.
@@ -104,13 +104,13 @@ the Japanese disc's numbers.
 
 ## Where it comes from
 
-No file of the Japanese disc is in this project. `Install-Undub.bat` reads
+No file of the Japanese disc is in this project. `setup.py extract-japanese` reads
 your image: besides the voices and movies, it writes into
 `disc\JA\balance` the four tables the balance changes (the Japanese
 numbers, with your text's names) and the enemies' and allies' files the
 Director's Cut changed, as that disc has them. With the European texts,
-the install that comes second (`Install-Undub.bat` or
-`Install-European.bat`) makes the tables for their languages. How it is
+the install that comes second (`setup.py extract-japanese` or
+`setup.py extract-european`) makes the tables for their languages. How it is
 done: [DISC.md](DISC.md#the-japanese-disc-undub) and `src/dc_balance.h`.
 
 What has been played with the options on is the early game; most of the

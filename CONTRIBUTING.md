@@ -29,12 +29,12 @@ closed after two weeks without an answer, and reopened when the answer comes.
   with every option at its default changes (the picture, timing, speed,
   saves), the pull request also adds a way to get the old behaviour, so both
   can be compared in one build.
-- **Renderer changes pass the frame-compare gate.** The scripted walk
-  (`tools/bench/walk.sh`), and a battle when the change touches effects, must
-  give frames byte-identical to main's at 1x and 3x with the change switched
-  off, and with it on unless the picture is meant to change (then show it
-  before and after). The maintainer runs the gate on the pull request's head
-  merged with main.
+- **Renderer changes show their frames.** The scripted walk that gave
+  byte-identical frames (`tools/bench/walk.sh`) only worked on Windows and is
+  gone from this fork. Compare the picture before and after at 1x and 2x with
+  `RG_UI_SCRIPT` screenshots (`tools/bench/cmpvram.py` for VRAM), a battle
+  too when the change touches effects, and put the images in the pull
+  request.
 - **One concern per pull request.** Stacks are welcome: each pull request
   based on the previous one, its description saying its place (2 of 3, based
   on #N).
@@ -43,7 +43,7 @@ closed after two weeks without an answer, and reopened when the answer comes.
 - **Name issues with "Refs #N"**, never "Fixes #N" (that would close the issue
   at the merge).
 - **Fill in the template**: whether the default path changes, what you tested
-  on (OS, GPU, internal scale and the pull request's head commit), what you did
+  on (Steam Deck LCD or OLED, internal scale and the pull request's head commit), what you did
   not test, and images before and after when the change is visible.
 
 Pull requests are merged with a merge commit, after the maintainer's review

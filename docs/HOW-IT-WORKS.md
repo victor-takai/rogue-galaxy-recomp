@@ -13,9 +13,9 @@ translates the game's code bit by bit while you play.
 This project works differently. Before the game is built, a tool called a
 recompiler ([PS2Recomp](https://github.com/ran-j/PS2Recomp)) reads the game's
 program once and translates every one of its functions into C++, the
-language Windows programs are written in. That C++ is then compiled into
-`roguegalaxy.exe`, an ordinary Windows program (it builds on Linux too,
-[BUILDING.md](BUILDING.md)). The game's own logic runs as
+language programs are written in. That C++ is then compiled into
+`roguegalaxy`, an ordinary Linux program that runs on the Steam Deck
+([BUILDING.md](BUILDING.md)). The game's own logic runs as
 it did on the PS2, but as native code.
 
 That is why it is called a static recompilation: "static" because the
@@ -73,8 +73,9 @@ guide to writing a hook.
 
 ## What happens when you press play
 
-1. `Rogue Galaxy.exe` starts `roguegalaxy.exe` and writes its log to
-   `build/last-run.log`.
+1. Steam starts `rogue-galaxy.sh`, which starts `roguegalaxy` and writes its
+   log to `build/last-run.log`. The game opens on its home screen (Play,
+   Update); Play lets the game go on.
 2. The runtime loads the game's program from `disc/`, sets up the PS2's
    memory and installs the hooks.
 3. The translated code starts running, exactly where the PS2 would start it.
@@ -82,7 +83,7 @@ guide to writing a hook.
    Whenever it draws, the graphics chip's work goes to your graphics card
    and then to the window.
 5. Your settings from the F1 menu are kept in
-   `%APPDATA%\RogueGalaxy\Recompiled\settings.ini`.
+   `~/.local/share/RogueGalaxy/Recompiled/settings.ini`.
 
 ## Words you will run into
 

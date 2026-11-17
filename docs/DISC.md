@@ -19,15 +19,15 @@ Per-file sizes and SHA-256 for all 124 files are in
 `python setup.py verify --iso <image> --full` checks a dump against them and
 against Redump without writing anything.
 
-`Install.bat` takes the image as an uncompressed `.iso` of exactly that
-size. A compressed one (`.chd`, `.cso`) must be turned back into an `.iso`
+The installer (`install.sh`) takes the image as an uncompressed `.iso` of
+exactly that size. A compressed one (`.chd`, `.cso`) must be turned back into an `.iso`
 first.
 
 ## The Japanese disc (undub)
 
 The undub takes the voices and movies of the Japanese Director's Cut
-(SCPS-17013) from your own image of it. `Install-Undub.bat` (or
-`python setup.py extract-japanese --iso <image>`) copies them, about 3 GB,
+(SCPS-17013) from your own image of it. The installer's Options page (or
+`python3 setup.py extract-japanese --iso <image>`) copies them, about 3 GB,
 into `disc/JA`; a movie the US disc has the same bytes of is not copied. It
 checks the image's two voice indexes against
 [`config/SCUS_974.90/japanese.json`](../config/SCUS_974.90/japanese.json)
@@ -45,7 +45,7 @@ against `balance_files` and packed into `files.dat` (about 20 MiB) with
 their list, `files.idx` (what each part changes:
 [DIRECTORS-CUT.md](DIRECTORS-CUT.md); `src/dc_balance.h`). Run again, it
 copies only the voices and movies not already there. `setup.py install`
-(so `Update.bat` too) makes the balance's files for an undub installed
+(so an update too) makes the balance's files for an undub installed
 without them, from the image `disc/JA/manifest.json` names, when it is
 still there.
 
@@ -58,7 +58,7 @@ and `setup.py install` make the tables of a language added or built again
 later, or of one whose files are gone, without the Japanese image. When those
 are missing or damaged they read the image `disc/JA/manifest.json` names, if
 it is still there; otherwise that text keeps the US numbers until
-`Install-Undub.bat` runs again. A text whose tables could not be made is noted
+`setup.py extract-japanese` runs again. A text whose tables could not be made is noted
 in `not_made.txt` and tried again once it is built again.
 
 ## The European disc (texts)
@@ -67,8 +67,8 @@ The European release (SCES-54552) has the game's text in English, French,
 German, Spanish and Italian, but in a revised build: its scene scripts are
 compiled for a newer script engine, its menu packs hold other entries and
 its game tables carry the Director's Cut balance, so the US executable
-cannot read its files as they are. `Install-European.bat` (or
-`python setup.py extract-european --iso <image>`) builds, for each of the
+cannot read its files as they are. The installer's Options page (or
+`python3 setup.py extract-european --iso <image>`) builds, for each of the
 four languages, the files the US executable asks for in that language, each
 from the US file with the European words put in: the lines of scenes and
 menus by their labels, the strings of the game's tables (names,

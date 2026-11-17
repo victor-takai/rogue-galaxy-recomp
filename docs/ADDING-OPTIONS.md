@@ -129,7 +129,7 @@ if ((key == "mouse_sensitivity" || key == "mouse_invert_vertical") && !rg::mouse
 ```
 
 Short and plain: what to turn on, set or run ("Needs your Japanese disc:
-run Install-Undub.bat."). The help keeps saying what the option needs. A
+run setup.py extract-japanese."). The help keeps saying what the option needs. A
 value of an option with `choices` that would do nothing (a language not
 installed) is greyed out alone, by `gameChoiceBlocked`.
 
@@ -186,6 +186,6 @@ game's own menu", among the ones in F1 alone.
    in `kLocal`.
 6. `docs/OPTIONS.md`, `docs/DEVELOPMENT.md`, `CHANGELOG.md`.
 7. Try it: flip it in F1 and see the game change; restart and see it kept
-   (`%APPDATA%\RogueGalaxy\Recompiled\settings.ini`, `[game]`); run once
+   (`~/.local/share/RogueGalaxy/Recompiled/settings.ini`, `[game]`); run once
    with the `RG_` variable; flip it on the game's Settings screen if it is
    there.

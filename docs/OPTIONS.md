@@ -48,7 +48,7 @@ Settings has seven pages, written here as F1 > Settings > Game and so on:
 An option that does nothing as things stand stays on its page, greyed
 out, with a line under it saying what would make it work: Mouse
 sensitivity and Invert mouse up and down until Mouse camera is on, the
-undub until `Install-Undub.bat`
+undub until `setup.py extract-japanese`
 has read your Japanese disc, Borders while the picture fills the window,
 a language of Text whose files are missing.
 
@@ -111,7 +111,7 @@ The numbers are against the game's own, 1.0x.
 | Weapon growth | 1.0x to 10.0x: each battle fills a weapon's gauge (15 to full), then its attributes, by 1 point, or more. |
 | Shop prices | 0.1x to 2.0x. |
 | Action gauge speed | 0.25x to 4.0x. |
-| Director's Cut balance | Off by default. Turns on the battle balance of the Japanese Director's Cut (SCPS-17013); what it changes: [DIRECTORS-CUT.md](DIRECTORS-CUT.md#balance). Needs your Japanese disc: run `Install-Undub.bat` (it serves all three Director's Cut options). Takes effect at the next start. |
+| Director's Cut balance | Off by default. Turns on the battle balance of the Japanese Director's Cut (SCPS-17013); what it changes: [DIRECTORS-CUT.md](DIRECTORS-CUT.md#balance). Needs your Japanese disc: run `setup.py extract-japanese` (it serves all three Director's Cut options). Takes effect at the next start. |
 | Director's Cut enemy behavior | Off by default. Turns on the enemies' attacks and AI of the same release ([DIRECTORS-CUT.md](DIRECTORS-CUT.md#enemy-behavior)), with or without the balance. Needs the same disc. Takes effect at the next start. |
 | Director's Cut party AI | Off by default. Turns on the allies' AI of the same release ([DIRECTORS-CUT.md](DIRECTORS-CUT.md#party-ai)). Needs the same disc. Takes effect at the next start. |
 
@@ -138,8 +138,8 @@ F1 > Settings > Language.
 
 | Option | |
 |---|---|
-| Text | English (the game's), Français, Deutsch, Español or Italiano: the menus, scenes and battles in that language of the European release, from your own European disc (SCES-54552). Needs that disc's texts in `disc/EU`: double-click `Install-European.bat` (after `Install.bat`) and pick your European disc image, or drop it onto the file; by hand, `python setup.py extract-european --iso "<your European disc>"`. A few lines the European disc has no words for stay English. Takes effect at the next start. |
-| Undub (Japanese voices) | The voices in scenes and the movies come from your own Japanese Director's Cut (SCPS-17013) instead of the English ones; the text stays as it is. Needs that disc's files in `disc/JA`: double-click `Install-Undub.bat` (after `Install.bat`) and pick your Japanese disc image, or drop it onto the file; by hand, `python setup.py extract-japanese --iso "<your Japanese disc>"`. A few lines (63) have no Japanese voice and play silent. Takes effect at the next start. |
+| Text | English (the game's), Français, Deutsch, Español or Italiano: the menus, scenes and battles in that language of the European release, from your own European disc (SCES-54552). Needs that disc's texts in `disc/EU`: add your European disc image on the installer's Options page, or drop it onto the file; by hand, `python setup.py extract-european --iso "<your European disc>"`. A few lines the European disc has no words for stay English. Takes effect at the next start. |
+| Undub (Japanese voices) | The voices in scenes and the movies come from your own Japanese Director's Cut (SCPS-17013) instead of the English ones; the text stays as it is. Needs that disc's files in `disc/JA`: add your Japanese disc image on the installer's Options page, or drop it onto the file; by hand, `python setup.py extract-japanese --iso "<your Japanese disc>"`. A few lines (63) have no Japanese voice and play silent. Takes effect at the next start. |
 
 ## In the game's own menu
 
@@ -160,10 +160,9 @@ alone.
 ## Good to know
 
 - The window opens as you left it. Settings are saved in
-  `%APPDATA%\RogueGalaxy\Recompiled\settings.ini`, screenshots in
-  `%APPDATA%\RogueGalaxy\Recompiled\screenshots` (F1 > Game > Open
-  screenshots folder).
-- On a 144 Hz monitor 60 fps judders a little; 120 Hz or variable refresh
-  looks smoother.
+  `~/.local/share/RogueGalaxy/Recompiled/settings.ini`, screenshots in
+  `~/.local/share/RogueGalaxy/Recompiled/screenshots` (Game > Open
+  screenshots folder). They are the same for every install on the Deck.
+- The Deck's screen is 60 Hz (the OLED 90 Hz): 60 fps fits it.
 - Each option also has an environment variable, for testing:
   [DEVELOPMENT.md](DEVELOPMENT.md).
