@@ -38,7 +38,7 @@ SteamOS itself and needs nothing from the container. Then:
    desktop layout, where the controller acts as a mouse and keyboard, so
    switch to game mode to play.
 2. The game starts in fullscreen when Steam sets `SteamDeck=1` (game mode).
-   Back + Start opens its menu (F1).
+   View + Menu opens its menu.
 
 If it stops, run `./install.sh` again: it goes on where it stopped. The log
 of the game is `build/last-run.log` (the run before: `build/last-run.prev.log`).

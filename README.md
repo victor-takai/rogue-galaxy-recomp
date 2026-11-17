@@ -19,7 +19,7 @@ Linux setups are not supported here.
 - 60 fps
 - Widescreen
 - Up to 8x internal resolution
-- In-game menu (F1)
+- In-game menu (View + Menu on the Deck)
 - [New game settings](docs/OPTIONS.md)
 - Japanese voices and movies (undub)
 - [The Japanese Director's Cut's](docs/DIRECTORS-CUT.md) battle balance,
@@ -41,7 +41,7 @@ Known issues are in the [CHANGELOG](CHANGELOG.md); what is being worked on
 is in [docs/STATUS.md](docs/STATUS.md).
 
 **Found a problem?** Open an [issue](../../issues/new/choose): its form asks
-what you were doing, the version (F1 > Rogue Galaxy > About) and
+what you were doing, the version (menu > Rogue Galaxy > About) and
 `build/last-run.log`. The log of the run
 before is `build/last-run.prev.log`. Rules for issues and pull requests:
 [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -67,7 +67,7 @@ it sets up itself. The game then runs on the Deck as it is.
    ./install.sh --iso /path/to/rogue-galaxy.iso
    ```
 3. Add `rogue-galaxy.sh` to Steam (Games > Add a Non-Steam Game), then
-   switch to game mode and play. Back + Start opens the game's menu (F1).
+   switch to game mode and play. View + Menu opens the game's menu.
 
 The log is `build/last-run.log`. More in
 [docs/INSTALL.md](docs/INSTALL.md) and
@@ -75,36 +75,33 @@ The log is `build/last-run.log`. More in
 
 ## Controls
 
-A gamepad, or the keyboard and mouse: the sword on the left click, the
-guard on E or the right click, jump on Space, the gun on F, the menus on
-Tab or Esc. In the game's menus the right click and Esc go back and the
-wheel moves up and down. All of it can be changed in F1 > Settings > Controls.
+The Steam Deck's own controls work as a gamepad in game mode (Steam's
+default layout for a non-Steam game; a game started from desktop mode gets
+the mouse-and-keyboard layout instead). The Steam button stays Steam's.
 
-| Pad | Keyboard and mouse |
+| Deck | PS2 pad |
 |---|---|
-| Left stick | W A S D (hold Left Ctrl to walk) |
-| Right stick | The mouse, or I J K L |
-| D-pad | Arrow keys; the wheel is left and right |
-| ✕ / ○ / ▢ / △ | Left click / Space / F / Tab or Esc |
-| L1 / R1 / L2 / R2 | Q / E or right click / 1 / 2 |
-| L3 / R3 | C / V |
-| Start / Select | Enter / M |
+| Left stick / D-pad | Left stick / D-pad |
+| Right stick | Right stick |
+| A / B / X / Y | ✕ / ○ / ▢ / △ |
+| L1 / R1 / L2 / R2 | L1 / R1 / L2 / R2 |
+| L3 / R3 | L3 / R3 |
+| Menu / View | Start / Select |
 
-In game mode the game is fullscreen and the Steam Deck's controls work as a gamepad.
+All of it can be changed in the game's menu, Settings > Controls.
 
-### The F1 menu
+### The game's menu
 
-**F1** opens the menu's top bar, and its Settings window (the Guide button
-or Back + Start opens it at once) has the pages: display, sound, controls,
-the game options, Language (the text's language, the undub), Textures and
-Interface. Most game options are also on the game's own Settings screen
-(System > Settings). Every option and where it is:
-[docs/OPTIONS.md](docs/OPTIONS.md).
+**View + Menu** opens the menu's top bar and its Settings window, which
+has the pages: display, sound, controls, the game options, Language (the
+text's language, the undub), Textures and Interface. Most game options are
+also on the game's own Settings screen (System > Settings). Every option and
+where it is: [docs/OPTIONS.md](docs/OPTIONS.md).
 
-With a controller: ✕ opens a page, ○ goes back, △ reaches the top bar,
+With the Deck's buttons: A opens a page, B goes back, Y reaches the top bar,
 L1 and R1 turn the pages.
 
-<p align="center"><img src="docs/images/menu-game.jpg" width="70%" alt="The F1 menu's Game page"></p>
+<p align="center"><img src="docs/images/menu-game.jpg" width="70%" alt="The menu's Game page"></p>
 
 ## More
 
