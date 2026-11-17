@@ -1,23 +1,23 @@
 # Building by hand
 
-For developers and other systems: these are the steps
-[`Install.bat`](INSTALL.md#install-windows) runs on Windows.
+For developers: these are the steps [`install.sh`](INSTALL.md#install) runs
+on the Steam Deck. The target is the Steam Deck only (SteamOS, x86_64,
+Vulkan).
 
 ## Setup
 
-Requirements: Git, Python 3.11+, CMake 3.24+ with Ninja, clang with
-C++20, and your own dump of the game ([`DISC.md`](DISC.md) lists
-the one that works). The versions tested are the ones `Install.bat`
-downloads, pinned in [`tools/install/install.ps1`](../tools/install/install.ps1):
-llvm-mingw 20260616 (LLVM 22.1.8), CMake 3.31.12, Ninja 1.13.2, Python 3.12.
-With that llvm-mingw and CMake, SDL3's configure checks come answered from
+Requirements: Git, Python 3.11+, CMake 3.24+ with Ninja, clang with C++20,
+and your own dump of the game ([`DISC.md`](DISC.md) lists the one that
+works). SteamOS has none of the build tools: build in the `rg-build`
+container `install.sh` creates (`distrobox enter rg-build`). With the
+matching CMake, SDL3's configure checks come answered from
 `thirdparty/dq8-gfx/cmake/sdl3-preseed.cmake` (a minute less); after
 changing either, SDL3's release or its patches, regenerate it with
 `python tools/install/sdl3_preseed.py` (its help says how).
 
 ```bash
 git clone --recurse-submodules <this repo>
-cd rogue-galaxy-recomp
+cd deck-galaxy
 
 # Read-only check of the dump (add --full to compare the whole image with Redump)
 python setup.py verify --iso "/path/to/Rogue Galaxy (USA).iso"
@@ -35,10 +35,9 @@ python setup.py check
 ## Build
 
 From the repository root. The generated code is built with clang (the flags
-are GNU-style; on Windows an LLVM MinGW clang works). Configuring the game
-downloads raylib (the 5.5 tag's archive) and SDL3, glslang (for the GPU
-backend's shaders) when no GLSL compiler is installed, and, on Windows, a
-prebuilt LGPL FFmpeg whose hash the framework pins. `-DRG_GS_SDLGPU=OFF`
+are GNU-style). Configuring the game downloads raylib (the 5.5 tag's
+archive) and SDL3, and glslang (for the GPU backend's shaders) when no GLSL
+compiler is installed; FFmpeg is built from source inside the game. `-DRG_GS_SDLGPU=OFF`
 at configure leaves out the GPU backend, and with it the menu: the game
 draws with the software GS.
 
@@ -54,7 +53,7 @@ python setup.py recompile
 # 3. Build the game against the framework runtime in build/game
 python setup.py build
 
-# 4. Run it on your extracted disc (on Windows, double-click "Rogue Galaxy.exe")
+# 4. Run it on your extracted disc (or ./rogue-galaxy.sh)
 build/game/src/roguegalaxy disc/SCUS_974.90
 ```
 
@@ -97,8 +96,7 @@ it touches on down. From the repository root:
 | `src/`, `CMakeLists.txt`, `thirdparty/dq8-gfx`, `thirdparty/imgui` | `cmake --build build/game` |
 | `config/SCUS_974.90/` (function maps, recompiler configs, `vu1-programs.txt`, `vu-blocks.txt`), `tools/mwo3/`, `tools/funcmap/` | `python setup.py recompile`, then `python setup.py build` |
 | `patches/ps2recomp/`, or the commit `thirdparty/PS2Recomp` is pinned to | `python setup.py tools`, then `recompile`, then `build` |
-| A new version of a git checkout (`git pull`), or in doubt | `python setup.py install` (on Windows, `Install.bat`) |
-| A new release, in a folder `Install.bat` built | `Update.bat` ([`tools/install/update.ps1`](../tools/install/update.ps1): downloads the zip, writes only the files whose bytes differ, deletes from the code folders what the new version no longer has, then runs the installer) |
+| A new version of a git checkout (`git pull`), or in doubt | `python setup.py install` (or `./install.sh`) |
 
 What each step keeps:
 
@@ -120,30 +118,21 @@ What each step keeps:
   what depends on the changed files.
 - `install` skips the disc once `disc/manifest.json` and the ELF are there
   (delete the manifest to extract again), then runs `tools`, `recompile` and
-  `build` as above. `Install.bat` also keeps the toolchain it downloaded
-  while its hash matches the version pinned in `tools/install/install.ps1`.
-  In a folder with a long path, or with spaces, symbols or letters other
-  than A-Z, it builds through a short name (`build/short-name.txt`, a
-  junction in `C:\RogueGalaxyBuild` that it removes at the end), and the
-  build's caches name that path: build such a folder again with
-  `Install.bat -Updating`, which makes the junction again, not with
-  `cmake --build` or `setup.py`.
+  `build` as above.
 
-## Linux and Steam Deck
+## Steam Deck
 
-`./install.sh [--iso FILE] [--container | --native]` does what `Install.bat`
-does: it builds on the machine when the tools are there, otherwise (SteamOS,
+`./install.sh [--iso FILE] [--container | --native]` builds the game: it builds on the machine when the tools are there, otherwise (SteamOS,
 whose root is read-only and has no compiler) in a distrobox container named
 `rg-build`, an Ubuntu 24.04 that it creates. `./rogue-galaxy.sh` is the
-launcher (the counterpart of `Rogue Galaxy.exe`): it starts the game, keeps
+launcher it starts the game, keeps
 the log in `build/last-run.log` and allows a single instance. The game it
 builds needs only the system's Vulkan, SDL's own dependencies (X11 or
 Wayland, ALSA or PulseAudio) and glibc 2.38 or later; the container is only
 for building.
 
 To update, `git pull --recurse-submodules` and run `./install.sh` again: it
-keeps the extracted disc and rebuilds what changed (`Update.bat` is Windows
-only). The game checks for a new release at start through `curl`.
+keeps the extracted disc and rebuilds what changed. The game checks for a new release at start through `curl`.
 
 Started without a terminal, with a display and with no arguments (a launcher
 such as QuiverLauncher, whose Play runs the first script it finds,
@@ -161,7 +150,7 @@ A release archive carries `REVISION`; `install.sh` copies it to
 unpacked over the folder (how QuiverLauncher updates) is built again on the
 next start, as is a build made by hand with `setup.py` in a release folder.
 Once for each archive unpacked, `install.sh` first removes from the code
-folders what the archive's `FILES` does not list, as `Update.bat` does (a
+folders what the archive's `FILES` does not list, (a
 dropped patch would otherwise still be applied), and gives every file
 today's date, since unzip gives them the archive's, older than the build: an
 update is a full build. The files the framework's patches create stay; the
@@ -186,8 +175,9 @@ By hand, the steps above work as they are, with these needs:
   uses the system's through pkg-config instead.
 - The GNU linker reads each archive once; the game links the generated
   libraries as a rescanned group (`src/CMakeLists.txt`).
-- Some diagnosis tools are Windows only: the profiler (`RG_PROFILE`), the
-  hardware watch (`RG_HWWATCH`) and the host stacks in the stall report.
+- Some diagnosis tools were written for Windows and do not work on the Deck:
+  the profiler (`RG_PROFILE`), the hardware watch (`RG_HWWATCH`) and the host
+  stacks in the stall report.
 
 On a Steam Deck play in game mode, with `rogue-galaxy.sh` added to Steam as
 a non-Steam game: a game started from desktop mode gets Steam's desktop
@@ -198,34 +188,16 @@ during battles (amd-pstate, governor `powersave`); `echo performance | sudo
 tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference`
 avoids it until the next reboot.
 
-## Steam Deck through Proton (untested)
-
-The installer needs Windows, but the game it builds can go to a Steam Deck
-and run through Proton. On the Windows PC, after the install:
-
-    python setup.py portable --out D:\RogueGalaxyDeck --saves
-
-copies the game, its DLLs, `disc/` and the borders into that folder (about
-6.5 GB; `--saves` adds your memory cards, which then go their own way on
-the Deck). Texture packs are not copied: copy `textures\packs` (and
-`textures\hd`) into the new folder's `textures\` by hand. Copy the folder
-to the Deck, add `Rogue Galaxy.exe` to Steam as a non-Steam game, and
-force a Proton version in its Properties > Compatibility. It starts in
-fullscreen there; Back + Start opens the menu (F1).
-
 ## Layout
 
 | Path | What |
 |---|---|
-| `Install.bat`, `tools/install/` | The Windows installer: build tools into `toolchain\`, then `setup.py install` |
-| `Update.bat`, `tools/install/update.ps1` | Brings a folder `Install.bat` built to the newest release and rebuilds what changed (a git checkout uses `git pull` instead) |
-| `Install-Undub.bat`, `tools/install/install-undub.ps1` | The Japanese voices from your own Japanese disc, into `disc/JA` (`setup.py extract-japanese`), and its battle balance into `disc/JA/balance` (`setup.py director-cut-balance`) |
-| `Install-European.bat`, `tools/install/install-european.ps1` | The French, German, Spanish and Italian texts from your own European disc, built into `disc/EU` (`setup.py extract-european`, `tools/disc/european.py`) |
+| `install.sh`, `rogue-galaxy.sh` | The installer (builds in a distrobox container) and the launcher |
+| `tools/install/sdl3_preseed.py` | Regenerates SDL3's preseeded configure answers |
 | `CHANGELOG.md` | What each release brings, and its known issues |
-| `setup.py` | `verify`, `extract`, `extract-japanese`, `extract-european`, `director-cut-balance`, `info`, `overlays`, `check`, `recompile`, `tools`, `build`, `install`, `portable` (and `make-hashes`, `maps`, `vu1-manifest`, `vu-blocks-manifest` for maintainers) |
-| `CMakeLists.txt`, `src/` | The game executable: `main.cpp`, the hooks, one file per feature ([HOOKS.md](HOOKS.md)), the overlay manager (`src/overlay/`), the diagnosis tools (`src/debug/`: traces, watches, profiler, stall watch, GS census, self-test) and the Windows launcher, `Rogue Galaxy.exe` (`src/launcher/`) |
+| `setup.py` | `verify`, `extract`, `extract-japanese`, `extract-european`, `director-cut-balance`, `info`, `overlays`, `check`, `recompile`, `tools`, `build`, `install` (and `make-hashes`, `maps`, `vu1-manifest`, `vu-blocks-manifest` for maintainers) |
+| `CMakeLists.txt`, `src/` | The game executable: `main.cpp`, the hooks, one file per feature ([HOOKS.md](HOOKS.md)), the overlay manager (`src/overlay/`), the diagnosis tools (`src/debug/`: traces, watches, profiler, stall watch, GS census, self-test) and the launcher's icon (`src/launcher/`) |
 | `cmake/framework_patches.cmake` | Applies `patches/ps2recomp/` to the framework, at configure and from `setup.py tools` |
-| `debug/` | Launchers for diagnosis: `RogueGalaxy.bat` (the game in a terminal), `-profile`, `-hitches`, `-capture` and `-collect` ([DEVELOPMENT.md](DEVELOPMENT.md)) |
 | `borders/` | An image you put here fills the window beside the 4:3 picture (`borders/README.txt`) |
 | `config/SCUS_974.90/` | `hashes.json` (known-good dump), `overlays.toml` (MWo3 table, loader hook), `funcmap.toml` (map sources and corrections), `functions_<image>.csv` (function maps), `recomp/<image>.toml` (ps2_recomp configs, SDK bindings), `vu1-programs.txt` and `vu-blocks.txt` (VU1 and VU0 microcode locations) |
 | `tools/disc/iso9660.py` | Read-only ISO9660 reader for dual-layer PS2 DVDs |
@@ -234,10 +206,10 @@ fullscreen there; Back + Start opens the menu (F1).
 | `tools/funcmap/` | Function-map builder and the checks behind `setup.py check` |
 | `tools/bench/` | `walk.sh NAME [SCALE] [FPS]`: the scripted Salgin walk on the pad clock, for speed (3x, 60 fps mode, the `[gfx]` intervals before the logged frame) and for regressions (1x, 30 fps mode, `cmpvram.py` against a reference frame made with the same save); `PROFILE=1` samples the threads as well. It needs the maintainer's input scripts in `build/run/` and saves in `disc/mc0`, which are not in the repository |
 | `tools/mipsdis.py` | Disassembler for the main program, with the map's names ([FINDING-THINGS.md](FINDING-THINGS.md)) |
-| `tools/hang/` | A frozen game's memory dumped (`dumpmem.ps1`), a thread's call chain read from it (`stackwalk.py`), an AI script decoded (`aiscript.py`) |
+| `tools/hang/` | A thread's call chain read from it (`stackwalk.py`), an AI script decoded (`aiscript.py`) |
 | `tools/profile/report.py` | Reads the profiles `RG_PROFILE` writes ([DEVELOPMENT.md](DEVELOPMENT.md)) |
 | `tools/vu1/` | Study of the VU1 programs: disassembler, census, captures, and the oracle the native ones are checked against ([VU1-NATIVE.md](VU1-NATIVE.md)) |
-| `tools/texture_pack/` | Making the larger 2D art from what `debug\RogueGalaxy-collect.bat` collected (`make-pack.bat`), and checks of the game's zip and DDS readers ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)) |
+| `tools/texture_pack/` | Making the larger 2D art from what `RG_TEXTURE_DUMP` collected, and checks of the game's zip and DDS readers ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)) |
 | `tools/release/` | `source_zip.py`: the release's source archive, with the submodules; `release_notes.py VERSION`: the release page's text, from that version's section of the CHANGELOG |
 | `thirdparty/PS2Recomp` | Framework submodule; `patches/ps2recomp/` holds our changes to it, applied on configure ([`patches/README.md`](../patches/README.md)) |
 | `thirdparty/dq8-gfx` | SDL3 GPU GS backend and in-game menu from DQ8-Recompiled (GPL-3.0), see its README |

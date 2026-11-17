@@ -31,7 +31,7 @@ What each page here is for, by who it is for. New to the project? Start with
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md): the rules for issues and pull
   requests.
-- [BUILDING.md](BUILDING.md): building by hand, on Windows or Linux, and the
+- [BUILDING.md](BUILDING.md): building by hand on the Steam Deck, and the
   project's layout.
 - [DEVELOPMENT.md](DEVELOPMENT.md): the debug launchers, profiling, and the
   environment variables.

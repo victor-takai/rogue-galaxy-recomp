@@ -5,14 +5,14 @@ changed is in [docs/README.md](docs/README.md).
 
 ## Never game files
 
-Never attach, commit or link a disc image, files from `disc\`, a BIOS or a
+Never attach, commit or link a disc image, files from `disc/`, a BIOS or a
 texture pack, in an issue, a pull request or a comment. The one exception is a
-save, as the `disc\mc0` folder zipped, when an issue asks for it.
+save, as the `disc/mc0` folder zipped, when an issue asks for it.
 
 ## Issues
 
 Open one with a form: bug, performance, feature or question. A bug needs the
-version (F1 > Rogue Galaxy > About) and `build\last-run.log`.
+version (F1 > Rogue Galaxy > About) and `build/last-run.log`.
 
 An issue stays open until a release ships its fix. When the fix is merged, the
 issue gets the `fixed` label and a comment; it is closed on the day a release

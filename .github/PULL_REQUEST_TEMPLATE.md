@@ -14,7 +14,7 @@ behaviour back (an option or an environment variable). -->
 ### Tested on
 
 <!-- OS, GPU, internal scale, and the commit you ran: the PR's head, e.g.
-"Windows 11, RTX 3070, 4x, abc1234". And what you did: a walk, a battle, the
+"Steam Deck OLED, 2x, abc1234". And what you did: a walk, a battle, the
 scene the change is about. -->
 
 ### Not tested

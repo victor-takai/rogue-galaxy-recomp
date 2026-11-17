@@ -4,75 +4,22 @@ To change what the game does, see [HOOKS.md](HOOKS.md). To find the code
 and data behind something in the game, see
 [FINDING-THINGS.md](FINDING-THINGS.md).
 
-## Launchers
+## Launcher
 
-On Windows, double-click `Rogue Galaxy.exe`, which the build puts in the
-repository's folder: it starts the built game on `disc/SCUS_974.90`, writes
-the game's log to `build/last-run.log` (the run before survives as
-`build/last-run.prev.log`) and opens no terminal; a game that ends with an
-error shows the log's last lines in a message box. While the game is not
-built it offers to run `Install.bat` instead (the installer builds it
-first, as soon as the compiler is downloaded), and while `Install.bat` or
-`Update.bat` runs in the folder it says so and starts nothing. `debug\RogueGalaxy.bat`
-does the same in a terminal, which it keeps open until the game closes. The
-log still goes to `build/last-run.log`, not to the terminal: to follow it as
-it is written, run `Get-Content -Wait build\last-run.log` in a second one.
-On an error the terminal shows the log's last lines. The build copies the FFmpeg and clang
-runtime DLLs next to `roguegalaxy.exe`, so it needs nothing on PATH. To set
-any of the variables below, set them in Windows (they reach the game through
-either launcher), add a `set` line to the batch file (it has examples), or set
-them in the terminal before running it. Both launchers also set
-`VK_LOADER_LAYERS_DISABLE=~implicit~`, which keeps other programs' Vulkan
-layers (OBS's capture hook, ReShade, the Steam, GOG and Epic overlays) out
-of the game's process; set it yourself when running from a terminal.
-`Rogue Galaxy.exe` leaves it unset under Wine or Proton, where it would
-reach the host's loader and keep out the layers the picture needs there.
-Both launchers also set `DQ8_GFX_STATS_EVERY=60` unless it is set already:
-a `[gfx]` line a second in `build/last-run.log` (the worker's share of the
-wall is "backend", the VIF1 thread's is the "vif1 busy" line, the game
-thread's load the "ee-dispatches" per frame).
-The launchers in `debug\` are for diagnosis, not for playing.
-`debug\RogueGalaxy-profile.bat` runs the same game with the profiler ready
-(Windows only): each F9 samples every thread for the next 20 seconds
-(`RG_PROFILE_ON_MARK=1`, into `build/run/play-profile-1.prof`, `-2`, ...,
-numbered on from the files already there), so a profile holds the moment
-the player marked; report it with `tools/profile/report.py` against
-`build/run/exe-profile.exe`, the copy of the build it was recorded with,
-which the launcher makes at each start (a report of an older session's
-profile needs that session's build). `RG_PROFILE_BEFORE` makes the windows
-reach back before the F9 (`debug\RogueGalaxy-hitches.bat`, below); without
-`RG_PROFILE_ON_MARK` the window is fixed (`RG_PROFILE_START`,
-`RG_PROFILE_SECONDS`). F9 also writes a `[mark]` line with the seconds
-since launch (any launcher), so pressing it when a drop is felt puts the
-drop next to the `[gfx]` lines of that moment. F10 writes the stall
-watchdog's report at once (the guest
-threads and what each waits on, the semaphores' counts, the host
-stacks), for a freeze the watchdog does not see by itself because the
-screen keeps flipping; the watchdog also reports on its own when the
-main thread has not moved for 15 s, and the runtime logs a `[ee]` line
-when a guest thread ends with pc 0 or the main thread exits. A frozen
-process can be dumped with `tools\hang\dumpmem.ps1` (its guest RAM and
-thread contexts) and a thread's call chain read from the dump with
-`python tools/hang/stackwalk.py DUMPDIR SP RA --exe build/game/src/roguegalaxy.exe`
-(the build that froze; the script runs `llvm-nm`, from the toolchain's
-`bin`, so that folder must be on PATH). The pc these give is the last one
-the generated code stored: with `lean_pc` on (`config/SCUS_974.90/recomp/main.toml`,
-the default) arithmetic stores none, so a thread spinning in a loop of it
-shows the loop's last load, store, branch or call, not the exact
-instruction. To hunt a hang to its instruction, set `lean_pc = false` and
-rebuild (`Update.bat`; it recompiles all game code).
-
-`debug\RogueGalaxy-hitches.bat` is the profile launcher with a stats line every 10 frames, for short hitches: each line also gives the longest frame of its interval (the longest gap between two presents), the longest the main thread was held up ("main stall"), the GPU pipelines created in it and what creating them cost (a first-time state compiles one), and the VU1 pairs that ran on the interpreter (a program the build lacks; the session records it into `build/vu1-profile`, see VU1 programs in [BUILDING.md](BUILDING.md)). Its profiler samples all the time (`RG_PROFILE_BEFORE=10`; about 9% of the VIF1 thread's time at the boss gate, so it is for hunting hitches, not for playing): it writes a profile by itself at a hitch nobody marked (`RG_PROFILE_AUTO_MS=50`: a frame of 50 ms or more and three times the usual, or the frame rate halved for a few frames), of the hitch and half a second either side, up to 30 a session, and the log says so in a `[profile] window N: a hitch` line; an F9 window holds the 10 seconds before the press and the 5 after. Press F9 at each hitch felt, then read the lines around the `[mark]` (`python tools/bench/hitches.py build/last-run.log`, one row per interval); a profile window still open when the game is closed is cut short and written.
-
-`debug\RogueGalaxy-capture.bat` sets `RG_GS_CAPTURE` to `build\captures`:
-F7 then logs the next frame, for a picture that looks wrong.
-Things drawn through what is in front of them can be lost depth: any
-launcher's log then has `depth lost N, tested after M` on the stats line,
-and the first few of those get a `[gfx] depth lost, then tested` line
-(see "Depth losses" in [the backend's README](../thirdparty/dq8-gfx/README.md)).
-`debug\RogueGalaxy-collect.bat` sets `RG_TEXTURE_DUMP` to
-`textures\collected`, for making a texture pack
-([TEXTURE_PACKS.md](TEXTURE_PACKS.md)).
+`./rogue-galaxy.sh` starts the built game on `disc/SCUS_974.90`, writes the
+game's log to `build/last-run.log` (the run before survives as
+`build/last-run.prev.log`) and allows a single instance. A game that ends with
+an error shows the log's last lines in a dialog. While the game is not built
+it hands over to `install.sh --play`, and while an install runs in the folder
+it says so and starts nothing. To follow the log as it is written, run
+`tail -f build/last-run.log` in a second terminal. To set any of the
+variables below, export them before running the script, or in Steam's launch
+options for the non-Steam game (`RG_FPS=60 %command%`). The script sets
+`DQ8_GFX_STATS_EVERY=60` unless it is set already: a `[gfx]` line a second in
+`build/last-run.log` (the worker's share of the wall is "backend", the VIF1
+thread's is the "vif1 busy" line, the game thread's load the "ee-dispatches"
+per frame). The Vulkan layers are left alone: gamescope's and Steam's overlay
+are among them.
 
 ## Variables
 
@@ -85,7 +32,7 @@ Most of these set an option of the F1 menu for one run, without saving it.
 
 | Variable | Effect |
 |---|---|
-| `RG_SETTINGS_FILE=path` | The menu's settings file (default `settings.ini` in `%APPDATA%\RogueGalaxy\Recompiled`) |
+| `RG_SETTINGS_FILE=path` | The menu's settings file (the game's own settings folder, per user; set it for a run of your own) |
 | `RG_GS_SCALE=N` | GPU internal resolution multiplier for this run (the menu's saved setting otherwise, default 2) |
 | `RG_SHOW_FPS=1` | The menu's frame-rate counter on from the start (in the window title when the runtime presents) |
 | `RG_PRESENT_MODE=vsync\|immediate` | Present mode for this run (the menu's setting otherwise, default mailbox) |
@@ -165,7 +112,7 @@ the project's fixes off to compare.
 | `RG_LIBC_RAND=0` | Leave the game's `rand` (0x133710) to the runtime's libc stub, which returns 15 bits, instead of newlib's generator in `src/libc_rand.cpp`: the game divides every random number by 2^31, so with the stub they all come out 0, and a party member's AI froze the game that way ([STATUS.md](STATUS.md), "The freezes"). For comparing only |
 | `RG_MOVIE_AUDIO=game` | The game's own movie PCM callback, which drops packets the runtime's demux delivers too early (noise) |
 | `RG_STICK_SQUARE=0` | Hand the game the host's round analog stick range as it is. By default `src/stick_response.cpp` reshapes both sticks onto the DualShock 2's square range (the direction and the pushed distance stay, the distance counts as the longer axis, so a full diagonal reads full on both), which the game's run threshold was tuned for: with a round stick the party only runs within about 20 degrees of each of the four directions and walks in between |
-| `RG_TEXTURE_DUMP=DIR` | Write each piece of 2D art drawn (font glyphs, icons, window pieces) once into DIR, named by its content; `debug\RogueGalaxy-collect.bat` sets it to `textures\collected`, for making a pack |
+| `RG_TEXTURE_DUMP=DIR` | Write each piece of 2D art drawn (font glyphs, icons, window pieces) once into DIR, named by its content; collect into `textures/collected` for making a pack |
 | `RG_TEXTURE_DUMP_WHOLE=DIR` | Write each texture the game builds, whole, as `TEX0HASH-CLUTHASH-BITS.pam` ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)) |
 | `PS2X_AUDIO_DUMP=file` | Framework: copy of the audio output, raw 48 kHz s16 stereo |
 
@@ -184,7 +131,7 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `RG_GIF_THREAD=0` | Run the GS packets of the VIF1 lists on the VIF1 thread instead of a GIF stage of their own |
 | `RG_GS_DEPTH_READS=queue` | Serve the game's depth readbacks through the GS worker queue |
 | `RG_CROP=N` | GS pixels left off each edge of the picture (default 2: the border the game leaves black or half drawn, which a television's overscan hid; 0 shows the whole frame) |
-| `RG_GS_CAPTURE=DIR` | F7 writes the next frame's batches, GS memory and the renderer's target trace (`RG_GS_FRAMELOG`'s files, as `DIR/capture-N.txt`); `debug\RogueGalaxy-capture.bat` sets it to `build\captures`, for a picture that looks wrong |
+| `RG_GS_CAPTURE=DIR` | F7 writes the next frame's batches, GS memory and the renderer's target trace (`RG_GS_FRAMELOG`'s files, as `DIR/capture-N.txt`); use `build/captures` for a picture that looks wrong |
 | `RG_GS_TIMING=1` | Time every GS backend call on both sides of the worker queue, every 2 s |
 | `RG_GS_CENSUS=1` | Every 2 s, the draw states the GPU backend only approximates (destination alpha test and the like), and draws whose scissor is wider than their buffer; `RG_GS_SKIP=MASK:VALUE` drops draws by TEST register |
 | `RG_GS_FRAMELOG=file@N` | Every batch, transfer and clear of one frame, once the game's pad read count reaches N, with GS memory as `file.vram` (`@N#K` also before batch K); `RG_GS_FRAMESKIP=A-B,...` leaves batches of that frame out (`A-` to the end); `RG_GS_TRACE_BEFORE=M` turns the backend's target trace (`DQ8_GFX_TRACE_TARGETS`, a line per transfer and ownership move) on from M pad reads before that frame to its end; `RG_GS_FRAMELOG_COUNT=K` logs the K-1 frames after it too (120 in all at most), as `file.1.txt`, `file.2.txt`, ... (the path without its extension), each with its `.vram` |
@@ -200,7 +147,7 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 | `RG_CAMERA_LOG=N` | Every N presents, the cameras the scene's draws ran under since the last line, busiest first, with their projection; needs `RG_JITTER` |
 | `DQ8_GFX_PROFILE_CYCLE` | Tags the scene's draws with the VU1 program that made them, as `RG_JITTER` does (`src/vif1_thread.cpp`); the backend's profile cycle it is named for is no longer in the code |
 | `RG_TEXTURE_PACK_DECODE=1` | Decode every picture of the texture packs on the CPU, instead of sending the BC1, BC2, BC3 and BC7 ones to the GPU compressed; to compare |
-| `DQ8_GFX_STATS_EVERY=N` | A `[gfx]` stats line every N presented frames (off unless set; both launchers set 60, `debug\RogueGalaxy-hitches.bat` 10) |
+| `DQ8_GFX_STATS_EVERY=N` | A `[gfx]` stats line every N presented frames (off unless set; `rogue-galaxy.sh` sets 60) |
 | `DQ8_GFX_PRESENT_LOG=FILE` | A CSV line per present to the window, for frame pacing, in milliseconds: when the game flipped the frame and when the presenter took it, its kind (`flip`; `vblank`, shown at a vsync with no flip: loading, movies, and every frame with `RG_PRESENT=vblank` or `RG_GS_WORKER=0`; `refresh`, the last frame again), the waits for the GS worker to reach it (under the native pipeline, for its composing), for its drawing on the GPU (fence) and for a swapchain image (acquire), and when the present went out (-1 for what did not happen: no flip, or nothing to the window, hidden or minimised). The stats line's "longest frame" is taken earlier, when a frame is prepared. `python tools/bench/present_log.py FILE [FROM TO] [--hz HZ]` sums it up |
 | `DQ8_GFX_SHOW_FPS=1` | The backend's frame rate in the window title; `RG_SHOW_FPS=1` sets it with `RG_GS_NO_WINDOW=1` |
 | `DQ8_GFX_HIDDEN_WINDOW=1` | The window is never shown or raised, for scripted runs; the GS work is the same, and frames still reach `DQ8_GFX_SCREENSHOT_DIR` (`tools/bench/walk.sh` sets it) |
@@ -222,10 +169,8 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 
 ### Install scripts
 
-The scripts behind `Install.bat`, `Update.bat`, `Install-European.bat` and
-`Install-Undub.bat` (`tools/install/`), and Linux's `install.sh`.
+Linux's `install.sh`.
 
 | Variable | Effect |
 |---|---|
-| `RG_OWN_WINDOW=1` | Never open a window of their own. Started with no input, no output and no arguments, as a launcher's Play starts them, they run their batch file again in a new window and wait for it (`tools/install/launchers.ps1`); a script that runs them so, without `-Yes` or `-Iso`, sets this to keep them in its own output. The new window sets it too |
 | `RG_OWN_WINDOW=PID` | Linux's `install.sh`, not for setting by hand: started without a terminal, it sets this for the copy it runs in the terminal window it opens, PID being itself, which waits for that copy. The copy asks its questions in dialogs, keeps an error on screen until Enter, and starts the game itself at the end when PID no longer waits (a terminal that returned at once). Any argument but `--play` keeps `install.sh` in the output it was started with |

@@ -10,7 +10,7 @@ body:
           required: true
         - label: >-
             I am not attaching anything from the disc, a BIOS or a texture pack.
-            The only game files I may attach are my saves, as the `disc\mc0` folder zipped.
+            The only game files I may attach are my saves, as the `disc/mc0` folder zipped.
           required: true
 
   - type: textarea
@@ -43,10 +43,8 @@ body:
     attributes:
       label: System
       options:
-        - Windows 11
-        - Windows 10
-        - Steam Deck (Proton)
-        - Linux
+        - Steam Deck LCD
+        - Steam Deck OLED
         - Other (name it under Anything unusual)
     validations:
       required: true
@@ -103,20 +101,20 @@ body:
     attributes:
       label: Log
       description: >-
-        Drag `build\last-run.log` here, from a run where it was slow (each start
-        replaces it; the run before is `build\last-run.prev.log`).
+        Drag `build/last-run.log` here, from a run where it was slow (each start
+        replaces it; the run before is `build/last-run.prev.log`).
     validations:
       required: true
 
   - type: textarea
     attributes:
       label: Settings
-      description: Optional. `%APPDATA%\RogueGalaxy\Recompiled\settings.ini`.
+      description: Optional. the game's `settings.ini`.
 
   - type: textarea
     attributes:
       label: Save
       description: >-
         Optional, but asked for: places we have not measured often run graphics
-        code our tests never reach. Zip only the `disc\mc0` folder, attach the zip
-        and say which slot is near the slow place. Nothing else from `disc\`.
+        code our tests never reach. Zip only the `disc/mc0` folder, attach the zip
+        and say which slot is near the slow place. Nothing else from `disc/`.

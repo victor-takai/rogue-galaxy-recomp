@@ -1,4 +1,9 @@
-# Rogue Galaxy Recompiled
+# Rogue Galaxy Recompiled: Steam Deck fork
+
+This fork targets the **Steam Deck (SteamOS) only**. Windows, macOS and other
+platforms are out of scope: do not add code, scripts or docs for them. Build
+and test over SSH on the Deck (`deck@192.168.1.123`, game in
+`/run/media/SD/Recomp/RogueGalaxy`), building in the `rg-build` distrobox.
 
 A static recompilation of Rogue Galaxy (PS2, USA, SCUS-97490) into a native
 game, on [PS2Recomp](https://github.com/ran-j/PS2Recomp). The rules for
@@ -21,7 +26,7 @@ them.
 Nothing read from the disc goes into git, an issue or a pull request:
 `disc/`, disc images, BIOS files, texture packs and art collected from the
 screen (`textures/`), VU1 recordings, frame dumps. The one exception: a
-reporter may attach a save to an issue, as the `disc\mc0` folder zipped;
+reporter may attach a save to an issue, as the `disc/mc0` folder zipped;
 saves never go into git. The repository holds only checksums and addresses
 (`config/`).
 
@@ -30,10 +35,10 @@ saves never go into git. The repository holds only checksums and addresses
 From the repository root (details and the rebuild table in BUILDING.md):
 
 ```bash
-python setup.py install --iso "/path/to/image.iso"  # first time: extract, tools, recompile, build
+./install.sh --iso "/path/to/image.iso"            # first time: extract, tools, recompile, build (in a distrobox)
 cmake --build build/game                           # after a change in src/ or thirdparty/dq8-gfx
 python setup.py recompile && python setup.py build # after a change in config/
-build/game/src/roguegalaxy disc/SCUS_974.90        # run ("Rogue Galaxy.exe" on Windows)
+build/game/src/roguegalaxy disc/SCUS_974.90        # run (or ./rogue-galaxy.sh)
 ```
 
 `build/generated/` is the recompiler's output: change the maps, the
@@ -43,7 +48,7 @@ configs or the patches, never the generated files. The game's log is
 ## Testing
 
 - Run your own copy of the game, not the player's: set `RG_SETTINGS_FILE` to
-  a file of your own (never the one in `%APPDATA%`), `RG_MUTE=1` and
+  a file of your own (never the player's), `RG_MUTE=1` and
   `DQ8_GFX_HIDDEN_WINDOW=1` for scripted runs, and stop only your process, by
   its id.
 - Scripted input: `RG_INPUT` with `RG_INPUT_CLOCK=pad` replays alike at any
@@ -83,7 +88,7 @@ changes the generated code needs `setup.py tools`, `recompile` and `build`.
   the others do:
   `([#N](https://github.com/victor-takai/rogue-galaxy-recomp/issues/N))`.
 - Answer review with new commits; no force-push unless asked.
-- Line endings: LF, except `.bat` and `.ps1` (CRLF; `.gitattributes`).
+- Line endings: LF.
 
 ## Gotchas
 

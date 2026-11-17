@@ -1,10 +1,15 @@
 # Rogue Galaxy Recompiled
 
-**Rogue Galaxy** (Level-5 / SCE, PlayStation 2) as a native Windows game: a
+**Rogue Galaxy** (Level-5 / SCE, PlayStation 2) as a native game for the Steam Deck: a
 static recompilation of the USA release (SCUS-97490), built on
 [PS2Recomp](https://github.com/ran-j/PS2Recomp)
 ([how it works](docs/HOW-IT-WORKS.md)). You build it from your own disc
 image; nothing of the game is distributed.
+
+This repository is a fork of
+[victor-takai/rogue-galaxy-recomp](https://github.com/victor-takai/rogue-galaxy-recomp)
+made for **one machine: the Steam Deck (SteamOS)**. Windows, macOS and other
+Linux setups are not supported here.
 
 <p align="center">
   <img src="docs/images/salgin-plaza.jpg" width="49%" alt="Salgin in widescreen">
@@ -29,7 +34,7 @@ This is an early pre-release (0.3.0). The whole game plays, but:
 - **It has not been played from start to finish.** Most testing covers the
   early game; later chapters, the Factory and Insectron are unchecked.
 - **Expect bugs**: graphics glitches, slowdowns, maybe a freeze. Save often,
-  in more than one slot, and back up `disc\mc0` now and then.
+  in more than one slot, and back up `disc/mc0` now and then.
 - **Only the USA disc** (SCUS-97490) works.
 
 Known issues are in the [CHANGELOG](CHANGELOG.md); what is being worked on
@@ -37,51 +42,36 @@ is in [docs/STATUS.md](docs/STATUS.md).
 
 **Found a problem?** Open an [issue](../../issues/new/choose): its form asks
 what you were doing, the version (F1 > Rogue Galaxy > About) and
-`build\last-run.log` (`install.log` for the install). The log of the run
-before is `build\last-run.prev.log`. Rules for issues and pull requests:
+`build/last-run.log`. The log of the run
+before is `build/last-run.prev.log`. Rules for issues and pull requests:
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Install (Windows)
+## Install (Steam Deck)
 
-You need Windows 10 or 11 (64-bit), about 16 GB free, an internet
-connection and your own uncompressed `.iso` of Rogue Galaxy USA
-(SCUS-97490).
+You need about 20 GB free (the SD card is fine), an internet connection and
+your own uncompressed `.iso` of Rogue Galaxy USA (SCUS-97490).
 
-1. Download `RogueGalaxy-<version>.zip` from the [releases](../../releases)
-   page (not "Source code").
-2. Extract it to a folder on this PC, outside OneDrive, such as `C:\`.
-3. Double-click `Install.bat` and choose your disc image.
-4. Wait about 20 minutes on a fast PC, up to an hour on a slower one.
-5. Play with `Rogue Galaxy.exe`.
+SteamOS has no compiler, so the installer builds in a container (distrobox)
+it sets up itself. The game then runs on the Deck as it is.
 
-To update later, double-click `Update.bat`.
+1. In desktop mode, open a terminal (Konsole) and get the source into a
+   folder of your choice (the SD card works), then enter it:
 
-The full guide, with the undub, the European texts, updating, saves from
-PCSX2 and uninstalling, is in [docs/INSTALL.md](docs/INSTALL.md).
+   ```bash
+   git clone --recurse-submodules https://github.com/thibault-lgm/deck-galaxy.git
+   cd deck-galaxy
+   ```
+2. Run the installer and give it your disc image. It takes 10 to 30 minutes:
 
-## Install (Linux and Steam Deck)
+   ```bash
+   ./install.sh --iso /path/to/rogue-galaxy.iso
+   ```
+3. Add `rogue-galaxy.sh` to Steam (Games > Add a Non-Steam Game), then
+   switch to game mode and play. Back + Start opens the game's menu (F1).
 
-Experimental. You need about 20 GB free, an internet connection, your own
-disc image (as above) and, for a plain Linux PC, a GPU with Vulkan. The
-Steam Deck needs nothing else: SteamOS has no compiler, so the installer
-builds in a container (distrobox) it sets up itself.
-
-1. Get the source (`git clone --recurse-submodules <this repo>`, or the
-   source archive of a release) into a folder of your home.
-2. Run `./install.sh` and give it your disc image (`--iso FILE`). It takes
-   10 to 30 minutes.
-3. Play with `./rogue-galaxy.sh`, or from the application menu.
-
-Started without a terminal (a launcher's Play button, such as
-QuiverLauncher's, or a file manager), `install.sh` opens one to build in,
-asks for the disc image in a window, then starts the game; once the game is
-built, it just starts it.
-
-On a Steam Deck, play in game mode: in desktop mode add
-`rogue-galaxy.sh` to Steam as a non-Steam game (Games > Add a Non-Steam
-Game), then switch to game mode. Back + Start opens the game's menu (F1).
 The log is `build/last-run.log`. More in
-[`docs/BUILDING.md`](docs/BUILDING.md#linux-and-steam-deck).
+[docs/INSTALL.md](docs/INSTALL.md) and
+[docs/BUILDING.md](docs/BUILDING.md#steam-deck).
 
 ## Controls
 
@@ -100,7 +90,7 @@ wheel moves up and down. All of it can be changed in F1 > Settings > Controls.
 | L3 / R3 | C / V |
 | Start / Select | Enter / M |
 
-F11 or Alt+Enter toggles fullscreen. F12 takes a screenshot.
+In game mode the game is fullscreen and the Steam Deck's controls work as a gamepad.
 
 ### The F1 menu
 

@@ -10,7 +10,7 @@ body:
           required: true
         - label: >-
             I am not attaching anything from the disc, a BIOS or a texture pack.
-            The only game files I may attach are my saves, as the `disc\mc0` folder zipped.
+            The only game files I may attach are my saves, as the `disc/mc0` folder zipped.
           required: true
 
   - type: textarea
@@ -51,10 +51,8 @@ body:
     attributes:
       label: System
       options:
-        - Windows 11
-        - Windows 10
-        - Steam Deck (Proton)
-        - Linux
+        - Steam Deck LCD
+        - Steam Deck OLED
         - Other (name it under Anything unusual)
     validations:
       required: true
@@ -78,8 +76,8 @@ body:
     attributes:
       label: Log
       description: >-
-        Drag `build\last-run.log` here (in the game's folder). If you started the
-        game again since, `build\last-run.prev.log` too. For an install or update
+        Drag `build/last-run.log` here (in the game's folder). If you started the
+        game again since, `build/last-run.prev.log` too. For an install or update
         problem, `install.log` or `update.log`.
     validations:
       required: true
@@ -87,15 +85,15 @@ body:
   - type: textarea
     attributes:
       label: Settings
-      description: Optional. `%APPDATA%\RogueGalaxy\Recompiled\settings.ini`.
+      description: Optional. the game's `settings.ini`.
 
   - type: textarea
     attributes:
       label: Save
       description: >-
         Optional, but it often decides whether we can reproduce it: zip only the
-        `disc\mc0` folder, attach the zip and say which slot is near the problem.
-        Nothing else from `disc\`.
+        `disc/mc0` folder, attach the zip and say which slot is near the problem.
+        Nothing else from `disc/`.
 
   - type: textarea
     attributes:
