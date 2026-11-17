@@ -13,14 +13,13 @@ cd "$(dirname "$(readlink -f "$0")")" || exit 1
 mkdir -p build
 repo=${RG_UPDATE_REPO:-thibault-lgm/deck-galaxy}
 api=${RG_UPDATE_API:-https://api.github.com/repos/$repo/releases?per_page=10}
-stage=build/update-staging
 archive=build/update-download.zip
 
 progress() { printf '%s %s\n' "$1" "$2" >build/update.progress.tmp && mv -f build/update.progress.tmp build/update.progress; }
 fail() {
     printf 'error %s\n' "$1" >build/update.progress
     echo "update: $1" >&2
-    rm -rf "$stage" "$archive" build/update.rc
+    rm -f "$archive" build/update.rc
     exit 1
 }
 
@@ -64,15 +63,50 @@ got=$(sha256sum "$archive" | awk '{ print $1 }')
 [ -n "$want" ] && [ "$want" = "$got" ] || fail "The download does not match its checksum"
 
 progress 0.12 "Unpacking"
-rm -rf "$stage"
-python3 -I - "$archive" "$stage" <<'PY' || fail "Could not unpack the archive"
-import sys, zipfile
-zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+# Only the files whose bytes changed are written (a file written is a file
+# rebuilt: unzipping everything would compile the whole game again), the
+# files a newer version dropped are removed, and FILES and REVISION go last.
+# The marker install.sh keeps for an unpacked archive is written here, since
+# it would otherwise take every file for new.
+python3 -I - "$archive" <<'PY' || fail "Could not unpack the archive"
+import os, stat, sys, zipfile
+archive = sys.argv[1]
+old = set(open("FILES").read().split("\n")) if os.path.exists("FILES") else set()
+with zipfile.ZipFile(archive) as z:
+    members = {}
+    for info in z.infolist():
+        if info.is_dir():
+            continue
+        name = info.filename.split("/", 1)[1] if "/" in info.filename else ""
+        if name:
+            members[name] = info
+    if "install.sh" not in members or "FILES" not in members or "REVISION" not in members:
+        sys.exit("not a game release")
+    written = 0
+    for name, info in members.items():
+        if name in ("FILES", "REVISION"):
+            continue
+        data = z.read(info)
+        if os.path.isfile(name) and open(name, "rb").read() == data:
+            continue
+        os.makedirs(os.path.dirname(name) or ".", exist_ok=True)
+        with open(name, "wb") as f:
+            f.write(data)
+        mode = (info.external_attr >> 16) & 0o777
+        os.chmod(name, mode or 0o644)
+        written += 1
+    new = set(z.read("FILES").decode().split("\n"))
+    for name in sorted(old - new):
+        if name and os.path.isfile(name):
+            os.remove(name)
+    for name in ("REVISION", "FILES"):
+        with open(name, "wb") as f:
+            f.write(z.read(members[name]))
+print("update: %d file(s) written, %d dropped" % (written, len([n for n in old - new if n])))
+with open("build/unpacked-archive", "w") as f:
+    f.write("%s %d\n" % (open("REVISION").read().strip(), int(os.stat("FILES").st_ctime)))
 PY
-root=$(find "$stage" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-[ -n "$root" ] && [ -f "$root/install.sh" ] || fail "The archive is not a game release"
-cp -a "$root"/. . || fail "Could not copy the new files"
-rm -rf "$stage" "$archive"
+rm -f "$archive"
 
 # The build: install.sh in the container, its ninja lines as the progress.
 progress 0.15 "Building"
