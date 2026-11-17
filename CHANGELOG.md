@@ -14,6 +14,10 @@
   too, and deletes the folder it had created. The Deck does not sleep or dim
   while it installs. A picture of your own in
   `~/.local/share/RogueGalaxy/theme/` replaces the background.
+- Steam Deck fork: when the installer adds the game to Steam, it gives the
+  entry its pictures (capsule, portrait, banner, logo, icon), as a game from
+  the store has. A picture you already set is kept. Steam shows them after a
+  restart (game mode does it).
 - Steam Deck fork: `installer/RogueGalaxy-Setup.py`, a window to run once in
   desktop mode: it asks for the disc image and the folder, builds the game
   and adds it to Steam.

@@ -28,12 +28,14 @@ import random
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
 import zipfile
+import zlib
 from pathlib import Path
 
 import gi
@@ -112,6 +114,60 @@ def storage_choices() -> list[tuple[str, Path]]:
                 label = "SD card" if entry.name.upper().startswith("SD") or entry.name == "mmcblk0p1" else entry.name
                 choices.append((label, entry / "Games" / "RogueGalaxy"))
     return choices
+
+
+# The Steam library's pictures for the game, from installer/art/steam: file -> name in the account's
+# config/grid folder ({id} is the shortcut's number).
+STEAM_ART = (("capsule.png", "{id}", ".png"), ("portrait.png", "{id}p", ".png"),
+             ("hero.png", "{id}_hero", ".png"), ("logo.png", "{id}_logo", ".png"),
+             ("icon.ico", "{id}_icon", ".ico"), ("logo-position.json", "{id}", ".json"))
+PICTURE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".ico")
+
+
+def steam_userdata() -> Path:
+    return Path(os.environ.get("RG_STEAM_USERDATA") or Path.home() / ".local/share/Steam/userdata")
+
+
+def steam_shortcuts(script: Path) -> list[tuple[Path, int]]:
+    """(an account's config folder, the shortcut's number) for each Steam shortcut that starts this script."""
+    found = []
+    for vdf in steam_userdata().glob("*/config/shortcuts.vdf"):
+        try:
+            data = vdf.read_bytes()
+        except OSError:
+            continue
+        # Each entry starts with its number (appid); its Exe comes before the next entry's.
+        for part in re.split(rb"\x02appid\x00", data)[1:]:
+            match = re.search(rb"\x01[Ee]xe\x00(.*?)\x00", part)
+            if len(part) < 4 or not match:
+                continue
+            exe = Path(match.group(1).decode(errors="replace").strip('"'))
+            try:
+                if exe.exists() and script.exists() and os.path.samefile(exe, script):
+                    found.append((vdf.parent, struct.unpack("<I", part[:4])[0]))
+            except OSError:
+                continue
+    return found
+
+
+def put_steam_art(art: Path, config: Path, appid: int) -> int:
+    """Copies the pictures into config/grid for this shortcut, leaving any picture already there.
+    Returns how many it copied."""
+    grid = config / "grid"
+    grid.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for source, stem, suffix in STEAM_ART:
+        origin, name = art / source, stem.format(id=appid)
+        if not origin.is_file():
+            continue
+        if suffix == ".json":
+            taken = (grid / f"{name}.json").exists()
+        else:
+            taken = any(p.suffix.lower() in PICTURE_SUFFIXES for p in grid.glob(name + ".*"))
+        if not taken:
+            shutil.copyfile(origin, grid / f"{name}{suffix}")
+            copied += 1
+    return copied
 
 
 def looks_like_iso(path: Path) -> str | None:
@@ -503,6 +559,7 @@ class Job(threading.Thread):
         script = self.cfg.dir / "rogue-galaxy.sh"
         if self.in_steam(script):
             self.log("The game is already in Steam: not added again.")
+            self.steam_art(script, wait=False)
             return
         self.say("Adding the game to Steam", 0.98)
         # install.sh wrote the menu entry (named "Rogue Galaxy", with its icon);
@@ -514,6 +571,27 @@ class Job(threading.Thread):
             self.log("Could not add the game to Steam by itself: add rogue-galaxy.sh as a non-Steam game.")
             return
         self.stream([tool, str(desktop)], self.cfg.dir)
+        self.steam_art(script, wait=True)
+
+    def steam_art(self, script: Path, wait: bool) -> None:
+        """The game's pictures in the Steam library (capsule, portrait, hero, logo, icon), like the ones a
+        game from the store has. Steam may need to be restarted (game mode does it) to show them."""
+        art = next((p for p in (Path(__file__).resolve().parent / "art" / "steam",
+                                self.cfg.dir / "installer" / "art" / "steam") if p.is_dir()), None)
+        if not art:
+            return
+        shortcuts = steam_shortcuts(script)
+        for _ in range(15 if wait else 0):  # Steam writes its shortcut a moment after being asked
+            if shortcuts:
+                break
+            time.sleep(2)
+            shortcuts = steam_shortcuts(script)
+        if not shortcuts:
+            self.log("The game's pictures could not be added to Steam: its shortcut was not found.")
+            return
+        copied = sum(put_steam_art(art, config, appid) for config, appid in shortcuts)
+        self.log(f"Added {copied} pictures to the game's Steam entry." if copied
+                 else "The game's Steam entry already has its pictures.")
 
 
 # ---------------------------------------------------------------- the sky
