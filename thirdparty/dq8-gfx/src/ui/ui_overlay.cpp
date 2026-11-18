@@ -243,7 +243,7 @@ void Overlay::setMenuOpen(bool open) {
         return;
     m_menuOpen = open;
     if (!open) {
-        m_settingsOpen = m_aboutOpen = m_shortcutsOpen = m_achievementsOpen = false;
+        m_settingsOpen = m_aboutOpen = m_shortcutsOpen = false;
         m_capture.active = false;
         m_closePopups = true;
     }
@@ -632,10 +632,6 @@ void Overlay::backOut(bool pad) {
         m_shortcutsOpen = false;
         return;
     }
-    if (m_achievementsOpen) {
-        m_achievementsOpen = false;
-        return;
-    }
     if (m_settingsOpen && inside(before.window, m_pagePane)) {
         m_focusList = true;
         return;
@@ -865,8 +861,6 @@ void Overlay::drawFrame() {
         drawAbout();
     if (m_shortcutsOpen)
         drawShortcuts();
-    if (m_achievementsOpen)
-        drawAchievements();
     if (m_statsOpen)
         drawStats();
     drawQuitPrompt();
@@ -911,7 +905,7 @@ void Overlay::drawMenuBar() {
             if (menuItem("About Rogue Galaxy Recompiled"))
                 m_aboutOpen = true;
             if (m_host.achievements && menuItem("Achievements"))
-                m_achievementsOpen = true;
+                openSettings(SettingsPage::Achievements);
             // Named as the window it opens, which lists the controller too.
             if (menuItem("Shortcuts"))
                 m_shortcutsOpen = true;
@@ -958,8 +952,8 @@ void Overlay::drawMenuBar() {
             ImGui::EndMenu();
         }
         if (beginMenu("Settings")) {
-            static constexpr const char *kPages[] = {"Display", "Sound", "Controls", "Game",
-                                                     "Language", "Textures", "Interface"};
+            static constexpr const char *kPages[] = {"Display",  "Sound",        "Controls",  "Game",
+                                                     "Language", "Textures", "Achievements", "Interface"};
             for (int page = 0; page < static_cast<int>(SettingsPage::Count); ++page)
                 if (menuItem(kPages[page], nullptr, m_settingsOpen && m_page == static_cast<SettingsPage>(page)))
                     openSettings(static_cast<SettingsPage>(page));

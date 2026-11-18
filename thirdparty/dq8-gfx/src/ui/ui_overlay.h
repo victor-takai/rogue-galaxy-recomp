@@ -78,6 +78,14 @@ struct AchievementRow {
     bool earned = false;
     std::string badge; // a PNG on disk, empty while there is none yet
 };
+// The signed-in account, and what the last sign-in attempt said.
+struct AchievementAccount {
+    bool signedIn = false;
+    std::string user;
+    std::string message;
+    bool busy = false;   // a sign-in is under way
+    bool failed = false; // `message` is a refusal
+};
 struct AchievementList {
     std::string summary; // one line: the progress, or why there is none
     std::vector<AchievementRow> rows;
@@ -132,6 +140,11 @@ struct HostServices {
     // The achievements, for the Rogue Galaxy menu's Achievements window;
     // empty when the host has none (Rogue Galaxy: added).
     std::function<AchievementList()> achievements;
+    // The account of the Achievements page: who is signed in, signing in with
+    // a user and a password (kept nowhere), and signing out.
+    std::function<AchievementAccount()> achievementAccount;
+    std::function<void(const std::string &user, const std::string &password)> achievementSignIn;
+    std::function<void()> achievementSignOut;
     // A Steam Deck, whose Steam button belongs to Steam: Back + Start is the
     // only way to the menu there, so it cannot be turned off, and the menu
     // names the Deck's buttons (Rogue Galaxy: added).
@@ -150,7 +163,7 @@ struct HostServices {
 // Game: Rogue Galaxy's own switches (added).
 // Language and Textures: the options a host puts there (GameOption::page),
 // apart from Game's (Rogue Galaxy: added).
-enum class SettingsPage : uint8_t { Display, Sound, Controls, Game, Language, Textures, Interface, Count };
+enum class SettingsPage : uint8_t { Display, Sound, Controls, Game, Language, Textures, Achievements, Interface, Count };
 
 class Overlay final : public gfx::SdlGpuOverlay {
 public:
@@ -296,7 +309,7 @@ private:
     void drawCapturePrompt();
     void drawAbout();
     void drawShortcuts();
-    void drawAchievements();
+    void drawAchievementsPage();
     void drawStats();
     void windowBounds(ImVec2 &min, ImVec2 &max) const;
     void drawFps();
@@ -359,8 +372,11 @@ private:
     SettingsPage m_page = SettingsPage::Display;
     bool m_aboutOpen = false;
     bool m_shortcutsOpen = false;
-    bool m_achievementsOpen = false;
     bool m_achievementsLockedOnly = false;
+    bool m_achievementsSignedIn = false;
+    bool m_achievementsSignedInKnown = false;
+    char m_raUser[64] = {};
+    char m_raPassword[128] = {};
     bool m_statsOpen = false;
     // RG_UI_SCRIPT's "icons": every icon on screen, for a screenshot.
     bool m_iconSheet = false;

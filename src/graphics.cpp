@@ -1093,11 +1093,9 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "activating every save point still counts as before.",
          false},
         {"achievements", "RetroAchievements",
-         "The game's 130 RetroAchievements are checked as you play and a notice shows when one is earned, for the "
-         "account saved by the installer or tools/ra_fetch.py --save-login (on by itself once one is saved). "
-         "Nothing is sent but your unlocks and the request for the achievements; the game's files and your save "
-         "stay on this machine.",
-         rg::achievements::signedIn()},
+         "Checks the game's 130 RetroAchievements as you play and shows a notice when one is earned. Sign in "
+         "above; nothing is sent but your unlocks.",
+         rg::achievements::signedIn(), 0, 0, 0, "", 1, true, false, "achievements"},
         {"fast_transporter", "Fast transporters",
          "A transporter's warp plays at up to twice the speed. The music and the sounds keep their pace.", false},
         {"check_updates", "Check for new versions",
@@ -1237,6 +1235,15 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
                 {std::move(row.title), std::move(row.description), row.points, row.earned, std::move(row.badge)});
         return out;
     };
+    host.achievementAccount = [] {
+        const rg::achievements::Account account = rg::achievements::account();
+        return dq8::ui::AchievementAccount{account.signedIn, account.user, account.message, account.busy,
+                                           account.failed};
+    };
+    host.achievementSignIn = [](const std::string &user, const std::string &password) {
+        rg::achievements::signIn(user, password);
+    };
+    host.achievementSignOut = [] { rg::achievements::signOut(); };
     host.newerRelease = [] {
         rg::updates::Release newer = rg::updates::newer();
         return std::make_pair(std::move(newer.version), std::move(newer.url));

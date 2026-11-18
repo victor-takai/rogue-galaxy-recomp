@@ -14,6 +14,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 
@@ -22,9 +23,10 @@ namespace {
 using gfx::PadInput;
 
 constexpr const char *kTimes = "\xC3\x97"; // U+00D7, spelled out for compilers without /utf-8
-constexpr const char *kPageNames[] = {"Display", "Sound", "Controls", "Game", "Language", "Textures", "Interface"};
-constexpr Icon kPageIcons[] = {Icon::Display, Icon::Sound, Icon::Controls, Icon::Disc, Icon::Info, Icon::Folder,
-                               Icon::Interface};
+constexpr const char *kPageNames[] = {"Display",  "Sound",        "Controls",  "Game",
+                                      "Language", "Textures", "Achievements", "Interface"};
+constexpr Icon kPageIcons[] = {Icon::Display, Icon::Sound,  Icon::Controls, Icon::Disc,
+                               Icon::Info,    Icon::Folder, Icon::Check,    Icon::Interface};
 constexpr const char *kProjectUrl = "https://github.com/victor-takai/rogue-galaxy-recomp";
 constexpr const char *kIssuesUrl = "https://github.com/victor-takai/rogue-galaxy-recomp/issues";
 
@@ -238,6 +240,7 @@ void Overlay::drawSettingsWindow() {
         case SettingsPage::Game: drawGamePage(); break;
         case SettingsPage::Language: drawLanguagePage(); break;
         case SettingsPage::Textures: drawTexturesPage(); break;
+        case SettingsPage::Achievements: drawAchievementsPage(); break;
         case SettingsPage::Interface: drawInterfacePage(); break;
         case SettingsPage::Count: break;
         }
@@ -1082,65 +1085,120 @@ void Overlay::drawShortcuts() {
     ImGui::PopStyleVar();
 }
 
-void Overlay::drawAchievements() {
-    const AchievementList list = m_host.achievements ? m_host.achievements() : AchievementList{};
-    centerNextWindow();
-    ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetMainViewport()->WorkSize.x - em(2.0f), em(34.0f)), 0.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(1.4f), em(1.2f)));
-    if (beginWindow("##achievements", nullptr, kDialogFlags & ~ImGuiWindowFlags_AlwaysAutoResize)) {
-        dialogHeader(Icon::Check, "Achievements", &m_achievementsOpen);
-        uint32_t earnedPoints = 0u, totalPoints = 0u;
-        for (const AchievementRow &row : list.rows) {
-            totalPoints += row.points;
-            if (row.earned)
-                earnedPoints += row.points;
+void Overlay::drawAchievementsPage() {
+    const AchievementAccount account = m_host.achievementAccount ? m_host.achievementAccount() : AchievementAccount{};
+    // Signing in turns the option on and signing out turns it off, from here
+    // (the first time the page is drawn only notes who is signed in).
+    if (m_achievementsSignedInKnown && account.signedIn != m_achievementsSignedIn)
+        setGameOptionValue("achievements", account.signedIn);
+    m_achievementsSignedIn = account.signedIn;
+    m_achievementsSignedInKnown = true;
+    const ImVec4 gold = ImGui::ColorConvertU32ToFloat4(palette::kGold);
+    const ImVec4 muted = ImGui::ColorConvertU32ToFloat4(palette::kTextMuted);
+    const ImVec4 good = ImGui::ColorConvertU32ToFloat4(palette::kGood);
+    const ImVec4 bad = ImGui::ColorConvertU32ToFloat4(palette::kBad);
+
+    sectionHeader("RetroAchievements account");
+    ImGui::PushTextWrapPos(0.0f);
+    if (account.signedIn) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(good, "Signed in as %s", account.user.c_str());
+        ImGui::SameLine(0.0f, em(1.0f));
+        if (ImGui::Button("Sign out") && m_host.achievementSignOut)
+            m_host.achievementSignOut();
+    } else {
+        ImGui::InputTextWithHint("##ra-user", "RetroAchievements user", m_raUser, sizeof m_raUser);
+        ImGui::InputTextWithHint("##ra-password", "Password", m_raPassword, sizeof m_raPassword,
+                                 ImGuiInputTextFlags_Password);
+        const bool ready = !account.busy && m_raUser[0] != '\0' && m_raPassword[0] != '\0';
+        ImGui::BeginDisabled(!ready);
+        if (ImGui::Button("Sign in") && m_host.achievementSignIn) {
+            m_host.achievementSignIn(m_raUser, m_raPassword);
+            std::memset(m_raPassword, 0, sizeof m_raPassword); // kept nowhere
         }
-        mutedText("%s", list.summary.c_str());
-        if (!list.rows.empty()) {
-            mutedText("%u of %u points", earnedPoints, totalPoints);
-            ImGui::Checkbox("Only the ones still to earn", &m_achievementsLockedOnly);
-        }
-        ImGui::Dummy(ImVec2(0.0f, em(0.3f)));
-        const float height = std::min(em(24.0f), std::max(em(6.0f), ImGui::GetMainViewport()->WorkSize.y * 0.6f));
-        ImGui::BeginChild("##achievement-list", ImVec2(0.0f, height), ImGuiChildFlags_None);
-        const ImVec4 gold = ImGui::ColorConvertU32ToFloat4(palette::kGold);
-        const ImVec4 muted = ImGui::ColorConvertU32ToFloat4(palette::kTextMuted);
-        for (size_t i = 0; i < list.rows.size(); ++i) {
-            const AchievementRow &row = list.rows[i];
-            if (m_achievementsLockedOnly && row.earned)
-                continue;
-            ImGui::PushID(static_cast<int>(i));
-            // The badge, as on RetroAchievements' page: the colour one once
-            // earned, the grey one before.
-            const float badgeSize = em(3.2f);
-            ImTextureRef badge;
-            ImVec2 badgePixels;
-            const ImVec2 corner = ImGui::GetCursorScreenPos();
-            if (!row.badge.empty() && fileTexture(row.badge.c_str(), badge, badgePixels))
-                ImGui::Image(badge, ImVec2(badgeSize, badgeSize));
-            else
-                ImGui::Dummy(ImVec2(badgeSize, badgeSize));
-            if (row.earned)
-                ImGui::GetWindowDrawList()->AddRect(corner, ImVec2(corner.x + badgeSize, corner.y + badgeSize),
-                                                    palette::kGold, 3.0f, 2.0f);
-            ImGui::SameLine(0.0f, em(0.8f));
-            ImGui::BeginGroup();
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(row.earned ? gold : ImGui::GetStyleColorVec4(ImGuiCol_Text), "%s", row.title.c_str());
-            ImGui::SameLine();
-            ImGui::TextColored(muted, "(%u)", row.points);
-            ImGui::TextColored(muted, "%s", row.description.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::EndGroup();
-            ImGui::Dummy(ImVec2(0.0f, em(0.25f)));
-            ImGui::PopID();
-        }
-        if (list.rows.empty())
-            mutedText("%s", "Turn on RetroAchievements in the Game page to see them here.");
-        ImGui::EndChild();
+        ImGui::EndDisabled();
     }
-    ImGui::End();
-    ImGui::PopStyleVar();
+    if (!account.message.empty())
+        ImGui::TextColored(account.failed ? bad : muted, "%s", account.message.c_str());
+    if (!account.signedIn)
+        mutedText("The password is sent once to retroachievements.org and never kept; only a connection token "
+                  "is, on this machine.");
+    ImGui::PopTextWrapPos();
+
+    // The option on one line, its switch before its name, and its help across the
+    // whole width (the settings table keeps a help in the name's column).
+    const auto option = std::find_if(m_host.gameOptions.begin(), m_host.gameOptions.end(),
+                                     [](const GameOption &candidate) { return candidate.key == "achievements"; });
+    if (option != m_host.gameOptions.end()) {
+        sectionHeader("Tracking");
+        ImGui::AlignTextToFramePadding();
+        drawGameControl(*option);
+        ImGui::SameLine(0.0f, em(0.8f));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(option->label.c_str());
+        if (!option->help.empty()) {
+            ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 0.84f);
+            ImGui::PushStyleColor(ImGuiCol_Text, muted);
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(option->help.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
+            ImGui::PopFont();
+        }
+    }
+
+    const AchievementList list = m_host.achievements ? m_host.achievements() : AchievementList{};
+    sectionHeader("Achievements");
+    ImGui::PushTextWrapPos(0.0f);
+    uint32_t earnedPoints = 0u, totalPoints = 0u;
+    for (const AchievementRow &row : list.rows) {
+        totalPoints += row.points;
+        if (row.earned)
+            earnedPoints += row.points;
+    }
+    mutedText("%s", list.summary.c_str());
+    if (!list.rows.empty()) {
+        mutedText("%u of %u points", earnedPoints, totalPoints);
+        ImGui::Checkbox("Only the ones still to earn", &m_achievementsLockedOnly);
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0.0f, em(0.3f)));
+    const float side = em(3.2f);
+    for (size_t i = 0; i < list.rows.size(); ++i) {
+        const AchievementRow &row = list.rows[i];
+        if (m_achievementsLockedOnly && row.earned)
+            continue;
+        ImGui::PushID(static_cast<int>(i));
+        // A row the cursor can stop on, so the controller scrolls the page
+        // along the list; its picture and texts are drawn over it.
+        const ImVec2 corner = ImGui::GetCursorScreenPos();
+        ImGui::SetNextItemAllowOverlap();
+        ImGui::Selectable("##row", false, ImGuiSelectableFlags_None, ImVec2(0.0f, side));
+        const ImVec2 after = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos(corner);
+        // The badge, as on RetroAchievements' page: the colour one once
+        // earned, the grey one before.
+        ImTextureRef badge;
+        ImVec2 badgePixels;
+        if (!row.badge.empty() && fileTexture(row.badge.c_str(), badge, badgePixels))
+            ImGui::Image(badge, ImVec2(side, side));
+        else
+            ImGui::Dummy(ImVec2(side, side));
+        if (row.earned)
+            ImGui::GetWindowDrawList()->AddRect(corner, ImVec2(corner.x + side, corner.y + side), palette::kGold, 3.0f,
+                                                2.0f);
+        ImGui::SameLine(0.0f, em(0.8f));
+        ImGui::BeginGroup();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(row.earned ? gold : ImGui::GetStyleColorVec4(ImGuiCol_Text), "%s", row.title.c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(muted, "(%u)", row.points);
+        ImGui::TextColored(muted, "%s", row.description.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        ImGui::SetCursorScreenPos(after);
+        ImGui::PopID();
+    }
 }
 
 void Overlay::drawStats() {

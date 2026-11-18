@@ -10,6 +10,7 @@ extern "C"
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -23,6 +24,7 @@ extern "C"
 #include <vector>
 #include <thread>
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -37,6 +39,9 @@ namespace
 // The PS2's main memory, 32 MB: RetroAchievements' addresses are offsets in it.
 constexpr uint32_t kEeRamSize = 0x02000000u;
 constexpr const char *kExecutableName = "SCUS_974.90";
+// The ids from which RetroAchievements adds its own notices to a set (the
+// "Unknown Emulator" warning): not achievements to show or to celebrate.
+constexpr uint32_t kNoticeIdsFrom = 100000000u;
 
 enum class State
 {
@@ -91,6 +96,7 @@ std::filesystem::path settingsDir()
 
 struct Request
 {
+    uint32_t generation = 0;
     std::string url;
     std::string post;
     std::string contentType;
@@ -100,12 +106,16 @@ struct Request
 
 struct Response
 {
+    uint32_t generation = 0;
     std::string body;
     int status = 0;
     rc_client_server_callback_t callback = nullptr;
     void *callbackData = nullptr;
 };
 
+std::atomic<uint32_t> g_requestNumber{0};
+// Bumped when the client is dropped: answers to its requests are dropped too.
+std::atomic<uint32_t> g_generation{0};
 std::mutex g_netMutex;
 std::condition_variable g_netWake;
 std::deque<Request> g_requests;
@@ -117,6 +127,7 @@ bool g_netStarted = false;
 Response perform(const Request &request)
 {
     Response response;
+    response.generation = request.generation;
     response.callback = request.callback;
     response.callbackData = request.callbackData;
     response.status = RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR;
@@ -130,7 +141,8 @@ Response perform(const Request &request)
     std::filesystem::path bodyFile;
     if (!request.post.empty())
     {
-        bodyFile = settingsDir() / "ra" / ("request-" + std::to_string(getpid()) + ".tmp");
+        bodyFile = settingsDir() / "ra" /
+                   ("request-" + std::to_string(getpid()) + "-" + std::to_string(g_requestNumber.fetch_add(1)) + ".tmp");
         std::error_code ec;
         std::filesystem::create_directories(bodyFile.parent_path(), ec);
         {
@@ -197,6 +209,7 @@ void serverCall(const rc_api_request_t *request, rc_client_server_callback_t cal
     queued.url = request->url ? request->url : "";
     queued.post = request->post_data ? request->post_data : "";
     queued.contentType = request->content_type ? request->content_type : "";
+    queued.generation = g_generation.load();
     queued.callback = callback;
     queued.callbackData = callbackData;
     std::lock_guard<std::mutex> lock(g_netMutex);
@@ -223,6 +236,10 @@ void deliverResponses()
             }
             response = std::move(g_responses.front());
             g_responses.pop_front();
+        }
+        if (response.generation != g_generation.load() || !response.callback)
+        {
+            continue; // for a client that is gone
         }
         rc_api_server_response_t answer{};
         answer.body = response.body.c_str();
@@ -356,7 +373,11 @@ void onEvent(const rc_client_event_t *event, rc_client_t *)
     switch (event->type)
     {
     case RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED:
-        if (event->achievement)
+        if (event->achievement && event->achievement->id >= kNoticeIdsFrom)
+        {
+            std::fprintf(stderr, "[ra] notice %u: %s\n", event->achievement->id, event->achievement->title);
+        }
+        else if (event->achievement)
         {
             pushToast(std::string(g_test ? "[test] Achievement unlocked: " : "Achievement unlocked: ") + event->achievement->title + " (" +
                           std::to_string(event->achievement->points) + ")",
@@ -402,6 +423,10 @@ void refreshList()
             for (uint32_t i = 0; i < bucket.num_achievements; ++i)
             {
                 const rc_client_achievement_t *a = bucket.achievements[i];
+                if (a->id >= kNoticeIdsFrom)
+                {
+                    continue; // RetroAchievements' own warning, not one of the set
+                }
                 const bool isEarned = a->state == RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED;
                 Row row{a->title ? a->title : "", a->description ? a->description : "", a->points, isEarned, {}};
                 // The colour badge once earned, the grey one before.
@@ -446,7 +471,7 @@ void onLogin(int result, const char *error, rc_client_t *client, void *)
     if (result != RC_OK)
     {
         fail(std::string("sign-in refused: ") + (error ? error : "?") +
-             " (run tools/ra_fetch.py --save-login again)");
+             " (sign in again on the Achievements page of the menu's Settings)");
         return;
     }
     std::string hash;
@@ -492,7 +517,7 @@ void start()
     std::string user, token;
     if (!readLogin(user, token))
     {
-        fail("not signed in: run tools/ra_fetch.py --save-login");
+        fail("not signed in: sign in on the Achievements page of the menu's Settings");
         return;
     }
     g_client = rc_client_create(readMemory, serverCall);
@@ -511,7 +536,158 @@ void start()
     g_state = State::LoggingIn;
     rc_client_begin_login_with_token(g_client, user.c_str(), token.c_str(), onLogin, nullptr);
 }
+
+// ---- the account ----------------------------------------------------------------
+
+std::mutex g_accountMutex;
+std::string g_accountMessage;
+bool g_accountBusy = false;
+bool g_accountFailed = false;
+// Set by signing in or out, for the frame thread to drop the client and start
+// again: rc_client belongs to that thread.
+std::atomic<bool> g_resetRequested{false};
+
+std::string urlEncode(const std::string &text)
+{
+    static const char *hex = "0123456789ABCDEF";
+    std::string out;
+    for (const unsigned char c : text)
+    {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+        {
+            out += static_cast<char>(c);
+        }
+        else
+        {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+    }
+    return out;
+}
+
+void setAccountMessage(const std::string &message, bool busy, bool failed)
+{
+    std::lock_guard<std::mutex> lock(g_accountMutex);
+    g_accountMessage = message;
+    g_accountBusy = busy;
+    g_accountFailed = failed;
+}
+
+// The reply of the sign-in: the user's name and token on success.
+void finishSignIn(const std::string &user, const Response &response)
+{
+    rg::json::Value root;
+    if (response.status <= 0 || !rg::json::Reader(response.body).parse(root) ||
+        root.type != rg::json::Value::Type::Object)
+    {
+        setAccountMessage("RetroAchievements could not be reached.", false, true);
+        return;
+    }
+    const rg::json::Value *ok = root.find("Success");
+    const rg::json::Value *token = root.find("Token");
+    if (!ok || !ok->boolean || !token || token->string.empty())
+    {
+        const rg::json::Value *error = root.find("Error");
+        setAccountMessage(error && !error->string.empty() ? error->string : "Sign-in refused.", false, true);
+        return;
+    }
+    const rg::json::Value *name = root.find("User");
+    const std::filesystem::path file = settingsDir() / "ra" / "login.json";
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    {
+        const int fd = open(file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (fd < 0)
+        {
+            setAccountMessage("The sign-in could not be saved.", false, true);
+            return;
+        }
+        std::string json = "{\"user\": \"" + (name && !name->string.empty() ? name->string : user) +
+                           "\", \"token\": \"" + token->string + "\"}";
+        const bool written = write(fd, json.data(), json.size()) == static_cast<ssize_t>(json.size());
+        close(fd);
+        chmod(file.c_str(), 0600);
+        if (!written)
+        {
+            setAccountMessage("The sign-in could not be saved.", false, true);
+            return;
+        }
+    }
+    setAccountMessage("", false, false);
+    g_resetRequested.store(true);
+}
+
+// The frame thread's side of signing in or out: drop the client and what it
+// held, so the next frame starts again with whatever account is saved.
+void resetClient()
+{
+    if (g_client)
+    {
+        rc_client_destroy(g_client);
+        g_client = nullptr;
+    }
+    g_generation.fetch_add(1);
+    {
+        std::lock_guard<std::mutex> lock(g_netMutex);
+        g_responses.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_listMutex);
+        g_list.clear();
+    }
+    g_summary.clear();
+    g_failure.clear();
+    g_state = State::Off;
+}
 } // namespace
+
+Account account()
+{
+    Account out;
+    std::string user, token;
+    out.signedIn = readLogin(user, token);
+    if (out.signedIn)
+    {
+        out.user = user;
+    }
+    std::lock_guard<std::mutex> lock(g_accountMutex);
+    out.message = g_accountMessage;
+    out.busy = g_accountBusy;
+    out.failed = g_accountFailed;
+    return out;
+}
+
+void signIn(const std::string &user, const std::string &password)
+{
+    {
+        std::lock_guard<std::mutex> lock(g_accountMutex);
+        if (g_accountBusy)
+        {
+            return;
+        }
+        g_accountBusy = true;
+        g_accountFailed = false;
+        g_accountMessage = "Signing in...";
+    }
+    Request request;
+    request.url = "https://retroachievements.org/dorequest.php";
+    request.post = "r=login2&u=" + urlEncode(user) + "&p=" + urlEncode(password);
+    std::thread([request, user]() mutable {
+        const Response response = perform(request);
+        request.post.clear(); // the password goes with it
+        finishSignIn(user, response);
+    }).detach();
+}
+
+void signOut()
+{
+    std::error_code ec;
+    std::filesystem::remove(settingsDir() / "ra" / "login.json", ec);
+    setAccountMessage("Signed out.", false, false);
+    g_resetRequested.store(true);
+}
 
 void setEnabled(bool on)
 {
@@ -541,6 +717,10 @@ void frame(const uint8_t *rdram)
         g_enabled.store(true, std::memory_order_relaxed);
     }
     g_rdram = rdram;
+    if (g_resetRequested.exchange(false))
+    {
+        resetClient();
+    }
     if (!enabled())
     {
         return;

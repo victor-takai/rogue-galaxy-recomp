@@ -30,11 +30,15 @@ is the game's side of it.
 
 - **A notice** at each one earned, with its badge, and one at the start with
   how many you have.
-- **The list**: F1 menu, Rogue Galaxy, Achievements. Each achievement has its
-  badge (grey until earned, gold frame once earned), its points and its
-  description, the earned ones first as on RetroAchievements' page. The
-  badges are downloaded from RetroAchievements' media server into
-  `ra/badges/` the first time.
+- **The Achievements page**: F1 menu, Settings, Achievements (also Rogue
+  Galaxy, Achievements). At the top the account: who is signed in with a
+  Sign out button, or a user and a password with Sign in (typed with the
+  keyboard, or the Steam keyboard on the Deck); signing in turns the option
+  on and starts the achievements at once, signing out turns it off. Then the
+  option, and the list: each achievement has its badge (grey until earned,
+  gold frame once earned), its points and its description, the earned ones
+  first as on RetroAchievements' page. The badges are downloaded from
+  RetroAchievements' media server into `ra/badges/` the first time.
 
 ## Testing
 

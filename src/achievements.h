@@ -63,6 +63,23 @@ struct Row
 };
 std::vector<Row> list();
 
+// The account, for the menu's Achievements page. Signing in asks
+// retroachievements.org for a connection token with the user and password
+// (neither is kept), saves the token as ra/login.json and starts the
+// achievements by itself; signing out deletes the file and stops them. Any
+// thread; the work is done on its own thread and on the next frame.
+struct Account
+{
+    bool signedIn = false;
+    std::string user;
+    std::string message; // what the last attempt said
+    bool busy = false;   // a sign-in is under way
+    bool failed = false; // `message` is a refusal
+};
+Account account();
+void signIn(const std::string &user, const std::string &password);
+void signOut();
+
 // One line for the menu: why it is not running, or the game's progress.
 std::string status();
 
