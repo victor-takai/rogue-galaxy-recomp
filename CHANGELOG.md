@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.2 (pre-release)
+
+### Changed
+
+- Steam Deck fork: while the home screen's notes are being read, the buttons
+  on the left show no selection (the notes' border is gold instead).
+
 ## 0.6.1 (pre-release)
 
 ### New
