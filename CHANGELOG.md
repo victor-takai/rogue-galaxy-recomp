@@ -1,16 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (pre-release)
 
 ### New
 
-- Steam Deck fork: RetroAchievements. The menu's "RetroAchievements" checks
-  the game's 130 achievements as you play and shows a notice when one is
-  earned (play without hardcore). Sign in once in the
-  installer (an option, ticked to show the fields) or with `tools/ra_fetch.py --save-login`; nothing from the game is sent but the
-  unlocks. The notice shows the achievement's badge, and the menu's
-  Achievements page (F1, Settings) lists all 130 with their badges, points
-  and description, the earned ones first, and signs in and out of the account.
+- Steam Deck fork: RetroAchievements. The game's 130 achievements are
+  checked as you play, and a notice with the achievement's badge shows when
+  one is earned. Sign in once, in the installer (the option "Earn the
+  game's 130 achievements") or in the game: F1, Settings, Achievements. That
+  page also lists all 130 with their badges, points and descriptions (the
+  earned ones first), turns the tracking on or off, and signs out.
+  Unlocks count in softcore: RetroAchievements does not know this game as
+  an emulator yet, so hardcore is not available. Nothing from the game is
+  sent but the unlocks.
 
 ## 0.6.2 (pre-release)
 
