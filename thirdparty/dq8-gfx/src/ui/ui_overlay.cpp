@@ -1227,6 +1227,17 @@ std::string plainMarkdown(const std::string &in) {
     return out;
 }
 
+// "2026-11-18" -> "18 nov. 2026"; anything else is shown as written.
+std::string shortDate(const std::string &iso) {
+    static const char *const kMonths[] = {"jan.", "feb.", "mar.", "apr.", "may", "jun.",
+                                          "jul.", "aug.", "sep.", "oct.", "nov.", "dec."};
+    int y = 0, m = 0, d = 0;
+    char extra = 0;
+    if (std::sscanf(iso.c_str(), "%d-%d-%d%c", &y, &m, &d, &extra) != 3 || m < 1 || m > 12 || d < 1 || d > 31)
+        return iso;
+    return std::to_string(d) + " " + kMonths[m - 1] + " " + std::to_string(y);
+}
+
 const std::vector<ChangeLine> &changelogLines() {
     static std::vector<ChangeLine> lines;
     static bool parsed = false;
@@ -1264,7 +1275,7 @@ const std::vector<ChangeLine> &changelogLines() {
             const size_t paren = head.find(" (");
             if (paren != std::string::npos)
                 head.resize(paren);
-            lines.push_back({ChangeLine::Version, head, date});
+            lines.push_back({ChangeLine::Version, head, shortDate(date)});
         } else if (line.rfind("### ", 0) == 0) {
             const std::string name = line.substr(4);
             skip = name.rfind("Install", 0) == 0 || name.rfind("Update from", 0) == 0 ||
