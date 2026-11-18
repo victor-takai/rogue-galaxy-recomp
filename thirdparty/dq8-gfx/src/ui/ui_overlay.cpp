@@ -1407,19 +1407,70 @@ void Overlay::drawHome() {
             ImDrawList *list = ImGui::GetWindowDrawList();
             const ImVec2 wmin = ImGui::GetWindowPos();
             ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
-            list->AddRect(wmin, ImVec2(wmin.x + panelW, wmin.y + panelH), withAlpha(IM_COL32(186, 204, 255, 90), fade),
-                          em(0.6f), 1.0f);
+            // Reading mode: while on, the panel owns the d-pad, the arrows and
+            // the confirm keys, so ImGui's navigation (which only reads keys
+            // nobody owns) leaves the buttons alone. Right from the buttons
+            // enters it; Left or B leaves. Owning takes effect the next frame.
+            static bool reading = false;
+            const ImGuiIO &io = ImGui::GetIO();
+            const ImGuiID readId = ImGui::GetID("##newsread");
+            const bool navOn = (io.ConfigFlags & (ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard)) != 0;
+            const auto pressed = [](ImGuiKey pad, ImGuiKey key, bool repeat) {
+                return ImGui::IsKeyPressed(pad, repeat) || ImGui::IsKeyPressed(key, repeat);
+            };
+            if (!navOn) {
+                reading = false;
+            } else if (!reading) {
+                reading = pressed(ImGuiKey_GamepadDpadRight, ImGuiKey_RightArrow, false);
+            } else if (pressed(ImGuiKey_GamepadDpadLeft, ImGuiKey_LeftArrow, false) ||
+                       ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+                       ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                reading = false;
+            }
+            if (reading) {
+                for (const ImGuiKey key : {ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadDpadLeft,
+                                           ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadFaceDown, ImGuiKey_UpArrow,
+                                           ImGuiKey_DownArrow, ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_Enter,
+                                           ImGuiKey_Space, ImGuiKey_KeypadEnter})
+                    ImGui::SetKeyOwner(key, readId);
+            }
+            list->AddRect(wmin, ImVec2(wmin.x + panelW, wmin.y + panelH),
+                          reading ? withAlpha(palette::kGold, fade) : withAlpha(IM_COL32(186, 204, 255, 90), fade), em(0.6f),
+                          reading ? 2.0f : 1.0f);
             const float titleSize = em(1.0f);
             trackedText(list, ImGui::GetCursorScreenPos(), titleSize, em(0.22f), IM_COL32(186, 204, 255, 255),
                         IM_COL32(186, 204, 255, 255), "WHAT'S NEW", fade);
             ImGui::Dummy(ImVec2(0.0f, titleSize * 1.6f));
+            if (navOn) {
+                const char *hint = reading ? "Up / Down: scroll    Left: back" : "Right: read";
+                const float hintSize = em(0.8f);
+                ImFont *hintFont = ImGui::GetFont();
+                const float hintWidth = hintFont->CalcTextSizeA(hintSize, FLT_MAX, 0.0f, hint).x;
+                list->AddText(hintFont, hintSize, ImVec2(wmin.x + panelW - em(1.0f) - hintWidth, wmin.y + panelH - em(1.6f)),
+                              reading ? withAlpha(palette::kGold, fade) : IM_COL32(200, 212, 245, static_cast<int>(200 * fade)),
+                              hint);
+            }
             ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
-            if (ImGui::BeginChild("##homenewsbody", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
+            if (ImGui::BeginChild("##homenewsbody", ImVec2(0.0f, -em(1.8f)), ImGuiChildFlags_None,
                                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground)) {
                 const float stick = ImGui::GetKeyData(ImGuiKey_GamepadLStickDown)->AnalogValue -
                                     ImGui::GetKeyData(ImGuiKey_GamepadLStickUp)->AnalogValue;
                 if (stick != 0.0f)
                     ImGui::SetScrollY(ImGui::GetScrollY() + stick * ImGui::GetIO().DeltaTime * em(30.0f));
+                if (reading) {
+                    // The d-pad (or the arrows) a line or two at a time, L1 / R1 a page.
+                    float step = 0.0f;
+                    if (pressed(ImGuiKey_GamepadDpadDown, ImGuiKey_DownArrow, true))
+                        step += em(2.2f);
+                    if (pressed(ImGuiKey_GamepadDpadUp, ImGuiKey_UpArrow, true))
+                        step -= em(2.2f);
+                    if (pressed(ImGuiKey_GamepadL1, ImGuiKey_PageUp, true))
+                        step -= ImGui::GetWindowHeight() * 0.85f;
+                    if (pressed(ImGuiKey_GamepadR1, ImGuiKey_PageDown, true))
+                        step += ImGui::GetWindowHeight() * 0.85f;
+                    if (step != 0.0f)
+                        ImGui::SetScrollY(ImGui::GetScrollY() + step);
+                }
                 ImGui::PushTextWrapPos(0.0f);
                 for (const ChangeLine &line : changes) {
                     if (line.kind == ChangeLine::Version) {
