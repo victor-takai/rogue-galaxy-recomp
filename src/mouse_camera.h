@@ -4,8 +4,9 @@
 
 struct SDL_Window;
 
-// The camera turned by the mouse, with the menu's game switch `mouse_camera`
-// ("Mouse camera", on by default) on, or RG_MOUSE_CAMERA=1.
+// The camera turned by the mouse. Off for good on the Steam Deck (no mouse):
+// the menu's switches and the RG_MOUSE_* variables are gone, and `enabled()`
+// stays false, so the camera hooks and the capture below do nothing.
 //
 // While the switch is on, the game's window has the keyboard focus, the F1
 // menu is closed and the player plays with the keyboard and mouse (from a
@@ -27,9 +28,6 @@ struct SDL_Window;
 // menu. Without the SDL window (the software GS) it does nothing.
 namespace rg::mousecamera
 {
-
-// At start: the environment's settings.
-void install();
 
 // What the player last used, SDL_GetTicks() times as dq8::gfx::SdlPadInput
 // gives them: a press of a key or mouse button bound to the pad (or a click,
@@ -56,10 +54,5 @@ bool inGameMenu(const uint8_t *rdram);
 bool enabled();
 float takeTurn();
 float takeTilt();
-
-// The menu's switches and number, at start and when changed.
-void setEnabled(bool on);
-void setSensitivity(int percent);
-void setInvertVertical(bool on);
 
 } // namespace rg::mousecamera

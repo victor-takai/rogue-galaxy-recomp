@@ -180,28 +180,6 @@ bool inGameMenu(const uint8_t *rdram)
     }
 }
 
-void install()
-{
-    if (const char *value = std::getenv("RG_MOUSE_CAMERA"))
-    {
-        setEnabled(*value && *value != '0');
-    }
-    // A percentage (25 to 400), or the multiplier the menu shows (0.25 to 4);
-    // anything else keeps the menu's.
-    if (const char *value = std::getenv("RG_MOUSE_SENSITIVITY"))
-    {
-        const double number = std::strtod(value, nullptr);
-        if (number > 0.0)
-        {
-            setSensitivity(static_cast<int>(std::lround(number <= 4.0 ? number * 100.0 : number)));
-        }
-    }
-    if (const char *value = std::getenv("RG_MOUSE_INVERT"))
-    {
-        setInvertVertical(*value && *value != '0');
-    }
-}
-
 #if defined(RG_HAS_SDLGPU)
 // Whether the player plays with the keyboard and mouse: from a press (a bound
 // key, a click, the wheel) until the controller alone has been used this
@@ -299,21 +277,6 @@ float takeTilt()
 {
     const float up = -(take(g_y) + testCounts(&Test::dy)) * scale();
     return g_invert.load(std::memory_order_relaxed) ? -up : up;
-}
-
-void setEnabled(bool on)
-{
-    g_enabled.store(on, std::memory_order_relaxed);
-}
-
-void setSensitivity(int percent)
-{
-    g_sensitivity.store(std::clamp(percent, kSensitivityMin, kSensitivityMax), std::memory_order_relaxed);
-}
-
-void setInvertVertical(bool on)
-{
-    g_invert.store(on, std::memory_order_relaxed);
 }
 
 } // namespace rg::mousecamera

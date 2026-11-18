@@ -273,8 +273,6 @@ void Overlay::openShortcuts() {
     m_shortcutsOpen = true;
 }
 
-void Overlay::showBindings(bool keyboard) { m_selectBindings = keyboard ? 1 : 0; }
-
 void Overlay::openHome() {
     if (!canPause())
         return;
@@ -957,7 +955,7 @@ void Overlay::drawMenuBar() {
         }
         if (beginMenu("Settings")) {
             static constexpr const char *kPages[] = {"Display",  "Sound",        "Controls",  "Game",
-                                                     "Language", "Textures", "Achievements", "Interface"};
+                                                     "Language", "Achievements", "Interface"};
             for (int page = 0; page < static_cast<int>(SettingsPage::Count); ++page)
                 if (menuItem(kPages[page], nullptr, m_settingsOpen && m_page == static_cast<SettingsPage>(page)))
                     openSettings(static_cast<SettingsPage>(page));
@@ -1761,16 +1759,13 @@ void Overlay::windowBounds(ImVec2 &min, ImVec2 &max) const {
 
 void Overlay::drawFps() {
     m_toastTop = 0.0f;
-    m_fpsLeftBottom = 0.0f;
     if (!m_settings.showFps)
         return;
     ImVec2 min, max;
     windowBounds(min, max);
     const float margin = em(0.6f);
-    const bool right = m_settings.fpsCorner == Corner::TopRight || m_settings.fpsCorner == Corner::BottomRight;
-    const bool bottom = m_settings.fpsCorner == Corner::BottomLeft || m_settings.fpsCorner == Corner::BottomRight;
-    ImGui::SetNextWindowPos(ImVec2(right ? max.x - margin : min.x + margin, bottom ? max.y - margin : min.y + margin),
-                            ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
+    // Always the top right corner.
+    ImGui::SetNextWindowPos(ImVec2(max.x - margin, min.y + margin), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(0.7f), em(0.45f)));
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
@@ -1801,10 +1796,7 @@ void Overlay::drawFps() {
                          static_cast<int>(m_fpsHistoryNext % m_fpsHistory.size()), nullptr, 0.0f, peak * 1.1f,
                          ImVec2(em(5.5f), em(1.2f)));
         ImGui::PopStyleColor(2);
-        if (m_settings.fpsCorner == Corner::TopRight)
-            m_toastTop = ImGui::GetWindowPos().y + ImGui::GetWindowHeight();
-        if (m_settings.fpsCorner == Corner::TopLeft)
-            m_fpsLeftBottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight();
+        m_toastTop = ImGui::GetWindowPos().y + ImGui::GetWindowHeight();
     }
     ImGui::End();
     ImGui::PopStyleVar();
@@ -1816,7 +1808,7 @@ void Overlay::drawSpeedBadge() {
     ImVec2 min, max;
     windowBounds(min, max);
     const float margin = em(0.6f);
-    ImGui::SetNextWindowPos(ImVec2(min.x + margin, std::max(min.y, m_fpsLeftBottom) + margin), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(min.x + margin, min.y + margin), ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(0.7f), em(0.35f)));
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
@@ -1952,7 +1944,7 @@ void Overlay::drawIconSheet() {
 }
 
 void Overlay::updateCursor() {
-    if (m_menuOpen || !m_settings.hideIdleCursor)
+    if (m_menuOpen)
         return;
     if (now() - m_lastMouseMotion > 2.5)
         ImGui::SetMouseCursor(ImGuiMouseCursor_None);
@@ -2065,7 +2057,7 @@ void Overlay::saveIfDirty(bool force) {
 void Overlay::applyVolume() {
     if (!m_host.setVolume)
         return;
-    const bool silent = m_settings.muted || (m_settings.muteInBackground && !m_windowFocused);
+    const bool silent = m_settings.muted;
     m_host.setVolume(silent ? 0.0f : static_cast<float>(m_settings.volume) / 100.0f);
 }
 

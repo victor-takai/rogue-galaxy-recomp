@@ -5,7 +5,18 @@
 ### Added
 
 - Steam Deck fork: the home screen has an Options button, above Quit, that
-  opens the settings.
+  opens the settings, over the release notes, without the menu's top bar.
+
+### Removed
+
+- Steam Deck fork: the options that mean nothing on the Deck are gone from
+  the menu and from settings.ini: window mode, vertical sync, internal
+  resolutions above 2x, the Nearest filter, Borders, Integer scaling, Mute
+  and Mute in the background, the Keyboard switch, the controller picker
+  and the keyboard bindings, the mouse camera's three options, Buttons in
+  the game's text (always on), Native renderer,
+  the Textures page, Hide the idle mouse cursor (always on) and
+  the frame-rate counter's position (top right).
 
 ## 0.8.0 - 2026-11-18
 

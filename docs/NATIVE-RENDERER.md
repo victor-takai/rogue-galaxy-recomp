@@ -11,9 +11,9 @@ here is implemented except where a section says so.
 The emulated GS path draws everything by default. Phase 1 is built for every
 VU1 program the recordings hold, behind `RG_VU1_NATIVE` (`src/vu1_native.h`),
 off unless set or the switch below is on; `gpu` sends their chunks as meshes
-the GPU transforms, which the GS backend still draws. The F1 menu's "Native
-renderer" switch (the Game page's Rendering section; `native_renderer` in
-settings.ini, `RG_NATIVE_RENDERER=0` or `1` for a run;
+the GPU transforms, which the GS backend still draws. The native renderer
+switch (no longer in the F1 menu on the Deck: `RG_NATIVE_RENDERER=0` or `1`
+for a run;
 `src/native_renderer.h`, `aaec68f`) is what the native side goes behind as
 it lands. With it on, `RG_VU1_NATIVE` defaults to `gpu` (the chunks slot E
 clips stay on the VU1 unless `RG_VU1_CLIP_ON_GPU=1` or the pipeline is on),
@@ -232,7 +232,7 @@ fully playable. `RG_RENDER=gs` keeps the whole GS path selectable until phase
 time, and a debug key flips them live on the same frame.
 
 *Status:* neither `RG_RENDER` nor `RG_NATIVE` was built. The switch for a
-run is `RG_NATIVE_RENDERER` (the F1 "Native renderer"); the VU1 programs
+run is `RG_NATIVE_RENDERER`; the VU1 programs
 have their own modes in `RG_VU1_NATIVE` (`0`, `check`, `1`, `skip`, `gpu`;
 `gpu` by default with the switch on), and the whole frame without the GS is
 `RG_NATIVE_PIPELINE=1`.
@@ -347,7 +347,7 @@ present, display filters and menu stay.
 
 *Status:* the direction accepted for this work (issue 10, `aaec68f`,
 `src/native_renderer.h`) keeps the GS path as the default and the fallback,
-with the native side opt-in behind the "Native renderer" switch, which this
+with the native side opt-in behind the `RG_NATIVE_RENDERER` switch, which this
 phase's removal would undo.
 
 ### Phase 6: further work (optional, each behind an option)

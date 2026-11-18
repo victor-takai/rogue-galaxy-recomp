@@ -10,8 +10,6 @@
 
 namespace dq8::ui {
 
-enum class Corner : uint8_t { TopLeft, TopRight, BottomLeft, BottomRight };
-
 struct Settings {
     // Window
     bool fullscreen = false;
@@ -34,7 +32,6 @@ struct Settings {
     // Sound
     int volume = 100; // percent
     bool muted = false;
-    bool muteInBackground = false;
 
     // Controls
     gfx::PadConfig pad = gfx::PadConfig::defaults();
@@ -43,11 +40,9 @@ struct Settings {
     // Interface
     int uiScale = 100; // percent, on top of the display's own scale
     bool showFps = false;
-    Corner fpsCorner = Corner::TopRight;
     bool notifications = true;
     bool pauseInMenu = true;
     bool pauseInBackground = false;
-    bool hideIdleCursor = true;
 
     // Game
     float fastForwardSpeed = 2.0f; // 0 runs unpaced
