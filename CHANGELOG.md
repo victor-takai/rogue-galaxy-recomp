@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Steam Deck fork: the release notes on the home screen show each date as
+  "18 nov. 2026".
+
 ### Added
 
 - Steam Deck fork: the home screen has an Options button, above Quit, that
