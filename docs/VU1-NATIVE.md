@@ -7,7 +7,7 @@ the GPU. Every program the recordings hold went this way on 2026-10-28
 ("Status"); this is the recipe for the pieces still unseen ("Pieces written
 from the code alone" lists what was ported without a recording). The plan
 around it is [NATIVE-RENDERER.md](NATIVE-RENDERER.md) (phase 1).
-`RG_VU1_NATIVE` follows the F1 menu's "Native renderer" switch
+`RG_VU1_NATIVE` follows the native renderer switch (`RG_NATIVE_RENDERER`)
 (`src/native_renderer.h`) when unset: `gpu` with it on, off without it.
 
 ## What a program is

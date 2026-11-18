@@ -23,10 +23,9 @@ namespace {
 using gfx::PadInput;
 
 constexpr const char *kTimes = "\xC3\x97"; // U+00D7, spelled out for compilers without /utf-8
-constexpr const char *kPageNames[] = {"Display",  "Sound",        "Controls",  "Game",
-                                      "Language", "Textures", "Achievements", "Interface"};
-constexpr Icon kPageIcons[] = {Icon::Display, Icon::Sound,  Icon::Controls, Icon::Disc,
-                               Icon::Info,    Icon::Folder, Icon::Check,    Icon::Interface};
+constexpr const char *kPageNames[] = {"Display", "Sound", "Controls", "Game", "Language", "Achievements", "Interface"};
+constexpr Icon kPageIcons[] = {Icon::Display, Icon::Sound, Icon::Controls, Icon::Disc,
+                               Icon::Info,    Icon::Check, Icon::Interface};
 constexpr const char *kProjectUrl = "https://github.com/victor-takai/rogue-galaxy-recomp";
 constexpr const char *kIssuesUrl = "https://github.com/victor-takai/rogue-galaxy-recomp/issues";
 
@@ -155,6 +154,10 @@ void Overlay::drawSettingsWindow() {
         m_focusSettings = false;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(1.2f), em(1.0f)));
+    // Over the home screen's picture and notes: more opaque, to read.
+    const bool opaque = m_homeOpen;
+    if (opaque)
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(9, 13, 36, 250));
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar |
@@ -239,7 +242,6 @@ void Overlay::drawSettingsWindow() {
         case SettingsPage::Controls: drawControlsPage(); break;
         case SettingsPage::Game: drawGamePage(); break;
         case SettingsPage::Language: drawLanguagePage(); break;
-        case SettingsPage::Textures: drawTexturesPage(); break;
         case SettingsPage::Achievements: drawAchievementsPage(); break;
         case SettingsPage::Interface: drawInterfacePage(); break;
         case SettingsPage::Count: break;
@@ -277,6 +279,8 @@ void Overlay::drawSettingsWindow() {
     }
     ImGui::End();
     ImGui::PopStyleVar();
+    if (opaque)
+        ImGui::PopStyleColor();
 }
 
 void Overlay::drawPadHints(float height) {
@@ -341,32 +345,6 @@ void Overlay::drawPadHints(float height) {
 }
 
 void Overlay::drawDisplayPage() {
-    sectionHeader("Window");
-    if (beginSettings("window")) {
-        settingRow("Mode");
-        int mode = m_settings.fullscreen ? 1 : 0;
-        static constexpr const char *kModes[] = {"Windowed", "Fullscreen"};
-        if (segmented("mode", &mode, kModes, 2))
-            setFullscreen(mode == 1);
-
-        settingRow("Vertical sync", "On waits for the screen. Fast avoids tearing with less delay, where the "
-                                    "system offers it. Off shows each frame at once and can tear.");
-        static constexpr SDL_GPUPresentMode kPresent[] = {SDL_GPU_PRESENTMODE_VSYNC, SDL_GPU_PRESENTMODE_MAILBOX,
-                                                         SDL_GPU_PRESENTMODE_IMMEDIATE};
-        static constexpr const char *kSync[] = {"On", "Fast", "Off"};
-        bool supported[3] = {true, m_backend.supportsPresentMode(kPresent[1]), m_backend.supportsPresentMode(kPresent[2])};
-        int sync = 0;
-        for (int index = 0; index < 3; ++index)
-            if (m_settings.display.presentMode == kPresent[index])
-                sync = index;
-        if (segmented("sync", &sync, kSync, 3, supported)) {
-            m_settings.display.presentMode = kPresent[sync];
-            m_backend.setDisplayOptions(m_settings.display);
-            markDirty();
-        }
-        endSettings();
-    }
-
     sectionHeader("Picture");
     if (beginSettings("picture")) {
         settingRow("Internal resolution",
@@ -379,7 +357,7 @@ void Overlay::drawDisplayPage() {
         std::snprintf(preview, sizeof(preview), "%u%s   %u %s %u%s", shown, kTimes, 512u * shown, kTimes, 448u * shown,
                       m_pendingScale == 0u ? "" : pausing() ? "   when the game resumes" : "   applying...");
         if (ImGui::BeginCombo("##scale", preview)) {
-            for (uint32_t scale = 1u; scale <= 8u; ++scale) {
+            for (uint32_t scale = 1u; scale <= 2u; ++scale) {
                 char item[64];
                 std::snprintf(item, sizeof(item), "%u%s   %u %s %u%s", scale, kTimes, 512u * scale, kTimes,
                               448u * scale, scale == 1u ? "   (PS2)" : "");
@@ -390,49 +368,12 @@ void Overlay::drawDisplayPage() {
         }
 
         static constexpr const char *kFilterHelp[] = {"Crisp pixels with no uneven columns, at any size.",
-                                                      "Soft, smooth scaling.",
-                                                      "Raw pixels; uneven unless the size is a whole multiple."};
-        settingRow("Scaling filter", kFilterHelp[static_cast<int>(m_settings.display.filter)]);
-        static constexpr const char *kFilters[] = {"Sharp", "Smooth", "Nearest"};
-        int filter = static_cast<int>(m_settings.display.filter);
-        if (segmented("filter", &filter, kFilters, 3)) {
+                                                      "Soft, smooth scaling."};
+        settingRow("Scaling filter", kFilterHelp[std::min(static_cast<int>(m_settings.display.filter), 1)]);
+        static constexpr const char *kFilters[] = {"Sharp", "Smooth"};
+        int filter = std::min(static_cast<int>(m_settings.display.filter), 1);
+        if (segmented("filter", &filter, kFilters, 2)) {
             m_settings.display.filter = static_cast<gfx::SdlGpuFilter>(filter);
-            m_backend.setDisplayOptions(m_settings.display);
-            markDirty();
-        }
-
-        // Rogue Galaxy: added (`sides` in the file).
-        static constexpr const char *kSidesHelp[] = {
-            "What fills the window beside a 4:3 picture: black bars.",
-            "What fills the window beside a 4:3 picture: the picture itself, softly blurred and a little darker.",
-            "What fills the window beside a 4:3 picture: your image, the first PNG or JPG in the game's "
-            "\"borders\" folder (the blurred picture without one)."};
-        // Greyed out while the picture covers the whole window at both of
-        // the game's shapes (under Auto the loading screens and the title
-        // stay 4:3 with Widescreen on), as well as in the last frame shown:
-        // there is never anything beside it.
-        const gfx::SdlGpuRect picture = m_backend.displayRect();
-        bool bars = picture.width == 0u || picture.width < m_targetWidth || picture.height < m_targetHeight;
-        for (const int wide : {0, 1}) {
-            const gfx::SdlGpuRect rect =
-                gfx::sdlGpuDisplayRect(m_settings.display, 512u, 448u, m_targetWidth, m_targetHeight, wide);
-            bars = bars || rect.width < m_targetWidth || rect.height < m_targetHeight;
-        }
-        {
-            const Blocked blocked(bars ? nullptr
-                                       : "The picture fills the window: turn on Integer scaling for this.");
-            settingRow("Borders", kSidesHelp[static_cast<int>(m_settings.display.sides)]);
-            static constexpr const char *kSides[] = {"Black", "Blurred", "Image"};
-            int sides = static_cast<int>(m_settings.display.sides);
-            if (segmented("sides", &sides, kSides, 3)) {
-                m_settings.display.sides = static_cast<gfx::SdlGpuSides>(sides);
-                m_backend.setDisplayOptions(m_settings.display);
-                markDirty();
-            }
-        }
-
-        settingRow("Integer scaling", "Whole multiples of the picture's height: even lines, with borders.");
-        if (toggle("integer", &m_settings.display.integerScale)) {
             m_backend.setDisplayOptions(m_settings.display);
             markDirty();
         }
@@ -449,29 +390,10 @@ void Overlay::drawDisplayPage() {
 void Overlay::drawSoundPage() {
     sectionHeader("Volume");
     if (beginSettings("sound")) {
-        // The volume and the background's mute greyed out while Mute
-        // silences the game anyway (Rogue Galaxy: added).
-        const char *unmute = m_settings.muted ? "Turn off Mute for this." : nullptr;
-        {
-            const Blocked blocked(unmute);
-            settingRow("Master volume");
-            if (ImGui::SliderInt("##volume", &m_settings.volume, 0, 100, "%d%%")) {
-                applyVolume();
-                markDirty();
-            }
-        }
-        settingRow("Mute");
-        if (toggle("mute", &m_settings.muted)) {
+        settingRow("Master volume");
+        if (ImGui::SliderInt("##volume", &m_settings.volume, 0, 100, "%d%%")) {
             applyVolume();
             markDirty();
-        }
-        {
-            const Blocked blocked(unmute);
-            settingRow("Mute in the background", "Silences the game while its window is not in front.");
-            if (toggle("background", &m_settings.muteInBackground)) {
-                applyVolume();
-                markDirty();
-            }
         }
         endSettings();
     }
@@ -494,9 +416,6 @@ void Overlay::drawInterfacePage() {
         }
         settingRow("Notifications", "Short messages about controllers, screenshots and changes.");
         if (toggle("notifications", &m_settings.notifications))
-            markDirty();
-        settingRow("Hide the idle mouse cursor");
-        if (toggle("cursor", &m_settings.hideIdleCursor))
             markDirty();
         // Not on a Steam Deck: Steam keeps its own button, so View + Menu is
         // the only way to the menu there.
@@ -552,17 +471,6 @@ void Overlay::drawInterfacePage() {
         settingRow("Show the frame rate", "Frames the game draws each second. F3 toggles it.");
         if (toggle("fps", &m_settings.showFps))
             markDirty();
-        {
-            // Greyed out while there is no counter to place (Rogue Galaxy: added).
-            const Blocked blocked(m_settings.showFps ? nullptr : "Turn on Show the frame rate for this.");
-            settingRow("Position");
-            static constexpr const char *kCorners[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
-            int corner = static_cast<int>(m_settings.fpsCorner);
-            if (segmented("corner", &corner, kCorners, 4)) {
-                m_settings.fpsCorner = static_cast<Corner>(corner);
-                markDirty();
-            }
-        }
         endSettings();
     }
 }
@@ -574,15 +482,6 @@ void Overlay::drawGamePage() {
 
 void Overlay::drawLanguagePage() {
     drawGameOptions("language", "There are no language options.", "Language");
-}
-
-// The host's switches for packs of art (Rogue Galaxy: added).
-void Overlay::drawTexturesPage() {
-    drawGameOptions("textures",
-                    "No texture packs found: put one (a folder or a .zip) in textures\\packs.\n"
-                    "A pack's 2D art shows above 1\xC3\x97, a PCSX2 pack's 3D at any scale. None are included "
-                    "(docs\\TEXTURE_PACKS.md).",
-                    "Texture packs");
 }
 
 void Overlay::drawGameOptions(const std::string &page, const char *emptyText, const char *firstTitle) {
@@ -711,82 +610,6 @@ void Overlay::drawGameControl(const GameOption &option) {
 }
 
 void Overlay::drawControlsPage() {
-    const auto controllers = m_backend.padInput().controllers();
-    sectionHeader("Devices");
-    if (beginSettings("devices")) {
-        gfx::PadConfig config = m_settings.pad;
-        bool changed = false;
-        settingRow("Keyboard", "Plays alongside the controller.");
-        changed |= toggle("keyboard", &config.keyboardEnabled);
-
-        settingRow("Controller", "Which controller plays the game.");
-        std::string preview = "Any connected controller";
-        if (config.controllers == gfx::ControllerSelection::None) {
-            preview = "No controller";
-        } else if (config.controllers == gfx::ControllerSelection::One) {
-            const bool connected = std::any_of(controllers.begin(), controllers.end(),
-                                               [](const auto &c) { return c.active; });
-            preview = config.controllerName + (connected ? "" : "  (not connected)");
-        }
-        if (ImGui::BeginCombo("##controller", preview.c_str())) {
-            if (ImGui::Selectable("Any connected controller", config.controllers == gfx::ControllerSelection::Any)) {
-                config.controllers = gfx::ControllerSelection::Any;
-                changed = true;
-            }
-            for (size_t index = 0; index < controllers.size(); ++index) {
-                const auto &controller = controllers[index];
-                ImGui::PushID(static_cast<int>(index));
-                // Identical controllers share a GUID, so the device in use is
-                // what marks the choice, and the pick remembers the device.
-                const bool chosen = config.controllers == gfx::ControllerSelection::One && controller.active;
-                if (ImGui::Selectable(controller.name.c_str(), chosen)) {
-                    config.controllers = gfx::ControllerSelection::One;
-                    config.controllerGuid = controller.guid;
-                    config.controllerSerial = controller.serial;
-                    config.controllerName = controller.name;
-                    config.controllerInstance = controller.id;
-                    changed = true;
-                }
-                ImGui::PopID();
-            }
-            if (ImGui::Selectable("No controller", config.controllers == gfx::ControllerSelection::None)) {
-                config.controllers = gfx::ControllerSelection::None;
-                changed = true;
-            }
-            ImGui::EndCombo();
-        }
-        endSettings();
-        if (changed)
-            setPadConfig(config);
-    }
-
-    // What is plugged in, and what of it plays.
-    if (controllers.empty()) {
-        mutedText("No controller connected. Plug one in or pair it; it is picked up at once.");
-    } else {
-        for (const auto &controller : controllers) {
-            ImGui::PushID(&controller);
-            // The name's height: a taller icon is held at the line's top,
-            // below the unframed name's middle.
-            const IconRoom room = iconRoom(em(1.0f));
-            ImGui::SameLine(0.0f, em(0.5f));
-            ImGui::TextUnformatted(controller.name.c_str());
-            drawIconBeside(room, Icon::Controls, controller.active ? palette::kGold : palette::kTextMuted);
-            ImGui::SameLine(0.0f, em(0.6f));
-            mutedText("%s", controllerFamilyName(controller.type));
-            if (controller.batteryPercent >= 0 && (controller.power == SDL_POWERSTATE_ON_BATTERY ||
-                                                   controller.power == SDL_POWERSTATE_CHARGING)) {
-                ImGui::SameLine(0.0f, em(0.6f));
-                mutedText("%d%%%s", controller.batteryPercent,
-                          controller.power == SDL_POWERSTATE_CHARGING ? " charging" : "");
-            }
-            ImGui::SameLine(0.0f, em(0.6f));
-            ImGui::TextColored(color(controller.active ? palette::kGood : palette::kTextMuted), "%s",
-                               controller.active ? "In use" : "Not used");
-            ImGui::PopID();
-        }
-    }
-
     sectionHeader("Buttons");
     {
         const float width = ImGui::GetContentRegionAvail().x;
@@ -809,23 +632,8 @@ void Overlay::drawControlsPage() {
         ImGui::EndGroup();
     }
     ImGui::Dummy(ImVec2(0.0f, em(0.2f)));
-    if (ImGui::BeginTabBar("##bindings")) {
-        const auto pick = [&](int tab) {
-            return m_selectBindings == tab ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
-        };
-        if (ImGui::BeginTabItem("Controller", nullptr, pick(0))) {
-            m_keyboardBindings = false;
-            drawBindingTable(false);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Keyboard", nullptr, pick(1))) {
-            m_keyboardBindings = true;
-            drawBindingTable(true);
-            ImGui::EndTabItem();
-        }
-        m_selectBindings = -1;
-        ImGui::EndTabBar();
-    }
+    m_keyboardBindings = false;
+    drawBindingTable(false);
 
     sectionHeader("Analog sticks");
     if (beginSettings("analog")) {
@@ -843,10 +651,10 @@ void Overlay::drawControlsPage() {
             config.triggerThreshold = threshold / 100.0f;
             changed = true;
         }
-        settingRow("Invert camera left and right", "The right stick and the keys bound to it.");
+        settingRow("Invert camera left and right", "The right stick.");
         changed |= toggle("invertx", &config.invertCameraX);
         settingRow("Invert camera up and down",
-                   "The right stick and the keys bound to it; the mouse has its own, on the Game page.");
+                   "The right stick.");
         changed |= toggle("inverty", &config.invertCameraY);
         endSettings();
         if (changed)

@@ -15,7 +15,6 @@
 
 namespace dq8::ui {
 namespace {
-using gfx::ControllerSelection;
 using gfx::PadInput;
 using gfx::SdlGpuFilter;
 
@@ -24,18 +23,10 @@ struct Named {
     T value;
     const char *name;
 };
-constexpr Named<SdlGpuFilter> kFilters[] = {
-    {SdlGpuFilter::Sharp, "sharp"}, {SdlGpuFilter::Smooth, "smooth"}, {SdlGpuFilter::Nearest, "nearest"}};
-constexpr Named<gfx::SdlGpuSides> kSides[] = {
-    {gfx::SdlGpuSides::Black, "black"}, {gfx::SdlGpuSides::Blurred, "blurred"}, {gfx::SdlGpuSides::Image, "image"}};
+constexpr Named<SdlGpuFilter> kFilters[] = {{SdlGpuFilter::Sharp, "sharp"}, {SdlGpuFilter::Smooth, "smooth"}};
 constexpr Named<SDL_GPUPresentMode> kPresentModes[] = {
     {SDL_GPU_PRESENTMODE_VSYNC, "vsync"}, {SDL_GPU_PRESENTMODE_MAILBOX, "mailbox"},
     {SDL_GPU_PRESENTMODE_IMMEDIATE, "immediate"}};
-constexpr Named<ControllerSelection> kSelections[] = {
-    {ControllerSelection::Any, "any"}, {ControllerSelection::One, "one"}, {ControllerSelection::None, "none"}};
-constexpr Named<Corner> kCorners[] = {
-    {Corner::TopLeft, "top-left"}, {Corner::TopRight, "top-right"},
-    {Corner::BottomLeft, "bottom-left"}, {Corner::BottomRight, "bottom-right"}};
 
 template <typename T, size_t N>
 const char *nameOf(const Named<T> (&table)[N], T value) {
@@ -100,23 +91,15 @@ void apply(Settings &s, const std::string &section, const std::string &key, cons
             s.windowPlaced = true;
         }
     } else if (section == "display") {
-        if (key == "scale") parseNumber(value, s.resolutionScale, 1u, 8u);
+        if (key == "scale") parseNumber(value, s.resolutionScale, 1u, 2u);
         else if (key == "filter") parseNamed(kFilters, value, s.display.filter);
-        else if (key == "sides") parseNamed(kSides, value, s.display.sides);
-        else if (key == "integer_scale") parseBool(value, s.display.integerScale);
         else if (key == "remove_line_blend") parseBool(value, s.display.removeLineBlend);
         else if (key == "present") parseNamed(kPresentModes, value, s.display.presentMode);
     } else if (section == "sound") {
         if (key == "volume") parseNumber(value, s.volume, 0, 100);
         else if (key == "muted") parseBool(value, s.muted);
-        else if (key == "mute_in_background") parseBool(value, s.muteInBackground);
     } else if (section == "controls") {
-        if (key == "keyboard") parseBool(value, s.pad.keyboardEnabled);
-        else if (key == "controller") parseNamed(kSelections, value, s.pad.controllers);
-        else if (key == "controller_guid") s.pad.controllerGuid = value;
-        else if (key == "controller_serial") s.pad.controllerSerial = value;
-        else if (key == "controller_name") s.pad.controllerName = value;
-        else if (key == "stick_dead_zone") {
+        if (key == "stick_dead_zone") {
             float percent = s.pad.stickDeadZone * 100.0f;
             parseNumber(value, percent, 0.0f, 50.0f);
             s.pad.stickDeadZone = percent / 100.0f;
@@ -128,18 +111,14 @@ void apply(Settings &s, const std::string &section, const std::string &key, cons
         else if (key == "invert_camera_x") parseBool(value, s.pad.invertCameraX);
         else if (key == "invert_camera_y") parseBool(value, s.pad.invertCameraY);
         else if (key == "back_start_menu") parseBool(value, s.backStartOpensMenu);
-    } else if (section == "keyboard" && key == "layout") {
-        parseNumber(value, s.pad.keyboardLayout, 1, 1000);
-    } else if (section == "controller" || section == "keyboard") {
-        parseBinding(s.pad, section == "keyboard", key, value);
+    } else if (section == "controller") {
+        parseBinding(s.pad, false, key, value);
     } else if (section == "interface") {
         if (key == "ui_scale") parseNumber(value, s.uiScale, 50, 250);
         else if (key == "show_fps") parseBool(value, s.showFps);
-        else if (key == "fps_corner") parseNamed(kCorners, value, s.fpsCorner);
         else if (key == "notifications") parseBool(value, s.notifications);
         else if (key == "pause_in_menu") parseBool(value, s.pauseInMenu);
         else if (key == "pause_in_background") parseBool(value, s.pauseInBackground);
-        else if (key == "hide_idle_cursor") parseBool(value, s.hideIdleCursor);
     } else if (section == "game") {
         if (key == "fast_forward_speed") parseNumber(value, s.fastForwardSpeed, 0.0f, 16.0f);
         else {
@@ -169,25 +148,17 @@ std::string serializeSettings(const Settings &s) {
     if (s.windowPlaced)
         out << "x = " << s.windowX << "\ny = " << s.windowY << "\n";
     out << "\n[display]\nscale = " << s.resolutionScale << "\nfilter = " << nameOf(kFilters, s.display.filter)
-        << "\nsides = " << nameOf(kSides, s.display.sides)
-        << "\ninteger_scale = " << flag(s.display.integerScale)
         << "\nremove_line_blend = " << flag(s.display.removeLineBlend)
         << "\npresent = " << nameOf(kPresentModes, s.display.presentMode) << "\n\n"
-        << "[sound]\nvolume = " << s.volume << "\nmuted = " << flag(s.muted)
-        << "\nmute_in_background = " << flag(s.muteInBackground) << "\n\n"
-        << "[controls]\nkeyboard = " << flag(s.pad.keyboardEnabled)
-        << "\ncontroller = " << nameOf(kSelections, s.pad.controllers)
-        << "\ncontroller_guid = " << s.pad.controllerGuid << "\ncontroller_serial = " << s.pad.controllerSerial
-        << "\ncontroller_name = " << s.pad.controllerName
-        << "\nstick_dead_zone = " << s.pad.stickDeadZone * 100.0f
+        << "[sound]\nvolume = " << s.volume << "\nmuted = " << flag(s.muted) << "\n\n"
+        << "[controls]\nstick_dead_zone = " << s.pad.stickDeadZone * 100.0f
         << "\ntrigger_threshold = " << s.pad.triggerThreshold * 100.0f
         << "\ninvert_camera_x = " << flag(s.pad.invertCameraX)
         << "\ninvert_camera_y = " << flag(s.pad.invertCameraY)
         << "\nback_start_menu = " << flag(s.backStartOpensMenu) << "\n";
-    for (const bool keyboard : {false, true}) {
-        out << "\n[" << (keyboard ? "keyboard" : "controller") << "]\n";
-        if (keyboard)
-            out << "layout = " << s.pad.keyboardLayout << '\n';
+    {
+        constexpr bool keyboard = false;
+        out << "\n[controller]\n";
         for (size_t input = 0; input < gfx::kPadInputCount; ++input) {
             const auto &slots = s.pad.slots(static_cast<PadInput>(input), keyboard);
             for (size_t slot = 0; slot < slots.size(); ++slot)
@@ -196,10 +167,9 @@ std::string serializeSettings(const Settings &s) {
         }
     }
     out << "\n[interface]\nui_scale = " << s.uiScale << "\nshow_fps = " << flag(s.showFps)
-        << "\nfps_corner = " << nameOf(kCorners, s.fpsCorner) << "\nnotifications = " << flag(s.notifications)
+        << "\nnotifications = " << flag(s.notifications)
         << "\npause_in_menu = " << flag(s.pauseInMenu)
-        << "\npause_in_background = " << flag(s.pauseInBackground)
-        << "\nhide_idle_cursor = " << flag(s.hideIdleCursor) << '\n'
+        << "\npause_in_background = " << flag(s.pauseInBackground) << '\n'
         << "\n[game]\nfast_forward_speed = " << s.fastForwardSpeed << '\n';
     for (const auto &[key, on] : s.gameOptions)
         out << key << " = " << flag(on) << '\n';
@@ -210,9 +180,6 @@ std::string serializeSettings(const Settings &s) {
 }
 
 void parseSettings(const std::string &text, Settings &settings) {
-    // A file says which keyboard defaults it was written with; one that does
-    // not was written with the first.
-    settings.pad.keyboardLayout = 1;
     std::istringstream in(text);
     std::string section;
     // No inline comments: key names such as ";" are valid binding values.
@@ -227,45 +194,6 @@ void parseSettings(const std::string &text, Settings &settings) {
         const auto equals = line.find('=');
         if (equals != std::string::npos)
             apply(settings, section, trim(line.substr(0, equals)), trim(line.substr(equals + 1u)));
-    }
-    if (settings.pad.keyboardLayout == 2) {
-        // Layout 2 had Esc with Space on Circle, where it jumped; 3 has it
-        // with Tab on Triangle. Moved where those two are as 2 had them.
-        auto &circle = settings.pad.keyboard[static_cast<size_t>(PadInput::Circle)];
-        auto &triangle = settings.pad.keyboard[static_cast<size_t>(PadInput::Triangle)];
-        const gfx::PadBinding space = gfx::PadBinding::key(SDL_SCANCODE_SPACE);
-        const gfx::PadBinding escape = gfx::PadBinding::key(SDL_SCANCODE_ESCAPE);
-        const gfx::PadBinding tab = gfx::PadBinding::key(SDL_SCANCODE_TAB);
-        if (circle == gfx::PadBindingSlots{space, escape} && triangle == gfx::PadBindingSlots{tab, {}}) {
-            circle = {space, {}};
-            triangle = {tab, escape};
-            std::fprintf(stderr, "[ui] keyboard: Esc moves from Circle to Triangle\n");
-        }
-        settings.pad.keyboardLayout = 3; // a later layout's step from 3 follows
-    }
-    if (settings.pad.keyboardLayout < 2) {
-        // Keys still all as the first defaults had them take today's;
-        // anyone's own keys stay (Walk, which that layout lacked, keeps its
-        // default either way).
-        const auto first = gfx::PadConfig::firstKeyboardLayout();
-        bool untouched = true;
-        for (size_t input = 0; input < gfx::kPadInputCount; ++input)
-            if (static_cast<PadInput>(input) != PadInput::Walk && settings.pad.keyboard[input] != first[input])
-                untouched = false;
-        if (untouched) {
-            settings.pad.keyboard = gfx::PadConfig::defaults().keyboard;
-            std::fprintf(stderr, "[ui] keyboard: the first default keys, untouched, give way to the new ones\n");
-        } else {
-            // Their own keys: Walk keeps its default only on a key they left
-            // free.
-            auto &walk = settings.pad.keyboard[static_cast<size_t>(PadInput::Walk)];
-            for (size_t input = 0; input < gfx::kPadInputCount; ++input)
-                for (const gfx::PadBinding &binding : settings.pad.keyboard[input])
-                    for (gfx::PadBinding &own : walk)
-                        if (static_cast<PadInput>(input) != PadInput::Walk && own.bound() && own == binding)
-                            own = {};
-        }
-        settings.pad.keyboardLayout = gfx::PadConfig::kKeyboardLayout;
     }
 }
 

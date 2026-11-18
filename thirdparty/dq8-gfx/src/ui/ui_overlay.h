@@ -61,8 +61,8 @@ struct GameOption {
     // Takes effect at the next start: once it differs from what this run
     // started with, the menu says so in red.
     bool restart = false;
-    // The page it is on: empty for Game's, "language" for Language's,
-    // "textures" for Textures' (Rogue Galaxy: added).
+    // The page it is on: empty for Game's, "language" for Language's
+    // (Rogue Galaxy: added).
     std::string page;
     // A number shown as one button a value, minimum first, instead of a
     // slider: the names of the values (Rogue Galaxy: added).
@@ -161,9 +161,9 @@ struct HostServices {
 };
 
 // Game: Rogue Galaxy's own switches (added).
-// Language and Textures: the options a host puts there (GameOption::page),
+// Language: the options a host puts there (GameOption::page),
 // apart from Game's (Rogue Galaxy: added).
-enum class SettingsPage : uint8_t { Display, Sound, Controls, Game, Language, Textures, Achievements, Interface, Count };
+enum class SettingsPage : uint8_t { Display, Sound, Controls, Game, Language, Achievements, Interface, Count };
 
 class Overlay final : public gfx::SdlGpuOverlay {
 public:
@@ -210,7 +210,6 @@ public:
     // Play: the game goes on.
     void closeHome();
     // Picks the Controls page's controller or keyboard tab.
-    void showBindings(bool keyboard);
     // `picture`: a PNG file shown in place of the icon once it is on disk (the
     // host's achievement badges; Rogue Galaxy: added).
     void notify(std::string text, Icon icon = Icon::Info, double seconds = 3.0, std::string picture = {});
@@ -300,7 +299,6 @@ private:
     void drawBindingTable(bool keyboard);
     void drawGamePage();
     void drawLanguagePage();
-    void drawTexturesPage();
     // The host's switches whose page is `page`, in its sections.
     void drawGameOptions(const std::string &page, const char *emptyText, const char *firstTitle);
     // One option's switch, slider or choices.
@@ -402,7 +400,6 @@ private:
     // The left stick's directions as D-pad presses: left, right, up, down.
     std::array<bool, 4> m_stickHeld{};
     bool m_keyboardBindings = false;
-    int m_selectBindings = -1;
     gfx::PadInput m_hoveredInput = gfx::PadInput::Count;
     Capture m_capture;
     // Whether the pointer is over the capture prompt (its buttons are not a
@@ -422,7 +419,6 @@ private:
     float m_fps = 0.0f;
     // Below the counter when they share a corner.
     float m_toastTop = 0.0f;
-    float m_fpsLeftBottom = 0.0f;
     std::array<float, 64> m_fpsHistory{};
     size_t m_fpsHistoryNext = 0u;
 

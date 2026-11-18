@@ -27,30 +27,25 @@ A and ✕ are the same button, B and ○, X and ▢, Y and △):
 
 Settings has seven pages, written here as F1 > Settings > Game and so on:
 
-- **Display**: window or fullscreen, vertical sync, internal resolution
-  (2x by default), scaling filter, **Borders**, what fills
-  the sides of a 4:3 picture (black, the picture blurred, or your own image
-  from the `borders` folder), integer scaling, and **Sharper picture**,
-  which drops the PS2's line blending (it only blurs on a monitor).
-- **Sound**: volume and muting.
-- **Controls**: controller and keyboard remapping (a key, a mouse button
-  or the wheel), dead zones, and **Walk (hold)**, which makes the keys,
-  which always push the stick all the way, walk instead of run. In the
-  game's menus, talks and scenes the right click and Esc are Circle (back)
-  and the wheel the D-pad's up and down, whatever they are bound to.
+- **Display**: internal resolution (1x or 2x, 2x by default; the Deck's
+  screen is 800 lines, the PS2's picture 448), scaling filter (Sharp or
+  Smooth) and **Sharper picture**, which drops the PS2's line blending (it
+  only blurs on a monitor). The window and the vertical sync are the
+  system's: the game always starts fullscreen on the Deck.
+- **Sound**: the volume.
+- **Controls**: the controller's buttons (remapping), the sticks' dead zone,
+  the triggers' threshold and the camera's inversion. The Deck's own
+  controller is the only one; there is no keyboard or mouse page.
 - **Game**: the game options below.
 - **Language**: the text's language and the undub, [below](#language).
-- **Textures**: a switch for each texture pack found
-  ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)).
+- **Achievements**: the account and the list.
 - **Interface**: the menu's size, notifications, pause and fast-forward,
   the frame-rate counter.
 
 An option that does nothing as things stand stays on its page, greyed
-out, with a line under it saying what would make it work: Mouse
-sensitivity and Invert mouse up and down until Mouse camera is on, the
-undub until `setup.py extract-japanese`
-has read your Japanese disc, Borders while the picture fills the window,
-a language of Text whose files are missing.
+out, with a line under it saying what would make it work: the undub until
+`setup.py extract-japanese` has read your Japanese disc, a language of Text
+whose files are missing.
 
 | Key | |
 |---|---|
@@ -76,9 +71,6 @@ F1 > Settings > Game, in these sections:
 | Field of view | 40 to 90 degrees (the game's is 52). |
 | Camera distance | 0.7x to 1.6x the game's. |
 | Faster camera rotation | The camera turns twice as fast. |
-| Mouse camera | On by default. The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right looks right and up looks up, whatever the game's camera options. The tilt stays where the mouse leaves it; locked on a target in battle, the camera only turns, as with the stick. Once you press a key of the game's or click, the mouse stays in the window with the cursor hidden; F1, the pause (F2), Alt+Tab or five seconds on the controller alone let it go. Playing on a controller only, the cursor is never taken. |
-| Mouse sensitivity | 0.25x to 4.0x; at 1.0x an inch at 1,600 dpi turns about 100 degrees. |
-| Invert mouse up and down | Off by default. Moving the mouse up looks down. |
 | Draw distance | 1.0x to 4.0x the game's, from the next map loaded. |
 | Free camera (F6) | The party stands still and the controller moves the camera. Start or F6 to leave. |
 
@@ -86,7 +78,6 @@ F1 > Settings > Game, in these sections:
 
 | Option | |
 |---|---|
-| Buttons in the game's text | The buttons in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, RB, LT and RT, or on the keyboard and mouse the keys (a letter or digit, TAB, ESC and the like, the space bar) and mouse buttons, as bound in Controls. On by default. |
 | Skip the opening | Straight to the title screen. |
 | Quick loading recap | The story so far appears whole, and you can go on as soon as it has loaded. |
 | Instant text | Dialogue a page at a time instead of letter by letter. |
@@ -115,12 +106,6 @@ The numbers are against the game's own, 1.0x.
 | Director's Cut enemy behavior | Off by default. Turns on the enemies' attacks and AI of the same release ([DIRECTORS-CUT.md](DIRECTORS-CUT.md#enemy-behavior)), with or without the balance. Needs the same disc. Takes effect at the next start. |
 | Director's Cut party AI | Off by default. Turns on the allies' AI of the same release ([DIRECTORS-CUT.md](DIRECTORS-CUT.md#party-ai)). Needs the same disc. Takes effect at the next start. |
 
-**Rendering**
-
-| Option | |
-|---|---|
-| Native renderer | Off by default. For development: the work on drawing the game with the PC's renderer, instead of through the emulation of the PS2's graphics chip, goes behind it. For now, most of the work the PS2's vector unit did on the models is done on the PC and its graphics card; the models are still drawn through the emulation. Takes effect at the next start. |
-
 **Developers**
 
 | Option | |
@@ -146,10 +131,9 @@ F1 > Settings > Language.
 Most of the same options are on the game's Settings screen (System >
 Settings in the main menu): L1 and R1 turn the page, and a number's - and
 + buttons lower and raise it. With the text in French, German, Spanish or
-Italian, the options are named in that language there too. Buttons in the game's text, the mouse camera's three options, Check for new
-versions, the three Director's Cut options, Native renderer, the text's
-language, the undub, the texture packs and Display > Borders are in F1
-alone.
+Italian, the options are named in that language there too. Check for new
+versions, the three Director's Cut options, the text's language and the
+undub are in F1 alone.
 
 <p align="center">
   <img src="images/settings-switches.jpg" width="49%" alt="The game's Settings screen: the switches">

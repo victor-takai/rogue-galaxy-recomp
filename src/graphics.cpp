@@ -159,10 +159,6 @@ void followQuickScenes()
     }
 }
 
-// The game's text shows the buttons of the controller driving it (the menu's
-// "Buttons in the game's text").
-std::atomic<bool> g_controllerButtons{true};
-
 // What a controller calls the button a PlayStation button is bound to, as a
 // picture the game's text can show: an Xbox pad's (or a pad SDL does not
 // know, taken as one); a PlayStation or Nintendo pad keeps the game's.
@@ -339,7 +335,7 @@ void updateButtonGlyphs(dq8::gfx::SdlGpuBackend &backend)
     last = now;
     rg::buttons::Glyphs glyphs{};
     rg::buttons::KeyLabels labels{};
-    if (g_controllerButtons.load(std::memory_order_relaxed))
+    // The game's text shows the buttons of the controller driving it.
     {
         using dq8::gfx::PadInput;
         constexpr PadInput kInputs[rg::buttons::kButtons] = {PadInput::Cross, PadInput::Circle, PadInput::Square,
@@ -398,8 +394,6 @@ void applyGameOption(const std::string &key, bool on)
     rg::settingspages::noteOption(key, on);
     if (key == "sixty_fps")
         rg::timing::setSixtyFpsPreferred(on);
-    else if (key == "controller_buttons")
-        g_controllerButtons.store(on, std::memory_order_relaxed);
     else if (key == "check_updates")
         rg::updates::setEnabled(on);
     else if (key == "skip_opening")
@@ -408,8 +402,6 @@ void applyGameOption(const std::string &key, bool on)
         rg::loading::setInstantRecap(on);
     else if (key == "instant_text")
         rg::instanttext::setEnabled(on);
-    else if (key.rfind("texture_pack_", 0) == 0)
-        rg::texturePack::setPackEnabled(key.substr(13), on);
     else if (key == "japanese_voices")
         rg::voicelanguage::setEnabled(on);
     else if (key == "director_cut_balance")
@@ -430,16 +422,10 @@ void applyGameOption(const std::string &key, bool on)
         rg::achievements::setEnabled(on);
     else if (key == "dev_tools")
         rg::devtools::setEnabled(on);
-    else if (key == "native_renderer")
-        rg::nativerenderer::setPreferred(on);
     else if (key == "free_camera")
         rg::freecamera::setEnabled(on);
     else if (key == "faster_camera")
         rg::cameraview::setFasterTurn(on);
-    else if (key == "mouse_camera")
-        rg::mousecamera::setEnabled(on);
-    else if (key == "mouse_invert_vertical")
-        rg::mousecamera::setInvertVertical(on);
     else if (key == "fast_transporter")
         rg::quickscenes::setFastTransporter(on);
 }
@@ -451,8 +437,6 @@ void applyGameNumber(const std::string &key, int value)
         rg::cameraview::setFieldOfView(value);
     else if (key == "camera_distance")
         rg::cameraview::setDistance(value);
-    else if (key == "mouse_sensitivity")
-        rg::mousecamera::setSensitivity(value);
     else if (key == "draw_distance")
         rg::drawdistance::setPercent(value);
     else if (key == "minimap_size")
@@ -521,8 +505,6 @@ const Installed &installed()
 // The window's thread, the menu's.
 const char *gameOptionBlocked(const std::string &key)
 {
-    if ((key == "mouse_sensitivity" || key == "mouse_invert_vertical") && !rg::mousecamera::enabled())
-        return "Turn on Mouse camera for this.";
     const bool balance = key == "director_cut_balance";
     if (balance || key == "director_cut_enemies" || key == "director_cut_party_ai" || key == "japanese_voices")
     {
@@ -1027,16 +1009,6 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "The stick turns the camera twice as fast, exploring, in battle and in the first-person view. Otherwise "
          "it turns at the game's speed, at 60 frames a second as at 30.",
          false},
-        {"mouse_camera", "Mouse camera",
-         "The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right "
-         "looks right and up looks up, whatever the game's camera options. Locked on a target in battle, it only "
-         "turns, as with the stick. Once you press one of the game's keys or click, the mouse stays in the window "
-         "with the cursor hidden; F1, the pause (F2), Alt+Tab or five seconds on the controller alone let it go.",
-         true},
-        {"mouse_sensitivity", "Mouse sensitivity",
-         "How far the mouse turns the camera: at 1.0x, an inch at 1,600 dpi turns it about 100 degrees.", false,
-         25, 400, 100, kTimes, 25},
-        {"mouse_invert_vertical", "Invert mouse up and down", "Moving the mouse up looks down.", false},
         {"draw_distance", "Draw distance",
          "How far away the scenery and the objects are still drawn, against the game's (1.0x), the fog thinned "
          "in step. Most of Salgin has no limit to raise; the open areas gain more. Takes effect from the next map loaded.",
@@ -1047,11 +1019,6 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "point and tilts it (R2 held, nearer and farther). Start or F6 turns it off, as this switch does, to "
          "play again. Off at every start.",
          false, 0, 0, 0, "", 1, false},
-        {"controller_buttons", "Buttons in the game's text",
-         "The buttons shown in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, "
-         "RB, LT and RT, or the keys and mouse buttons, as each button is bound in Controls. Off, or with a "
-         "PlayStation or Nintendo controller, the game's PlayStation buttons.",
-         true},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},
         {"instant_loading_recap", "Quick loading recap",
@@ -1143,12 +1110,6 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "stay English. A few lines have no Japanese voice and play silent. Takes effect the next time the game "
          "starts.",
          false, 0, 0, 0, "", 1, true, true, "language"},
-        {"native_renderer", "Native renderer",
-         "Experimental, for development: the work on drawing the game with the PC's renderer, instead of through "
-         "the emulation of the PS2's graphics chip, goes behind it. For now, most of the work the PS2's vector "
-         "unit did on the models is done on the PC and its graphics card; the models are still drawn through the "
-         "emulation. Takes effect the next time the game starts.",
-         false, 0, 0, 0, "", 1, true, true},
         {"dev_tools", "Developer tools",
          "The tools the developers left in the game, switched off for release. Main menu: R3 shows every item's "
          "icon, R1 + R3 a list of them, and Cross gives you one of the item picked. Help pages and info list: R1 "
@@ -1157,28 +1118,10 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "does not let you skip; this can leave the story out of order.",
          false},
     };
-    // One switch for each pack found, on a page of their own in the menu (F1 > Settings > Textures).
-    // A pack of 2D art alone does nothing at 1x.
-    std::unordered_set<std::string> flatPacks;
-    for (const rg::texturePack::PackInfo &pack : rg::texturePack::packs())
-    {
-        if (pack.wholes == 0u)
-            flatPacks.insert("texture_pack_" + pack.key);
-        dq8::ui::GameOption option{"texture_pack_" + pack.key, "Pack: " + pack.name,
-                                   "The game's art is drawn from this pack's " + std::to_string(pack.regions) +
-                                       (pack.regions == 1u ? " picture" : " pictures") +
-                                       ", where it has them: 2D art above 1\xC3\x97, a PCSX2 pack's 3D at any "
-                                       "scale. Where packs share a picture, the one lower in this list wins.",
-                                   pack.enabled};
-        option.page = "textures";
-        host.gameOptions.push_back(std::move(option));
-    }
     host.gameSections = {
         {"sixty_fps", "Camera and view"},
-        // The buttons in the game's text open it: they are no camera option.
-        {"controller_buttons", "Convenience"},
+        {"skip_opening", "Convenience"},
         {"encounter_rate", "Battles and rewards"},
-        {"native_renderer", "Rendering"},
         {"dev_tools", "Developers"},
     };
     // The game's own Settings screen shows them on pages of its own.
@@ -1194,13 +1137,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     host.setGameOption = &applyGameOption;
     host.gameOptionState = [](const std::string &key) { return key == "free_camera" && rg::freecamera::enabled(); };
     host.setGameNumber = &applyGameNumber;
-    host.gameOptionBlocked = [&backend, flatPacks = std::move(flatPacks)](const std::string &key) -> const char * {
-        // The scale as Display shows it: one picked while paused counts.
-        const uint32_t scale = g_menu ? g_menu->shownResolutionScale() : backend.activeResolutionScale();
-        if (flatPacks.count(key) != 0u && scale <= 1u)
-            return "Its 2D art shows above 1\xC3\x97: raise Display > Internal resolution for this.";
-        return gameOptionBlocked(key);
-    };
+    host.gameOptionBlocked = &gameOptionBlocked;
     host.gameChoiceBlocked = &gameChoiceBlocked;
     host.achievements = [] {
         dq8::ui::AchievementList out;

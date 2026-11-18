@@ -85,27 +85,21 @@ void Overlay::runStep(const ScriptStep &step, uint64_t frame) {
     std::fprintf(stderr, "[ui] script frame %llu, %.1f s: %s %s\n", static_cast<unsigned long long>(frame),
                  now() - m_scriptStart, command.c_str(), joined(step.arguments).c_str());
     static constexpr const char *kPages[] = {"display", "sound", "controls", "game",
-                                             "language", "textures", "achievements", "interface"};
+                                             "language", "achievements", "interface"};
     static constexpr SettingsPage kPageValues[] = {SettingsPage::Display, SettingsPage::Sound, SettingsPage::Controls,
-                                                   SettingsPage::Game, SettingsPage::Language, SettingsPage::Textures,
+                                                   SettingsPage::Game, SettingsPage::Language,
                                                    SettingsPage::Achievements, SettingsPage::Interface};
-    static constexpr const char *kFilters[] = {"sharp", "smooth", "nearest"};
-    static constexpr gfx::SdlGpuFilter kFilterValues[] = {gfx::SdlGpuFilter::Sharp, gfx::SdlGpuFilter::Smooth,
-                                                          gfx::SdlGpuFilter::Nearest};
-    static constexpr const char *kSides[] = {"black", "blurred", "image"};
-    static constexpr gfx::SdlGpuSides kSidesValues[] = {gfx::SdlGpuSides::Black, gfx::SdlGpuSides::Blurred,
-                                                        gfx::SdlGpuSides::Image};
+    static constexpr const char *kFilters[] = {"sharp", "smooth"};
+    static constexpr gfx::SdlGpuFilter kFilterValues[] = {gfx::SdlGpuFilter::Sharp, gfx::SdlGpuFilter::Smooth};
     SettingsPage page{};
     // Settings the script changes are saved as the menu's own changes are.
-    static constexpr const char *kSaved[] = {"filter", "sides", "integer", "scale", "fps", "speed"};
+    static constexpr const char *kSaved[] = {"filter", "scale", "fps", "speed"};
     if (std::find(std::begin(kSaved), std::end(kSaved), command) != std::end(kSaved))
         markDirty();
     if (command == "menu") {
         setMenuOpen(on);
     } else if (command == "settings" && pick(first, kPages, kPageValues, page)) {
         openSettings(page);
-    } else if (command == "bindings") {
-        showBindings(first == "keyboard");
     } else if (command == "show") {
         showMenu(joined(step.arguments).c_str());
     } else if (command == "about") {
@@ -124,13 +118,8 @@ void Overlay::runStep(const ScriptStep &step, uint64_t frame) {
                                     step.arguments.size() > 1 && step.arguments[1] == "keyboard", 0);
     } else if (command == "filter" && pick(first, kFilters, kFilterValues, m_settings.display.filter)) {
         m_backend.setDisplayOptions(m_settings.display);
-    } else if (command == "sides" && pick(first, kSides, kSidesValues, m_settings.display.sides)) {
-        m_backend.setDisplayOptions(m_settings.display);
-    } else if (command == "integer") {
-        m_settings.display.integerScale = on;
-        m_backend.setDisplayOptions(m_settings.display);
     } else if (command == "scale") {
-        requestScale(static_cast<uint32_t>(std::clamp(std::atoi(first.c_str()), 1, 8)));
+        requestScale(static_cast<uint32_t>(std::clamp(std::atoi(first.c_str()), 1, 2)));
     } else if (command == "fps") {
         m_settings.showFps = on;
     } else if (command == "pause") {
