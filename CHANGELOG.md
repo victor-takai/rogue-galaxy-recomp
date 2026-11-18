@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Steam Deck fork: the home screen has an Options button, above Quit, that
+  opens the settings.
+
 ## 0.8.0 - 2026-11-18
 
 ### Changed

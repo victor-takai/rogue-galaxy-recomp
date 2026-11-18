@@ -155,6 +155,10 @@ void Overlay::drawSettingsWindow() {
         m_focusSettings = false;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(1.2f), em(1.0f)));
+    // Over the home screen's picture and notes: more opaque, to read.
+    const bool opaque = m_homeOpen;
+    if (opaque)
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(9, 13, 36, 250));
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar |
@@ -277,6 +281,8 @@ void Overlay::drawSettingsWindow() {
     }
     ImGui::End();
     ImGui::PopStyleVar();
+    if (opaque)
+        ImGui::PopStyleColor();
 }
 
 void Overlay::drawPadHints(float height) {
