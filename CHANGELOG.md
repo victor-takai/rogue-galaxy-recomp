@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 (pre-release)
+
+### New
+
+- Steam Deck fork: the home screen shows the notes of the last versions
+  ("What's new", from this file) on the right; the mouse wheel or the right
+  stick scrolls them.
+
 ## 0.5.0 (pre-release)
 
 ### New
