@@ -1120,6 +1120,10 @@ void spinner(ImDrawList *list, ImVec2 centre, float radius, ImU32 color) {
 
 // One button of the home screen: a glass plate that lights up under the
 // cursor, with a gold bar and a sliding label; the first (Play) is gold.
+// True while the changelog panel has the d-pad: the buttons then show no
+// selection (the panel's border does).
+bool gHomeReading = false;
+
 bool homeButton(const char *id, const char *label, ImVec2 size, bool enabled, float fade,
                 int adornment) {
     ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
@@ -1129,7 +1133,7 @@ bool homeButton(const char *id, const char *label, ImVec2 size, bool enabled, fl
     const ImVec2 min = ImGui::GetCursorScreenPos();
     const bool pressed = ImGui::Button(id, size);
     ImGui::PopStyleColor(4);
-    const bool lit = enabled && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
+    const bool lit = enabled && !gHomeReading && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
     const bool held = enabled && ImGui::IsItemActive();
     const ImVec2 max(min.x + size.x, min.y + size.y);
 
@@ -1411,7 +1415,7 @@ void Overlay::drawHome() {
             // the confirm keys, so ImGui's navigation (which only reads keys
             // nobody owns) leaves the buttons alone. Right from the buttons
             // enters it; Left or B leaves. Owning takes effect the next frame.
-            static bool reading = false;
+            bool &reading = gHomeReading;
             const ImGuiIO &io = ImGui::GetIO();
             const ImGuiID readId = ImGui::GetID("##newsread");
             const bool navOn = (io.ConfigFlags & (ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard)) != 0;
