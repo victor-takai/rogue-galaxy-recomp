@@ -18,6 +18,8 @@ extern const unsigned char kHomeArtData[];
 extern const unsigned int kHomeArtData_size;
 extern const unsigned char kHomeLogoData[];
 extern const unsigned int kHomeLogoData_size;
+extern const unsigned char kHomeChangesData[];
+extern const unsigned int kHomeChangesData_size;
 
 namespace dq8::ui {
 
@@ -48,6 +50,11 @@ void load(Picture &picture, const unsigned char *bytes, unsigned int size, const
         stbi_image_free(pixels);
 }
 } // namespace
+
+const char *homeChangelog(unsigned int &size) {
+    size = kHomeChangesData_size;
+    return reinterpret_cast<const char *>(kHomeChangesData);
+}
 
 bool homeArt(HomePicture which, ImTextureRef &texture, ImVec2 &size) {
     static Picture background, logo;

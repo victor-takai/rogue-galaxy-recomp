@@ -171,6 +171,9 @@ set(DQ8_HOME_ART_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/home_art_data.cpp
 set(DQ8_HOME_LOGO_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/home_logo_data.cpp")
 dq8_embed_art("${CMAKE_CURRENT_SOURCE_DIR}/../../installer/art/home.jpg" "${DQ8_HOME_ART_SOURCE}" kHomeArtData)
 dq8_embed_art("${CMAKE_CURRENT_SOURCE_DIR}/../../installer/art/logo-home.png" "${DQ8_HOME_LOGO_SOURCE}" kHomeLogoData)
+# The changelog, shown on the home screen (a tree without it shows no panel).
+set(DQ8_HOME_CHANGES_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/home_changes_data.cpp")
+dq8_embed_art("${CMAKE_CURRENT_SOURCE_DIR}/../../CHANGELOG.md" "${DQ8_HOME_CHANGES_SOURCE}" kHomeChangesData)
 
 add_library(dq8_ui STATIC
     src/ui/ui_art.cpp
@@ -184,5 +187,6 @@ add_library(dq8_ui STATIC
     "${DQ8_UI_FONT_SOURCE}"
     "${DQ8_HOME_ART_SOURCE}"
     "${DQ8_HOME_LOGO_SOURCE}"
+    "${DQ8_HOME_CHANGES_SOURCE}"
 )
 target_link_libraries(dq8_ui PUBLIC dq8_gfx_sdlgpu dq8_imgui)

@@ -1190,6 +1190,80 @@ bool homeButton(const char *id, const char *label, ImVec2 size, bool enabled, fl
     }
     return pressed;
 }
+
+// The changelog on the home screen (Steam Deck fork: added): the embedded
+// CHANGELOG.md cut into versions, sections and bullets, the last few versions
+// only, without the install notes and known issues.
+struct ChangeLine {
+    enum Kind { Version, Section, Bullet } kind;
+    std::string text;
+};
+
+std::string plainMarkdown(const std::string &in) {
+    std::string out;
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '`' || in[i] == '*')
+            continue;
+        if (in[i] == '[') {
+            const size_t close = in.find("](", i);
+            const size_t end = close == std::string::npos ? close : in.find(')', close);
+            if (end != std::string::npos) {
+                out += in.substr(i + 1, close - i - 1);
+                i = end;
+                continue;
+            }
+        }
+        out += in[i];
+    }
+    return out;
+}
+
+const std::vector<ChangeLine> &changelogLines() {
+    static std::vector<ChangeLine> lines;
+    static bool parsed = false;
+    if (parsed)
+        return lines;
+    parsed = true;
+    unsigned int size = 0;
+    const char *data = homeChangelog(size);
+    if (size <= 1u)
+        return lines;
+    const std::string text(data, size);
+    constexpr int kVersions = 3;
+    int versions = 0;
+    bool skip = false;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        if (end == std::string::npos)
+            end = text.size();
+        std::string line = text.substr(pos, end - pos);
+        pos = end + 1;
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (line.rfind("## ", 0) == 0) {
+            if (++versions > kVersions)
+                break;
+            skip = false;
+            lines.push_back({ChangeLine::Version, plainMarkdown(line.substr(3))});
+        } else if (line.rfind("### ", 0) == 0) {
+            const std::string name = line.substr(4);
+            skip = name.rfind("Install", 0) == 0 || name.rfind("Update from", 0) == 0 ||
+                   name.rfind("Known issues", 0) == 0 || name.rfind("Highlights", 0) == 0;
+            if (!skip && versions > 0)
+                lines.push_back({ChangeLine::Section, name});
+        } else if (!skip && versions > 0) {
+            if (line.rfind("- ", 0) == 0)
+                lines.push_back({ChangeLine::Bullet, plainMarkdown(line.substr(2))});
+            else if (line.rfind("  ", 0) == 0 && !lines.empty() && lines.back().kind == ChangeLine::Bullet) {
+                size_t first = line.find_first_not_of(' ');
+                if (first != std::string::npos)
+                    lines.back().text += " " + plainMarkdown(line.substr(first));
+            }
+        }
+    }
+    return lines;
+}
 } // namespace
 
 // The screen the game starts on: Play, Update, Quit. It covers the window
@@ -1314,6 +1388,66 @@ void Overlay::drawHome() {
     const HostServices::HomeUpdate update = m_host.homeUpdate ? m_host.homeUpdate() : HostServices::HomeUpdate{};
     using State = HostServices::HomeUpdate::State;
     const bool working = update.state == State::Working;
+
+    // What changed: the last versions' notes, on the right. The wheel or the
+    // right stick scrolls; it takes no focus, so the buttons keep the pad.
+    const std::vector<ChangeLine> &changes = changelogLines();
+    if (!changes.empty() && view.x >= view.y * 1.3f) {
+        const float panelW = std::min(view.x * 0.34f, em(30.0f));
+        const float panelH = view.y * 0.72f;
+        ImGui::SetNextWindowPos(ImVec2(corner.x - view.x * 0.05f, origin.y + view.y * 0.5f), ImGuiCond_Always,
+                                ImVec2(1.0f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(1.0f), em(0.9f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, em(0.6f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(4, 8, 24, static_cast<int>(170 * fade)));
+        if (ImGui::Begin("##homenews", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
+            ImDrawList *list = ImGui::GetWindowDrawList();
+            const ImVec2 wmin = ImGui::GetWindowPos();
+            ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+            list->AddRect(wmin, ImVec2(wmin.x + panelW, wmin.y + panelH), withAlpha(IM_COL32(186, 204, 255, 90), fade),
+                          em(0.6f), 1.0f);
+            const float titleSize = em(1.0f);
+            trackedText(list, ImGui::GetCursorScreenPos(), titleSize, em(0.22f), IM_COL32(186, 204, 255, 255),
+                        IM_COL32(186, 204, 255, 255), "WHAT'S NEW", fade);
+            ImGui::Dummy(ImVec2(0.0f, titleSize * 1.6f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
+            if (ImGui::BeginChild("##homenewsbody", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
+                                  ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground)) {
+                const float stick = ImGui::GetKeyData(ImGuiKey_GamepadLStickDown)->AnalogValue -
+                                    ImGui::GetKeyData(ImGuiKey_GamepadLStickUp)->AnalogValue;
+                if (stick != 0.0f)
+                    ImGui::SetScrollY(ImGui::GetScrollY() + stick * ImGui::GetIO().DeltaTime * em(30.0f));
+                ImGui::PushTextWrapPos(0.0f);
+                for (const ChangeLine &line : changes) {
+                    if (line.kind == ChangeLine::Version) {
+                        ImGui::Dummy(ImVec2(0.0f, em(0.3f)));
+                        ImGui::PushStyleColor(ImGuiCol_Text, palette::kGold);
+                        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.15f);
+                        ImGui::TextUnformatted(line.text.c_str());
+                        ImGui::PopFont();
+                        ImGui::PopStyleColor();
+                    } else if (line.kind == ChangeLine::Section) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(186, 204, 255, 255));
+                        ImGui::TextUnformatted(line.text.c_str());
+                        ImGui::PopStyleColor();
+                    } else {
+                        ImGui::Bullet();
+                        ImGui::TextUnformatted(line.text.c_str());
+                        ImGui::Dummy(ImVec2(0.0f, em(0.15f)));
+                    }
+                }
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+    }
 
     // The column: title, buttons, update status.
     const float column = std::min(em(21.0f), view.x * 0.46f);

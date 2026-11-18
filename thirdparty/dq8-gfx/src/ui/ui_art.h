@@ -13,4 +13,7 @@ enum class HomePicture { Background, Logo };
 // A picture as a texture and its size in pixels; false when there is none.
 bool homeArt(HomePicture which, ImTextureRef &texture, ImVec2 &size);
 
+// The embedded CHANGELOG.md as text; empty when the build has none.
+const char *homeChangelog(unsigned int &size);
+
 } // namespace dq8::ui

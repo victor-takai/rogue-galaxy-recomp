@@ -83,7 +83,9 @@ stay as they are. It is experimental: report problems with a screenshot and
 
 ## Update
 
-The game opens on a home screen with **Play**, **Update** and **Quit**. When
+The game opens on a home screen with **Play**, **Update** and **Quit**; on the
+right, "What's new" lists the notes of the last versions (the right stick
+scrolls them). When
 a newer release is out, Update names it ("Update to 0.4.0"). Press it and the
 game does the rest in its own window, with a progress bar: it downloads the
 release's source archive, checks its checksum, unpacks it over the folder and
