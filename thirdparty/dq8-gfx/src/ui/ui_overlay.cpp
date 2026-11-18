@@ -1203,6 +1203,7 @@ bool homeButton(const char *id, const char *label, ImVec2 size, bool enabled, fl
 struct ChangeLine {
     enum Kind { Version, Section, Bullet } kind;
     std::string text;
+    std::string date; // Version only: the release's date, from "## X.Y.Z - DATE"
 };
 
 std::string plainMarkdown(const std::string &in) {
@@ -1251,7 +1252,17 @@ const std::vector<ChangeLine> &changelogLines() {
             if (++versions > kVersions)
                 break;
             skip = false;
-            lines.push_back({ChangeLine::Version, plainMarkdown(line.substr(3))});
+            std::string head = plainMarkdown(line.substr(3));
+            std::string date;
+            const size_t dash = head.find(" - ");
+            if (dash != std::string::npos) {
+                date = head.substr(dash + 3);
+                head.resize(dash);
+            }
+            const size_t paren = head.find(" (");
+            if (paren != std::string::npos)
+                head.resize(paren);
+            lines.push_back({ChangeLine::Version, head, date});
         } else if (line.rfind("### ", 0) == 0) {
             const std::string name = line.substr(4);
             skip = name.rfind("Install", 0) == 0 || name.rfind("Update from", 0) == 0 ||
@@ -1486,6 +1497,12 @@ void Overlay::drawHome() {
                         ImGui::TextUnformatted(line.text.c_str());
                         ImGui::PopFont();
                         ImGui::PopStyleColor();
+                        if (!line.date.empty()) {
+                            ImGui::SameLine(0.0f, em(0.4f));
+                            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(150, 165, 200, 255));
+                            ImGui::TextUnformatted(("- " + line.date).c_str());
+                            ImGui::PopStyleColor();
+                        }
                     } else if (line.kind == ChangeLine::Section) {
                         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(186, 204, 255, 255));
                         ImGui::TextUnformatted(line.text.c_str());
