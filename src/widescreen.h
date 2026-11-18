@@ -19,38 +19,22 @@ class PS2Runtime;
 // the game places their text. Beyond the patch, a 4:3 movie (512x448)
 // narrows to keep its shape, with bars at its sides.
 //
-// The presenter shows the window's shape (4:3 to 32:9) when the menu's
-// aspect ratio is Auto (the backend's game wide-screen query), and the
-// camera, the compass and the movies take the shape shown (setAspect) for
-// the 9/16 of the mode and the patch, so the picture fills the window. The
-// HUD's 3/4 is the mode's own, right at 16:9. 2D menus and text are drawn
-// for 4:3 and come out stretched; the screens before the game, which have
-// nothing else (the title overlay's: opening, title, load menu, and the
-// loading screen's recap), stay 4:3, and the game draws for 4:3 there.
+// The presenter shows the picture at 16:10, the Steam Deck's screen, the
+// one shape there is (a window of another shape gets bars), and the camera,
+// the compass and the movies take it for the 9/16 of the mode and the patch.
+// The HUD's 3/4 is the mode's own, right at 16:9, a little narrow at 16:10.
+// 2D menus and text are drawn for 4:3 and come out stretched; so are the
+// screens before the game (the title overlay's: opening, title, load menu,
+// and the loading screen's recap), where the game draws for 4:3.
 //
-// The menu's game option `widescreen`, or RG_WIDESCREEN=1.
+// Always on: there is no option and no environment variable.
 namespace rg::widescreen
 {
 
 // After loadELF().
 void install(PS2Runtime &runtime);
 
-void setEnabled(bool enable);
-
-// The option is on and the game is past the screens before it: the frame
-// is drawn wide.
+// The game is past the screens before it: the frame is drawn wide.
 bool wide();
-
-// The shape the picture is shown at with the option on, width over height
-// (16:9 until told); clamped to 4:3..32:9.
-void setAspect(float aspect);
-
-// That shape is wider than 4:3. Not with Display > Aspect ratio on 4:3 or
-// Native, nor in a window no wider than 4:3 under Auto or Stretch: there the
-// option does nothing (the battle bench's frames came out the same with it
-// on and off, 2026-11-07), and the menu greys it out. wide() does not ask:
-// it would change with the window's shape in the middle of a frame (the
-// presenting thread sets it), and the wide frame at 4:3 is the game's own.
-bool shownWide();
 
 } // namespace rg::widescreen

@@ -389,33 +389,6 @@ void Overlay::drawDisplayPage() {
             ImGui::EndCombo();
         }
 
-        const char *aspectHelp = "";
-        switch (m_settings.display.aspect) {
-        case gfx::SdlGpuAspect::Auto: {
-            // Rogue Galaxy's is on the Game page.
-            const int wide = m_backend.gameWidescreen();
-            aspectHelp = wide == 1   ? "Follows Game > Widescreen: the window's shape."
-                         : wide == 0 ? "Follows Game > Widescreen: 4:3."
-                                     : "4:3, the shape the game draws for; it has no wide-screen option.";
-            break;
-        }
-        case gfx::SdlGpuAspect::Standard: aspectHelp = "The shape a television gave the game."; break;
-        case gfx::SdlGpuAspect::Wide:
-            aspectHelp = m_backend.gameWidescreen() == 1 ? "16:9 whatever the window; the game draws for it."
-                                                         : "Stretches the 4:3 picture to 16:9; the game draws for 4:3.";
-            break;
-        case gfx::SdlGpuAspect::Native: aspectHelp = "Square pixels, as drawn; narrower than on a television."; break;
-        case gfx::SdlGpuAspect::Stretch: aspectHelp = "Fills the window, whatever its shape."; break;
-        }
-        settingRow("Aspect ratio", aspectHelp, "Experimental");
-        static constexpr const char *kAspects[] = {"Auto", "4:3", "16:9", "Native", "Stretch"};
-        int aspect = static_cast<int>(m_settings.display.aspect);
-        if (segmented("aspect", &aspect, kAspects, 5)) {
-            m_settings.display.aspect = static_cast<gfx::SdlGpuAspect>(aspect);
-            m_backend.setDisplayOptions(m_settings.display);
-            markDirty();
-        }
-
         static constexpr const char *kFilterHelp[] = {"Crisp pixels with no uneven columns, at any size.",
                                                       "Soft, smooth scaling.",
                                                       "Raw pixels; uneven unless the size is a whole multiple."};
@@ -447,10 +420,7 @@ void Overlay::drawDisplayPage() {
         }
         {
             const Blocked blocked(bars ? nullptr
-                                  : m_settings.display.aspect == gfx::SdlGpuAspect::Stretch
-                                      ? "Stretch fills the window: pick another Aspect ratio for this."
-                                      : "The picture fills the window: change Aspect ratio or turn on Integer "
-                                        "scaling for this.");
+                                       : "The picture fills the window: turn on Integer scaling for this.");
             settingRow("Borders", kSidesHelp[static_cast<int>(m_settings.display.sides)]);
             static constexpr const char *kSides[] = {"Black", "Blurred", "Image"};
             int sides = static_cast<int>(m_settings.display.sides);

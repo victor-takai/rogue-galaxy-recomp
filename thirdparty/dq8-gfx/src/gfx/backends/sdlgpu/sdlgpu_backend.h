@@ -229,9 +229,8 @@ public:
     // Install before execution. The callback reads a thread-safe game counter.
     using CompletedRenderCounter = uint64_t (*)();
     void setCompletedRenderCounter(CompletedRenderCounter counter);
-    // The game's Screen Size option for SdlGpuAspect::Auto, read on the
-    // presenting thread: 1 for a wide screen (the window's shape), 0 for
-    // 4:3, -1 unknown.
+    // Whether the game draws for a wide screen, read on the presenting
+    // thread: 1 for 16:10, 0 for 4:3, -1 unknown.
     using GameWidescreenQuery = int (*)();
     void setGameWidescreenQuery(GameWidescreenQuery query);
     // The image SdlGpuSides::Image shows; before the window presents (Rogue

@@ -89,10 +89,6 @@ void Overlay::runStep(const ScriptStep &step, uint64_t frame) {
     static constexpr SettingsPage kPageValues[] = {SettingsPage::Display, SettingsPage::Sound, SettingsPage::Controls,
                                                    SettingsPage::Game, SettingsPage::Language, SettingsPage::Textures,
                                                    SettingsPage::Achievements, SettingsPage::Interface};
-    static constexpr const char *kAspects[] = {"auto", "4:3", "16:9", "native", "stretch"};
-    static constexpr gfx::SdlGpuAspect kAspectValues[] = {gfx::SdlGpuAspect::Auto, gfx::SdlGpuAspect::Standard,
-                                                          gfx::SdlGpuAspect::Wide, gfx::SdlGpuAspect::Native,
-                                                          gfx::SdlGpuAspect::Stretch};
     static constexpr const char *kFilters[] = {"sharp", "smooth", "nearest"};
     static constexpr gfx::SdlGpuFilter kFilterValues[] = {gfx::SdlGpuFilter::Sharp, gfx::SdlGpuFilter::Smooth,
                                                           gfx::SdlGpuFilter::Nearest};
@@ -101,7 +97,7 @@ void Overlay::runStep(const ScriptStep &step, uint64_t frame) {
                                                         gfx::SdlGpuSides::Image};
     SettingsPage page{};
     // Settings the script changes are saved as the menu's own changes are.
-    static constexpr const char *kSaved[] = {"aspect", "filter", "sides", "integer", "scale", "fps", "speed"};
+    static constexpr const char *kSaved[] = {"filter", "sides", "integer", "scale", "fps", "speed"};
     if (std::find(std::begin(kSaved), std::end(kSaved), command) != std::end(kSaved))
         markDirty();
     if (command == "menu") {
@@ -126,8 +122,6 @@ void Overlay::runStep(const ScriptStep &step, uint64_t frame) {
             if (first == gfx::padInputKey(static_cast<gfx::PadInput>(input)))
                 beginBindingCapture(static_cast<gfx::PadInput>(input),
                                     step.arguments.size() > 1 && step.arguments[1] == "keyboard", 0);
-    } else if (command == "aspect" && pick(first, kAspects, kAspectValues, m_settings.display.aspect)) {
-        m_backend.setDisplayOptions(m_settings.display);
     } else if (command == "filter" && pick(first, kFilters, kFilterValues, m_settings.display.filter)) {
         m_backend.setDisplayOptions(m_settings.display);
     } else if (command == "sides" && pick(first, kSides, kSidesValues, m_settings.display.sides)) {

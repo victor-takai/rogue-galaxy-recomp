@@ -17,7 +17,7 @@ Linux setups are not supported here.
 </p>
 
 - 60 fps
-- Widescreen
+- 16:10 picture, the Steam Deck's screen
 - Up to 8x internal resolution
 - In-game menu (View + Menu on the Deck)
 - [New game settings](docs/OPTIONS.md)

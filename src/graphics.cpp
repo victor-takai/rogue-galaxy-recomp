@@ -398,8 +398,6 @@ void applyGameOption(const std::string &key, bool on)
     rg::settingspages::noteOption(key, on);
     if (key == "sixty_fps")
         rg::timing::setSixtyFpsPreferred(on);
-    else if (key == "widescreen")
-        rg::widescreen::setEnabled(on);
     else if (key == "controller_buttons")
         g_controllerButtons.store(on, std::memory_order_relaxed);
     else if (key == "check_updates")
@@ -520,20 +518,11 @@ const Installed &installed()
 
 // A game option that does nothing now, as the line the menu shows under it
 // greyed out (HostServices::gameOptionBlocked): what would make it work.
-// `aspect` is Display > Aspect ratio as the presenter has it, the one
-// rg::widescreen::shownWide() comes from. The window's thread, the menu's.
-const char *gameOptionBlocked(const std::string &key, dq8::gfx::SdlGpuAspect aspect)
+// The window's thread, the menu's.
+const char *gameOptionBlocked(const std::string &key)
 {
     if ((key == "mouse_sensitivity" || key == "mouse_invert_vertical") && !rg::mousecamera::enabled())
         return "Turn on Mouse camera for this.";
-    if (key == "widescreen" && !rg::widescreen::shownWide())
-    {
-        // Under Auto or Stretch the window is no wider than 4:3 (a 4:3
-        // screen, or a tall window).
-        return aspect == dq8::gfx::SdlGpuAspect::Standard || aspect == dq8::gfx::SdlGpuAspect::Native
-                   ? "Set Display > Aspect ratio to Auto for this."
-                   : "Needs a window wider than 4:3, or Display > Aspect ratio on 16:9.";
-    }
     const bool balance = key == "director_cut_balance";
     if (balance || key == "director_cut_enemies" || key == "director_cut_party_ai" || key == "japanese_voices")
     {
@@ -747,16 +736,6 @@ bool pump(void *userData)
                               {pad.keyboardMouseAt(), pad.mouseMotionAt(), pad.controllerAt()});
     }
     updateButtonGlyphs(*backend);
-    // The shape the picture takes with Widescreen on, for the game's camera:
-    // under Auto the window's.
-    int windowWidth = 0, windowHeight = 0;
-    if (SDL_GetWindowSizeInPixels(backend->window(), &windowWidth, &windowHeight) && windowWidth > 0 &&
-        windowHeight > 0)
-    {
-        rg::widescreen::setAspect(static_cast<float>(dq8::gfx::sdlGpuDisplayAspect(
-            backend->displayOptions(), 512u, 448u, static_cast<uint32_t>(windowWidth),
-            static_cast<uint32_t>(windowHeight), 1)));
-    }
     // The menu has F11 and Alt+Enter; without it, F11 still toggles.
     static bool f11WasDown = false;
     const bool f11Down = !g_hasMenu && SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_F11];
@@ -856,7 +835,7 @@ bool pump(void *userData)
     return true;
 }
 
-// The saved window size, or 80% of the display's height at 4:3, the shape
+// The saved window size, or 80% of the display's height at 16:10, the shape
 // the game is shown at, so the picture fills it.
 std::pair<uint32_t, uint32_t> initialWindowSize(const dq8::ui::Settings &settings)
 {
@@ -867,7 +846,7 @@ std::pair<uint32_t, uint32_t> initialWindowSize(const dq8::ui::Settings &setting
     SDL_Rect usable{0, 0, 1280, 960};
     SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable);
     const uint32_t height = static_cast<uint32_t>(std::max(448.0f, static_cast<float>(usable.h) * 0.8f));
-    return {height * 4u / 3u, height};
+    return {height * 16u / 10u, height};
 }
 
 // The image the menu's Display > Borders > Image shows beside a 4:3 picture:
@@ -1029,10 +1008,6 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "The game runs at 60 frames a second instead of its own 30, its logic still at the PS2's pace; movies "
          "and the loading screen keep 30. Takes effect the next time the game starts.",
          true, 0, 0, 0, "", 1, true, true},
-        {"widescreen", "Widescreen",
-         "The game draws a wider view, and the HUD over the scene and the movies fit it; with Display > Aspect "
-         "ratio on Auto the picture fills the window, whatever its shape, once a game is loaded.",
-         false},
         {"minimap_size", "Minimap size",
          "The map in the corner while exploring, against the game's size (1.0x); made smaller, it keeps to its "
          "corner. The transporter menu's map stays as it is.",
@@ -1224,7 +1199,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         const uint32_t scale = g_menu ? g_menu->shownResolutionScale() : backend.activeResolutionScale();
         if (flatPacks.count(key) != 0u && scale <= 1u)
             return "Its 2D art shows above 1\xC3\x97: raise Display > Internal resolution for this.";
-        return gameOptionBlocked(key, backend.displayOptions().aspect);
+        return gameOptionBlocked(key);
     };
     host.gameChoiceBlocked = &gameChoiceBlocked;
     host.achievements = [] {
@@ -1327,8 +1302,7 @@ Setup::Setup(PS2Runtime &runtime)
             std::fprintf(stderr, "[rg] could not read %s; using default settings\n", settingsPath.c_str());
         }
         // A Steam Deck starts in fullscreen (its Game Mode shows a window
-        // letterboxed, and a window of another shape turns the widescreen
-        // off), whatever an earlier run saved; RG_WINDOWED=1 keeps the
+        // letterboxed), whatever an earlier run saved; RG_WINDOWED=1 keeps the
         // saved window. Its first run also starts at the native scale: the
         // 1280x800 screen shows nothing of a 2x one, and the APU is the
         // limit in battle.
@@ -1376,7 +1350,7 @@ Setup::Setup(PS2Runtime &runtime)
         // worker's: an F9 mark then says which thread was saturated.
         dq8::gfx::setStatsExtraLine([] { return rg::vif1::busyReport() + mainStallReport(); });
         dq8::gfx::setPresentObserver(&debug::noteFrameTime);
-        // Aspect ratio Auto follows the Widescreen option.
+        // 16:10 once past the screens before the game, which stay 4:3.
         sdl->setGameWidescreenQuery([] { return rg::widescreen::wide() ? 1 : 0; });
         rg::texturePack::install(*sdl);
         sdl->setSideImageLoader(&loadBorderImage);

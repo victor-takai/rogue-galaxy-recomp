@@ -28,7 +28,7 @@ A and ✕ are the same button, B and ○, X and ▢, Y and △):
 Settings has seven pages, written here as F1 > Settings > Game and so on:
 
 - **Display**: window or fullscreen, vertical sync, internal resolution
-  (2x by default), aspect ratio, scaling filter, **Borders**, what fills
+  (2x by default), scaling filter, **Borders**, what fills
   the sides of a 4:3 picture (black, the picture blurred, or your own image
   from the `borders` folder), integer scaling, and **Sharper picture**,
   which drops the PS2's line blending (it only blurs on a monitor).
@@ -71,7 +71,6 @@ F1 > Settings > Game, in these sections:
 | Option | |
 |---|---|
 | 60 frames per second | On by default; off, the game's own 30. From the next start. |
-| Widescreen | Off by default. A wider view, from 4:3 to 32:9; with Display > Aspect ratio on Auto (the default) it fills the window. With the picture shown at 4:3 (Aspect ratio on 4:3 or Native, or a window no wider than 4:3) it does nothing, and the menu greys it out. |
 | Minimap size | 0.5x to 1.0x the game's, toward its corner. |
 | Compass size | 0.5x to 1.0x the game's, toward its corner. |
 | Field of view | 40 to 90 degrees (the game's is 52). |
@@ -147,8 +146,7 @@ F1 > Settings > Language.
 Most of the same options are on the game's Settings screen (System >
 Settings in the main menu): L1 and R1 turn the page, and a number's - and
 + buttons lower and raise it. With the text in French, German, Spanish or
-Italian, the options are named in that language there too. Widescreen,
-Buttons in the game's text, the mouse camera's three options, Check for new
+Italian, the options are named in that language there too. Buttons in the game's text, the mouse camera's three options, Check for new
 versions, the three Director's Cut options, Native renderer, the text's
 language, the undub, the texture packs and Display > Borders are in F1
 alone.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0 (pre-release)
+
+### Changed
+
+- Steam Deck fork: the picture is always 16:10, the Deck's screen. The
+  Aspect ratio and Widescreen options are gone: the game is drawn wide
+  from the start, and the menus and the screens before the game (opening,
+  title, loading), drawn for 4:3, are stretched to 16:10 instead of shown
+  with bars. A new window opens at 16:10 too.
+
 ## 0.7.0 (pre-release)
 
 ### New
