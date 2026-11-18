@@ -17,7 +17,6 @@ namespace dq8::ui {
 namespace {
 using gfx::ControllerSelection;
 using gfx::PadInput;
-using gfx::SdlGpuAspect;
 using gfx::SdlGpuFilter;
 
 template <typename T>
@@ -25,9 +24,6 @@ struct Named {
     T value;
     const char *name;
 };
-constexpr Named<SdlGpuAspect> kAspects[] = {
-    {SdlGpuAspect::Auto, "auto"}, {SdlGpuAspect::Standard, "4:3"}, {SdlGpuAspect::Wide, "16:9"},
-    {SdlGpuAspect::Native, "native"}, {SdlGpuAspect::Stretch, "stretch"}};
 constexpr Named<SdlGpuFilter> kFilters[] = {
     {SdlGpuFilter::Sharp, "sharp"}, {SdlGpuFilter::Smooth, "smooth"}, {SdlGpuFilter::Nearest, "nearest"}};
 constexpr Named<gfx::SdlGpuSides> kSides[] = {
@@ -105,7 +101,6 @@ void apply(Settings &s, const std::string &section, const std::string &key, cons
         }
     } else if (section == "display") {
         if (key == "scale") parseNumber(value, s.resolutionScale, 1u, 8u);
-        else if (key == "aspect") parseNamed(kAspects, value, s.display.aspect);
         else if (key == "filter") parseNamed(kFilters, value, s.display.filter);
         else if (key == "sides") parseNamed(kSides, value, s.display.sides);
         else if (key == "integer_scale") parseBool(value, s.display.integerScale);
@@ -173,8 +168,7 @@ std::string serializeSettings(const Settings &s) {
         << "\nwidth = " << s.windowWidth << "\nheight = " << s.windowHeight << "\n";
     if (s.windowPlaced)
         out << "x = " << s.windowX << "\ny = " << s.windowY << "\n";
-    out << "\n[display]\nscale = " << s.resolutionScale << "\naspect = " << nameOf(kAspects, s.display.aspect)
-        << "\nfilter = " << nameOf(kFilters, s.display.filter)
+    out << "\n[display]\nscale = " << s.resolutionScale << "\nfilter = " << nameOf(kFilters, s.display.filter)
         << "\nsides = " << nameOf(kSides, s.display.sides)
         << "\ninteger_scale = " << flag(s.display.integerScale)
         << "\nremove_line_blend = " << flag(s.display.removeLineBlend)

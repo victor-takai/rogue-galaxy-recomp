@@ -1362,7 +1362,7 @@ void afterWeaponsHeader(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t p
 // left by an offset per language (0x471970). As it, on the x (f12) of those
 // draws in AttackChainDraw (0x380660), told by where they return. In a wide
 // frame (IsWidescreen, 0x1C6AB0: the game's flag at 0x481638 or our wide
-// mode) the game draws the chain 0.75 as wide and places it so; the offset
+// mode, always on past the screens before the game) the game draws the chain 0.75 as wide and places it so; the offset
 // shrinks with it.
 constexpr uint32_t kSpriteAnchorBL = 0x00383860u;
 constexpr uint32_t kGameWidescreen = 0x00481638u;

@@ -10,13 +10,10 @@
 
 namespace dq8::gfx {
 
-enum class SdlGpuAspect : uint8_t {
-    Auto,     // the game's own Screen Size option: 4:3 or 16:9
-    Standard, // 4:3, as on a television
-    Wide,     // 16:9
-    Native,   // square pixels, the framebuffer's own shape
-    Stretch,  // fill the window
-};
+// The one shape the picture is shown at: 16:10, the Steam Deck's screen
+// (Rogue Galaxy: the other aspect ratios are gone). A frame drawn for 4:3
+// (menus, the screens before the game) is stretched to it.
+inline constexpr double kSdlGpuDeckAspect = 16.0 / 10.0;
 
 enum class SdlGpuFilter : uint8_t {
     Sharp,   // nearest to a whole multiple, then smooth to the final size
@@ -39,7 +36,6 @@ using SdlGpuSideImageLoader =
     std::function<bool(uint32_t &width, uint32_t &height, std::vector<uint8_t> &rgba)>;
 
 struct SdlGpuDisplayOptions {
-    SdlGpuAspect aspect = SdlGpuAspect::Auto;
     SdlGpuFilter filter = SdlGpuFilter::Sharp;
     // Whole multiples of the picture's height, so scanlines stay even.
     bool integerScale = false;
@@ -60,14 +56,10 @@ struct SdlGpuRect {
 };
 
 // Where the game picture goes in a window of the given size. gameWidescreen
-// is the game's own setting for Auto: 1 for 16:9, 0 for 4:3, -1 unknown.
+// is the game's own setting, no longer a factor in the shape.
 SdlGpuRect sdlGpuDisplayRect(const SdlGpuDisplayOptions &options, uint32_t sourceWidth,
                              uint32_t sourceHeight, uint32_t windowWidth, uint32_t windowHeight,
                              int gameWidescreen);
-// The shape of a window a game drawn for a wide screen fills under Auto:
-// the window's own, from 4:3 to 32:9.
-double sdlGpuWideAspect(uint32_t windowWidth, uint32_t windowHeight);
-
 // The aspect ratio the picture is shown at, before fitting.
 double sdlGpuDisplayAspect(const SdlGpuDisplayOptions &options, uint32_t sourceWidth,
                            uint32_t sourceHeight, uint32_t windowWidth, uint32_t windowHeight,

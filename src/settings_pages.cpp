@@ -99,9 +99,8 @@ struct Row
     Kind kind;
 };
 
-// Widescreen and Display > Borders are in the F1 menu alone: there each says
-// when it does nothing (at 4:3, with no bars), and this screen has no room
-// for that line.
+// Display > Borders is in the F1 menu alone: there it says when it does
+// nothing (no bars), and this screen has no room for that line.
 constexpr Row kSwitches[] = {
     {"skip_opening", "Skip the Opening", Kind::Switch},
     {"instant_loading_recap", "Quick Loading Recap", Kind::Switch},

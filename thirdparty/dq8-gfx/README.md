@@ -303,8 +303,9 @@ Five more fix results:
   border of its frame black or half drawn, which a television's overscan
   hid; its half-pixel effects move it by a texel at 3x and leave a sliver
   of picture past it.
-- `sdlgpu_display.cpp`: under Auto a game drawn wide fills the window's
-  shape (`sdlGpuWideAspect`, 4:3 to 32:9) instead of 16:9.
+- `sdlgpu_display.cpp`: a game drawn wide is shown at 16:10, the Steam
+  Deck's screen (`kSdlGpuDeckAspect`), the one shape there is; the aspect
+  ratio option is gone.
 - `shaders/gs_draw.frag`: FBA without framebuffer fetch. Only the fetch
   path (Apple's GPUs) set the stored alpha's top bit; the fixed-function
   path stored the draw's alpha as it was. Rogue Galaxy draws a weapon

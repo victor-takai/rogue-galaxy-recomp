@@ -58,16 +58,14 @@ PS2Runtime::RecompiledFunction g_isWidescreen = nullptr;
 PS2Runtime::RecompiledFunction g_viewSetAspect = nullptr;
 PS2Runtime::RecompiledFunction g_viewSetPerspective = nullptr;
 PS2Runtime::RecompiledFunction g_gsPktSetXyzPixel = nullptr;
-std::atomic<bool> g_enabled{false};
-// The picture's width over its height, from the presenting thread.
-std::atomic<float> g_aspect{16.0f / 9.0f};
-// Wider than 4:3, past the rounding of a window's shape (shownWide).
-constexpr float kShownWide = 4.0f / 3.0f + 0.01f;
+// The picture's width over its height: 16:10, the Steam Deck's screen, the
+// only shape the game is shown at.
+constexpr float kAspect = 16.0f / 10.0f;
 
 // What the game's views take for the shape: its height over its width.
 float projection()
 {
-    return 1.0f / g_aspect.load(std::memory_order_relaxed);
+    return 1.0f / kAspect;
 }
 
 int32_t argument(const R5900Context *ctx, int reg)
@@ -91,7 +89,7 @@ struct Box
 // title overlay's are) keep bars at their sides.
 Box widePicture(int32_t width, int32_t height)
 {
-    const double kWide = g_aspect.load(std::memory_order_relaxed);
+    const double kWide = kAspect;
     const double shape = (4.0 / 3.0) * (double(width) / kFrameWidth) / (double(height) / kFrameHeight);
     int32_t w = kFrameWidth;
     int32_t h = kFrameHeight;
@@ -167,11 +165,6 @@ void gsPktSetXyzPixel(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 
 void install(PS2Runtime &runtime)
 {
-    const char *wide = std::getenv("RG_WIDESCREEN");
-    if (wide && *wide && *wide != '0')
-    {
-        setEnabled(true);
-    }
     const bool complete =
         rg::timing::hookFunction(runtime, kGetAspectMode, &getAspectMode, g_getAspectMode) &&
         rg::timing::hookFunction(runtime, kIsWidescreen, &isWidescreen, g_isWidescreen) &&
@@ -186,23 +179,7 @@ void install(PS2Runtime &runtime)
 
 bool wide()
 {
-    return g_enabled.load(std::memory_order_relaxed) && !rg::loading::active() &&
-           std::strcmp(rg::overlay::residentName(), "title") != 0;
-}
-
-bool shownWide()
-{
-    return g_aspect.load(std::memory_order_relaxed) > kShownWide;
-}
-
-void setEnabled(bool enable)
-{
-    g_enabled.store(enable, std::memory_order_relaxed);
-}
-
-void setAspect(float aspect)
-{
-    g_aspect.store(std::clamp(aspect, 4.0f / 3.0f, 32.0f / 9.0f), std::memory_order_relaxed);
+    return !rg::loading::active() && std::strcmp(rg::overlay::residentName(), "title") != 0;
 }
 
 } // namespace rg::widescreen
