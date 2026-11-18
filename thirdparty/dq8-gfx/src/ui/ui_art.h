@@ -13,6 +13,11 @@ enum class HomePicture { Background, Logo };
 // A picture as a texture and its size in pixels; false when there is none.
 bool homeArt(HomePicture which, ImTextureRef &texture, ImVec2 &size);
 
+// A PNG file as a texture, decoded the first time it is asked for and kept;
+// false when it cannot be read or decoded (the achievement badges, which the
+// host downloads).
+bool fileTexture(const char *path, ImTextureRef &texture, ImVec2 &size);
+
 // The embedded CHANGELOG.md as text; empty when the build has none.
 const char *homeChangelog(unsigned int &size);
 

@@ -15,6 +15,8 @@ What each page here is for, by who it is for. New to the project? Start with
   changed in battles, which three options bring to the US release.
 - [DISC.md](DISC.md): which disc images work, and how they are checked and
   extracted.
+- [RETROACHIEVEMENTS.md](RETROACHIEVEMENTS.md): earning the game's 130
+  RetroAchievements: signing in, what is kept and what is sent.
 - [TEXTURE_PACKS.md](TEXTURE_PACKS.md): putting texture packs in, and making
   them.
 - [CHANGELOG.md](../CHANGELOG.md): what each release brings, and its known

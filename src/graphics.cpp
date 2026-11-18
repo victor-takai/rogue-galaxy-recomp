@@ -31,6 +31,7 @@
 #include "instant_text.h"
 #include "text_language.h"
 #include "voice_language.h"
+#include "achievements.h"
 #include "map_chests.h"
 #include "native_renderer.h"
 #include "loading_screen.h"
@@ -427,6 +428,8 @@ void applyGameOption(const std::string &key, bool on)
         rg::inventory::setBiggerBag(on);
     else if (key == "map_chests")
         rg::mapchests::setEnabled(on);
+    else if (key == "achievements")
+        rg::achievements::setEnabled(on);
     else if (key == "dev_tools")
         rg::devtools::setEnabled(on);
     else if (key == "native_renderer")
@@ -802,6 +805,14 @@ bool pump(void *userData)
             g_menu->setGameOptionValue(change.key, change.value != 0);
     }
     followQuickScenes();
+    // RetroAchievements: the achievements checked against the game's memory,
+    // and what they have to say as toasts.
+    rg::achievements::frame(g_runtime->memory().getRDRAM());
+    for (rg::achievements::Toast toast; g_menu && rg::achievements::takeToast(toast);)
+    {
+        g_menu->notify(toast.text, toast.earned ? dq8::ui::Icon::Check : dq8::ui::Icon::Info,
+                       toast.earned ? 6.0 : 4.0, toast.badge);
+    }
     // The free camera turned on or off, by F6, either menu or Start: a toast.
     static bool freeCameraWas = false;
     if (const bool freeCamera = rg::freecamera::enabled(); freeCamera != freeCameraWas)
@@ -1081,6 +1092,12 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "every save point of a planet is activated. Only the map changes: nothing goes into your save, and "
          "activating every save point still counts as before.",
          false},
+        {"achievements", "RetroAchievements",
+         "The game's 130 RetroAchievements are checked as you play and a notice shows when one is earned, for the "
+         "account saved by the installer or tools/ra_fetch.py --save-login (on by itself once one is saved). "
+         "Nothing is sent but your unlocks and the request for the achievements; the game's files and your save "
+         "stay on this machine.",
+         rg::achievements::signedIn()},
         {"fast_transporter", "Fast transporters",
          "A transporter's warp plays at up to twice the speed. The music and the sounds keep their pace.", false},
         {"check_updates", "Check for new versions",
@@ -1212,6 +1229,14 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         return gameOptionBlocked(key, backend.displayOptions().aspect);
     };
     host.gameChoiceBlocked = &gameChoiceBlocked;
+    host.achievements = [] {
+        dq8::ui::AchievementList out;
+        out.summary = rg::achievements::enabled() ? rg::achievements::status() : "RetroAchievements is off";
+        for (rg::achievements::Row &row : rg::achievements::list())
+            out.rows.push_back(
+                {std::move(row.title), std::move(row.description), row.points, row.earned, std::move(row.badge)});
+        return out;
+    };
     host.newerRelease = [] {
         rg::updates::Release newer = rg::updates::newer();
         return std::make_pair(std::move(newer.version), std::move(newer.url));

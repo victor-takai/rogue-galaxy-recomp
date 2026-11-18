@@ -65,7 +65,24 @@ foreach(name IN LISTS RG_OVERLAYS)
     list(APPEND RG_OVERLAY_LIBS rg_generated_${name})
 endforeach()
 
+# RetroAchievements' client library (C, MIT): the achievements' conditions
+# and their evaluation, src/achievements.cpp being the host side. The
+# libretro, external-client and RAIntegration files are for other hosts.
+file(GLOB RG_RCHEEVOS_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/thirdparty/rcheevos/src/*.c"
+    "${CMAKE_SOURCE_DIR}/thirdparty/rcheevos/src/rapi/*.c"
+    "${CMAKE_SOURCE_DIR}/thirdparty/rcheevos/src/rcheevos/*.c"
+    "${CMAKE_SOURCE_DIR}/thirdparty/rcheevos/src/rhash/*.c")
+list(FILTER RG_RCHEEVOS_SOURCES EXCLUDE REGEX "rc_libretro|raintegration|rc_client_external")
+add_library(rg_rcheevos STATIC ${RG_RCHEEVOS_SOURCES})
+target_include_directories(rg_rcheevos PUBLIC
+    "${CMAKE_SOURCE_DIR}/thirdparty/rcheevos/include"
+    "${CMAKE_SOURCE_DIR}/thirdparty/rcheevos/src")
+target_compile_definitions(rg_rcheevos PRIVATE RC_DISABLE_LUA=1 RC_NO_THREADS=1)
+set_target_properties(rg_rcheevos PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_executable(roguegalaxy
+    achievements.cpp
     main.cpp
     graphics.cpp
     battle_rates.cpp
@@ -141,6 +158,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 else()
     target_link_libraries(roguegalaxy PRIVATE rg_generated_main ${RG_OVERLAY_LIBS} ps2_runtime)
 endif()
+target_link_libraries(roguegalaxy PRIVATE rg_rcheevos)
 target_compile_definitions(roguegalaxy PRIVATE RG_APP_VERSION="${PROJECT_VERSION}")
 
 # The native VU1 programs match the VU1 to the bit, which needs the products

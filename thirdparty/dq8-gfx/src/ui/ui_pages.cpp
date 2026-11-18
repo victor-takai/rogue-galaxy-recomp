@@ -1,6 +1,8 @@
 // The settings window's pages and the menu's other windows.
 #include "ui/ui_overlay.h"
 
+#include "ui/ui_art.h"
+
 #include "gfx/backends/sdlgpu/sdlgpu_input.h"
 #include "ui/ui_style.h"
 #include "ui/ui_widgets.h"
@@ -1075,6 +1077,67 @@ void Overlay::drawShortcuts() {
             shortcutRow(kClear, 1, "Clear a binding (Controls)");
             ImGui::EndTable();
         }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
+void Overlay::drawAchievements() {
+    const AchievementList list = m_host.achievements ? m_host.achievements() : AchievementList{};
+    centerNextWindow();
+    ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetMainViewport()->WorkSize.x - em(2.0f), em(34.0f)), 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(1.4f), em(1.2f)));
+    if (beginWindow("##achievements", nullptr, kDialogFlags & ~ImGuiWindowFlags_AlwaysAutoResize)) {
+        dialogHeader(Icon::Check, "Achievements", &m_achievementsOpen);
+        uint32_t earnedPoints = 0u, totalPoints = 0u;
+        for (const AchievementRow &row : list.rows) {
+            totalPoints += row.points;
+            if (row.earned)
+                earnedPoints += row.points;
+        }
+        mutedText("%s", list.summary.c_str());
+        if (!list.rows.empty()) {
+            mutedText("%u of %u points", earnedPoints, totalPoints);
+            ImGui::Checkbox("Only the ones still to earn", &m_achievementsLockedOnly);
+        }
+        ImGui::Dummy(ImVec2(0.0f, em(0.3f)));
+        const float height = std::min(em(24.0f), std::max(em(6.0f), ImGui::GetMainViewport()->WorkSize.y * 0.6f));
+        ImGui::BeginChild("##achievement-list", ImVec2(0.0f, height), ImGuiChildFlags_None);
+        const ImVec4 gold = ImGui::ColorConvertU32ToFloat4(palette::kGold);
+        const ImVec4 muted = ImGui::ColorConvertU32ToFloat4(palette::kTextMuted);
+        for (size_t i = 0; i < list.rows.size(); ++i) {
+            const AchievementRow &row = list.rows[i];
+            if (m_achievementsLockedOnly && row.earned)
+                continue;
+            ImGui::PushID(static_cast<int>(i));
+            // The badge, as on RetroAchievements' page: the colour one once
+            // earned, the grey one before.
+            const float badgeSize = em(3.2f);
+            ImTextureRef badge;
+            ImVec2 badgePixels;
+            const ImVec2 corner = ImGui::GetCursorScreenPos();
+            if (!row.badge.empty() && fileTexture(row.badge.c_str(), badge, badgePixels))
+                ImGui::Image(badge, ImVec2(badgeSize, badgeSize));
+            else
+                ImGui::Dummy(ImVec2(badgeSize, badgeSize));
+            if (row.earned)
+                ImGui::GetWindowDrawList()->AddRect(corner, ImVec2(corner.x + badgeSize, corner.y + badgeSize),
+                                                    palette::kGold, 3.0f, 2.0f);
+            ImGui::SameLine(0.0f, em(0.8f));
+            ImGui::BeginGroup();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(row.earned ? gold : ImGui::GetStyleColorVec4(ImGuiCol_Text), "%s", row.title.c_str());
+            ImGui::SameLine();
+            ImGui::TextColored(muted, "(%u)", row.points);
+            ImGui::TextColored(muted, "%s", row.description.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndGroup();
+            ImGui::Dummy(ImVec2(0.0f, em(0.25f)));
+            ImGui::PopID();
+        }
+        if (list.rows.empty())
+            mutedText("%s", "Turn on RetroAchievements in the Game page to see them here.");
+        ImGui::EndChild();
     }
     ImGui::End();
     ImGui::PopStyleVar();

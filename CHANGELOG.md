@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- Steam Deck fork: RetroAchievements. The menu's "RetroAchievements" checks
+  the game's 130 achievements as you play and shows a notice when one is
+  earned (play without hardcore). Sign in once in the
+  installer (an option, ticked to show the fields) or with `tools/ra_fetch.py --save-login`; nothing from the game is sent but the
+  unlocks. The notice shows the achievement's badge, and the menu's
+  Achievements window (F1, Rogue Galaxy) lists all 130 with their badges,
+  points and description, the earned ones first.
+
 ## 0.6.2 (pre-release)
 
 ### Changed

@@ -33,6 +33,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 import zlib
@@ -54,7 +56,7 @@ ISO_BYTES = 6_967_721_984  # Redump's image of the USA release
 
 CSS = b"""
 window { background: #04061a; color: #f2f3fc; }
-.brand { font-size: 34px; font-weight: 800; letter-spacing: 7px; color: #f4cb52;
+.brand { font-size: 30px; font-weight: 800; letter-spacing: 7px; color: #f4cb52;
          text-shadow: 0 0 18px rgba(244,203,82,0.55), 0 3px 0 #6b3d00; }
 .tagline { font-size: 12px; font-weight: 700; letter-spacing: 4px; color: #ff8c7a; }
 .title { font-size: 24px; font-weight: 700; color: #f2f3fc; }
@@ -69,13 +71,13 @@ window { background: #04061a; color: #f2f3fc; }
 .warn { color: #f6b640; }
 .bad { color: #ff7b72; }
 .card { background: rgba(8,12,42,0.74); border: 1px solid rgba(244,203,82,0.30); border-radius: 14px;
-        padding: 10px 12px; box-shadow: 0 10px 34px rgba(0,0,0,0.5); }
+        padding: 6px 12px; box-shadow: 0 10px 34px rgba(0,0,0,0.5); }
 button { background: rgba(28,40,110,0.65); color: #f2f3fc; border: 1px solid rgba(127,212,255,0.4);
-         border-radius: 9px; padding: 8px 18px; box-shadow: none; background-image: none; }
+         border-radius: 9px; padding: 5px 14px; box-shadow: none; background-image: none; }
 button:hover { background: rgba(48,66,160,0.8); border-color: #7fd4ff; }
 button:disabled { color: #5f6890; background: rgba(16,21,47,0.7); border-color: rgba(127,212,255,0.12); }
 button.suggested-action { background-image: linear-gradient(#ffdf7a, #f0a82a); color: #1a1500; border-color: #ffe9a0;
-                          font-size: 17px; font-weight: 800; padding: 12px 44px; border-radius: 12px;
+                          font-size: 16px; font-weight: 800; padding: 9px 40px; border-radius: 12px;
                           box-shadow: 0 0 22px rgba(244,203,82,0.45); }
 button.suggested-action:hover { background-image: linear-gradient(#ffeaa0, #ffbe3a); }
 button.suggested-action:disabled { background-image: none; background: rgba(74,66,36,0.75); color: #8a8160;
@@ -185,6 +187,33 @@ def looks_like_iso(path: Path) -> str | None:
         if f.read(5) != b"CD001":
             return "That is not a disc image."
     return None
+
+
+RA_LOGIN = Path.home() / ".local/share/RogueGalaxy/ra/login.json"
+
+
+def ra_sign_in(user: str, password: str) -> tuple[bool, str]:
+    """Signs in to RetroAchievements and keeps the connection token (never the password) where the game reads
+    it, mode 600. Returns (done, what to tell the player)."""
+    body = urllib.parse.urlencode({"r": "login2", "u": user, "p": password}).encode()
+    request = urllib.request.Request("https://retroachievements.org/dorequest.php", data=body, method="POST",
+                                     headers={"User-Agent": "RogueGalaxyRecompiledSetup/1"})
+    try:
+        try:
+            with urllib.request.urlopen(request, timeout=30) as answer:
+                reply = json.load(answer)
+        except urllib.error.HTTPError as error:  # a refusal comes with a status and the reason as JSON
+            reply = json.load(error)
+    except (OSError, ValueError):
+        return False, "RetroAchievements could not be reached. Check the connection, or sign in later (see docs)."
+    if not reply.get("Success") or not reply.get("Token"):
+        return False, str(reply.get("Error") or "Sign-in refused.")
+    RA_LOGIN.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(RA_LOGIN, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump({"user": reply.get("User", user), "token": reply["Token"]}, f)
+    os.chmod(RA_LOGIN, 0o600)
+    return True, f"Signed in as {reply.get('User', user)}."
 
 
 class KeepAwake:
@@ -811,6 +840,7 @@ class Window(Gtk.ApplicationWindow):
         name.add_css_class("section")
         note = Gtk.Label(label=hint, xalign=0, wrap=True, max_width_chars=58)
         note.add_css_class("muted")
+        card.note = note  # the hint, for a card whose hint says what was chosen
         texts.append(name)
         texts.append(note)
         head.append(badge)
@@ -843,22 +873,17 @@ class Window(Gtk.ApplicationWindow):
         return page
 
     def build_setup(self) -> Gtk.Widget:
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
-                          margin_top=10, margin_bottom=4, margin_start=56, margin_end=24)
-        content.append(self.header("Built on this Deck from your own disc image; nothing leaves it. Afterwards you "
-                                   "play from Steam, and the game updates itself."))
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                          margin_top=6, margin_bottom=2, margin_start=56, margin_end=24)
+        content.append(self.header("Built on this Deck from your own disc image; nothing leaves it."))
 
-        # 1. the disc image
-        card = self.section(1, "Your disc image", "USA release, serial SCUS-97490, an uncompressed .iso (about 7 GB).")
-        row = Gtk.Box(spacing=12)
+        # 1. the disc image: the button in the heading, the hint says what was chosen
         choose = Gtk.Button(label="Choose the .iso...")
         choose.connect("clicked", lambda *_: self.pick_file(self.set_iso, "Your Rogue Galaxy (USA) disc image"))
-        self.iso_label = Gtk.Label(label="No image chosen", xalign=0, hexpand=True, wrap=True, max_width_chars=58)
-        self.iso_label.add_css_class("muted")
-        row.append(choose)
-        row.append(self.iso_label)
+        card = self.section(1, "Your disc image", "USA release, serial SCUS-97490, an uncompressed .iso (about 7 GB).",
+                            choose)
+        self.iso_label = card.note
         self.iso_state = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=58, visible=False)
-        card.append(row)
         card.append(self.iso_state)
         if self.cfg.dir_ready:
             self.iso_label.set_text("Already extracted in the folder: no image needed.")
@@ -892,7 +917,7 @@ class Window(Gtk.ApplicationWindow):
         content.append(card)
 
         # 3. options
-        card = self.section(3, "Options", "Both can wait: the home screen can add them later.")
+        card = self.section(3, "Options", "All can wait: the home screen can add them later.")
         self.steam_check = Gtk.CheckButton(label="Add Rogue Galaxy to Steam (play it from game mode)")
         self.steam_check.set_active(self.cfg.steam)
         self.european_check = Gtk.CheckButton(label="Add the European disc (SCES-54552) for FR, DE, ES and IT texts")
@@ -909,21 +934,46 @@ class Window(Gtk.ApplicationWindow):
         row.append(self.european_label)
         self.european_reveal = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN,
                                             child=row, reveal_child=self.european_check.get_active())
+        # The achievements: ticking it shows the sign-in fields (RetroAchievements account).
+        self.ra_done = RA_LOGIN.exists()
+        self.ra_check = Gtk.CheckButton(label="Earn the game's 130 achievements (RetroAchievements account)")
+        self.ra_check.set_active(self.ra_done)
+        self.ra_check.connect("toggled", lambda *_: self.on_ra_toggled())
+        self.ra_user = Gtk.Entry(placeholder_text="RetroAchievements user", hexpand=True)
+        self.ra_password = Gtk.PasswordEntry(placeholder_text="Password", show_peek_icon=True, hexpand=True)
+        self.ra_button = Gtk.Button(label="Sign in")
+        self.ra_button.connect("clicked", lambda *_: self.on_ra_sign_in())
+        self.ra_password.connect("activate", lambda *_: self.on_ra_sign_in())
+        row = Gtk.Box(spacing=12)
+        row.append(self.ra_user)
+        row.append(self.ra_password)
+        row.append(self.ra_button)
+        self.ra_state = Gtk.Label(label="Signed in already: it stays as it is." if self.ra_done else
+                                  "The password is sent once to retroachievements.org and never kept.",
+                                  xalign=0, wrap=True, max_width_chars=58)
+        self.ra_state.add_css_class("good" if self.ra_done else "muted")
+        ra_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_start=28)
+        ra_box.append(row)
+        ra_box.append(self.ra_state)
+        self.ra_reveal = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN,
+                                      child=ra_box, reveal_child=self.ra_check.get_active())
         card.append(self.steam_check)
         card.append(self.european_check)
         card.append(self.european_reveal)
+        card.append(self.ra_check)
+        card.append(self.ra_reveal)
         content.append(card)
 
-        scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, child=content)
-        bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=6, margin_bottom=16,
-                      halign=Gtk.Align.CENTER)  # centred in the window, not in the column
-        self.summary = Gtk.Label(label="", xalign=0.5, justify=Gtk.Justification.CENTER, wrap=True,
-                                 max_width_chars=58)
+        # What is still to do, a line under the cards (the button stays alone, centred, below)
+        self.summary = Gtk.Label(label="", xalign=0, wrap=True, max_width_chars=70, halign=Gtk.Align.START)
         self.summary.add_css_class("pill")
+        content.append(self.summary)
+
+        scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, child=content)
+        bar = Gtk.Box(margin_top=4, margin_bottom=12, halign=Gtk.Align.CENTER)  # the button, centred in the window
         self.install_button = Gtk.Button(label="Install", halign=Gtk.Align.CENTER)
         self.install_button.add_css_class("suggested-action")
         self.install_button.connect("clicked", lambda *_: self.begin())
-        bar.append(self.summary)
         bar.append(self.install_button)
         left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=False, width_request=720)
         left.append(scroll)
@@ -967,6 +1017,41 @@ class Window(Gtk.ApplicationWindow):
         page.append(self.beside_art(content))
         page.append(self.close_button)  # centred in the window, like Install
         return page
+
+    # -- RetroAchievements
+    def on_ra_sign_in(self) -> None:
+        user, password = self.ra_user.get_text().strip(), self.ra_password.get_text()
+        if not user or not password:
+            self.show_ra("Type the user and the password first.", False)
+            return
+        self.ra_button.set_sensitive(False)
+        self.show_ra("Signing in...", True)
+
+        def work() -> None:
+            done, message = ra_sign_in(user, password)
+            GLib.idle_add(self.on_ra_answer, done, message)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_ra_toggled(self) -> None:
+        self.ra_reveal.set_reveal_child(self.ra_check.get_active())
+        self.update_buttons()
+
+    def on_ra_answer(self, done: bool, message: str) -> bool:
+        self.ra_button.set_sensitive(True)
+        if done:
+            self.ra_done = True
+            self.ra_password.set_text("")  # not kept anywhere
+            message += " The game turns RetroAchievements on by itself."
+        self.show_ra(message, done)
+        self.update_buttons()
+        return False
+
+    def show_ra(self, text: str, good: bool) -> None:
+        self.ra_state.set_text(text)
+        for name in ("good", "bad", "muted"):
+            self.ra_state.remove_css_class(name)
+        self.ra_state.add_css_class("good" if good else "bad")
 
     # -- choosing files
     def pick_file(self, callback, title: str) -> None:
@@ -1033,9 +1118,11 @@ class Window(Gtk.ApplicationWindow):
             missing.append("a folder")
         if self.european_check.get_active() and self.cfg.european is None:
             missing.append("the European disc (SCES-54552), or untick it")
+        if self.ra_check.get_active() and not self.ra_done:
+            missing.append("the RetroAchievements sign-in, or untick it")
         self.install_button.set_sensitive(not missing)
         self.summary.set_text("Still to do: " + ", ".join(missing) + "." if missing else
-                              f"Ready. About {NEED_GB} GB and 10 to 30 minutes.\nKeep the Deck plugged in.")
+                              f"Ready: about {NEED_GB} GB and 10 to 30 minutes. Keep the Deck plugged in.")
 
     def begin(self) -> None:
         self.cfg.dir = self.cfg.dir or self.chosen_dir()
@@ -1153,7 +1240,8 @@ class Window(Gtk.ApplicationWindow):
 
     # -- a PNG of the window, for checking the look without a screen
     def tour_european(self) -> bool:
-        self.european_check.set_active(True)
+        self.european_check.set_active(True)  # the page at its tallest: both options open
+        self.ra_check.set_active(True)
         GLib.timeout_add(700, self.shoot, "setup-european")
         return False
 

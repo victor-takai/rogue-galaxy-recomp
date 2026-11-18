@@ -243,7 +243,7 @@ void Overlay::setMenuOpen(bool open) {
         return;
     m_menuOpen = open;
     if (!open) {
-        m_settingsOpen = m_aboutOpen = m_shortcutsOpen = false;
+        m_settingsOpen = m_aboutOpen = m_shortcutsOpen = m_achievementsOpen = false;
         m_capture.active = false;
         m_closePopups = true;
     }
@@ -339,7 +339,7 @@ void Overlay::toggleBarFocus() {
     ImGui::SetNavCursorVisible(true);
 }
 
-void Overlay::notify(std::string text, Icon kind, double seconds) {
+void Overlay::notify(std::string text, Icon kind, double seconds, std::string picture) {
     if (!m_settings.notifications)
         return;
     for (Toast &toast : m_toasts)
@@ -350,7 +350,7 @@ void Overlay::notify(std::string text, Icon kind, double seconds) {
         }
     if (m_toasts.size() >= 4u)
         m_toasts.erase(m_toasts.begin());
-    m_toasts.push_back({std::move(text), kind, now(), seconds});
+    m_toasts.push_back({std::move(text), kind, now(), seconds, std::move(picture)});
 }
 
 void Overlay::beginBindingCapture(gfx::PadInput input, bool keyboard, int slot) {
@@ -632,6 +632,10 @@ void Overlay::backOut(bool pad) {
         m_shortcutsOpen = false;
         return;
     }
+    if (m_achievementsOpen) {
+        m_achievementsOpen = false;
+        return;
+    }
     if (m_settingsOpen && inside(before.window, m_pagePane)) {
         m_focusList = true;
         return;
@@ -861,6 +865,8 @@ void Overlay::drawFrame() {
         drawAbout();
     if (m_shortcutsOpen)
         drawShortcuts();
+    if (m_achievementsOpen)
+        drawAchievements();
     if (m_statsOpen)
         drawStats();
     drawQuitPrompt();
@@ -904,6 +910,8 @@ void Overlay::drawMenuBar() {
         if (beginMenu("Rogue Galaxy")) {
             if (menuItem("About Rogue Galaxy Recompiled"))
                 m_aboutOpen = true;
+            if (m_host.achievements && menuItem("Achievements"))
+                m_achievementsOpen = true;
             // Named as the window it opens, which lists the controller too.
             if (menuItem("Shortcuts"))
                 m_shortcutsOpen = true;
@@ -1855,11 +1863,24 @@ void Overlay::drawToasts() {
             // Messages stay above the windows they may be talking about.
             ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
             decorateWindow(alpha);
-            const IconRoom room = iconRoom(em(1.15f));
-            ImGui::SameLine(0.0f, em(0.6f));
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(toast.text.c_str());
-            drawIconBeside(room, toast.icon, withAlpha(palette::kGold, alpha));
+            ImTextureRef picture;
+            ImVec2 pictureSize;
+            if (!toast.picture.empty() && fileTexture(toast.picture.c_str(), picture, pictureSize)) {
+                // An achievement's badge, with the text beside it.
+                const float side = em(2.6f);
+                ImGui::Image(picture, ImVec2(side, side));
+                ImGui::SameLine(0.0f, em(0.7f));
+                ImGui::BeginGroup();
+                ImGui::Dummy(ImVec2(0.0f, std::max(0.0f, (side - ImGui::GetTextLineHeight()) * 0.5f - em(0.2f))));
+                ImGui::TextUnformatted(toast.text.c_str());
+                ImGui::EndGroup();
+            } else {
+                const IconRoom room = iconRoom(em(1.15f));
+                ImGui::SameLine(0.0f, em(0.6f));
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(toast.text.c_str());
+                drawIconBeside(room, toast.icon, withAlpha(palette::kGold, alpha));
+            }
             y += ImGui::GetWindowHeight() + em(0.5f);
         }
         ImGui::End();

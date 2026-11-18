@@ -4,6 +4,11 @@
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <map>
+#include <string>
+#include <vector>
 
 // Static: raylib, linked in the same executable, has its own copy of stb_image.
 #define STB_IMAGE_STATIC
@@ -50,6 +55,39 @@ void load(Picture &picture, const unsigned char *bytes, unsigned int size, const
         stbi_image_free(pixels);
 }
 } // namespace
+
+bool fileTexture(const char *path, ImTextureRef &texture, ImVec2 &size) {
+    // A file that is there but cannot be decoded stays failed until the
+    // process restarts; one not there yet is asked for again.
+    static std::map<std::string, Picture> pictures;
+    Picture &picture = pictures[path];
+    if (!picture.tried) {
+        std::ifstream in(path, std::ios::binary);
+        const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        // Nothing on disk yet (a download under way): asked again next time.
+        if (bytes.empty())
+            return false;
+        picture.tried = true;
+        int width = 0, height = 0, channels = 0;
+        unsigned char *pixels = bytes.empty() ? nullptr
+                                              : stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()),
+                                                                      &width, &height, &channels, 4);
+        if (pixels && width > 0 && height > 0) {
+            picture.data = IM_NEW(ImTextureData)();
+            picture.data->Create(ImTextureFormat_RGBA32, width, height);
+            std::memcpy(picture.data->GetPixels(), pixels,
+                        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u);
+            ImGui::RegisterUserTexture(picture.data);
+        }
+        if (pixels)
+            stbi_image_free(pixels);
+    }
+    if (!picture.data)
+        return false;
+    texture = picture.data->GetTexRef();
+    size = ImVec2(static_cast<float>(picture.data->Width), static_cast<float>(picture.data->Height));
+    return true;
+}
 
 const char *homeChangelog(unsigned int &size) {
     size = kHomeChangesData_size;

@@ -92,6 +92,7 @@ F1 > Settings > Game, in these sections:
 | Quick loading recap | The story so far appears whole, and you can go on as soon as it has loaded. |
 | Instant text | Dialogue a page at a time instead of letter by letter. |
 | Chests on the map | Unopened chests show on the map in the parts explored. |
+| RetroAchievements | The game's 130 RetroAchievements are checked as you play; needs the account saved by `tools/ra_fetch.py --save-login`. |
 | Fast transporters | Transporter warps play up to twice as fast. |
 | Check for new versions | At each start, asks GitHub for this project's releases and says when a newer one is out (Rogue Galaxy > About links to it). On by default. |
 | Full bag to storage | An item found when the bag has no room for it goes to the transporter's item storage, instead of the overflow you have to sort out (or losing it when that is full too). Shops and the Factory still need room in the bag. |

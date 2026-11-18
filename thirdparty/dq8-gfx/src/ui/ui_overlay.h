@@ -70,6 +70,19 @@ struct GameOption {
     bool number() const { return maximum > minimum; }
 };
 
+// The host's achievements, for the Achievements window (Rogue Galaxy: added).
+struct AchievementRow {
+    std::string title;
+    std::string description;
+    uint32_t points = 0;
+    bool earned = false;
+    std::string badge; // a PNG on disk, empty while there is none yet
+};
+struct AchievementList {
+    std::string summary; // one line: the progress, or why there is none
+    std::vector<AchievementRow> rows;
+};
+
 struct HostServices {
     std::string version;
     // The commit it was built from, beside the version in the About window
@@ -116,6 +129,9 @@ struct HostServices {
     };
     std::function<HomeUpdate()> homeUpdate;
     std::function<void()> startUpdate;
+    // The achievements, for the Rogue Galaxy menu's Achievements window;
+    // empty when the host has none (Rogue Galaxy: added).
+    std::function<AchievementList()> achievements;
     // A Steam Deck, whose Steam button belongs to Steam: Back + Start is the
     // only way to the menu there, so it cannot be turned off, and the menu
     // names the Deck's buttons (Rogue Galaxy: added).
@@ -182,7 +198,9 @@ public:
     void closeHome();
     // Picks the Controls page's controller or keyboard tab.
     void showBindings(bool keyboard);
-    void notify(std::string text, Icon icon = Icon::Info, double seconds = 3.0);
+    // `picture`: a PNG file shown in place of the icon once it is on disk (the
+    // host's achievement badges; Rogue Galaxy: added).
+    void notify(std::string text, Icon icon = Icon::Info, double seconds = 3.0, std::string picture = {});
     void setUserPaused(bool paused);
     void setFastForward(bool on);
     // Waits for the next key or controller input and binds it.
@@ -199,6 +217,7 @@ private:
         Icon icon = Icon::Info;
         double startedAt = 0.0;
         double duration = 3.0;
+        std::string picture; // a PNG on disk drawn in place of the icon, if there is one
     };
     struct Capture {
         bool active = false;
@@ -277,6 +296,7 @@ private:
     void drawCapturePrompt();
     void drawAbout();
     void drawShortcuts();
+    void drawAchievements();
     void drawStats();
     void windowBounds(ImVec2 &min, ImVec2 &max) const;
     void drawFps();
@@ -339,6 +359,8 @@ private:
     SettingsPage m_page = SettingsPage::Display;
     bool m_aboutOpen = false;
     bool m_shortcutsOpen = false;
+    bool m_achievementsOpen = false;
+    bool m_achievementsLockedOnly = false;
     bool m_statsOpen = false;
     // RG_UI_SCRIPT's "icons": every icon on screen, for a screenshot.
     bool m_iconSheet = false;

@@ -42,6 +42,7 @@
 #include "instant_text.h"
 #include "text_language.h"
 #include "voice_language.h"
+#include "achievements.h"
 #include "map_chests.h"
 #include "native_renderer.h"
 #include "hud_size.h"
@@ -188,6 +189,7 @@ int run(int argc, char **argv)
     rg::voicelanguage::install(runtime);
     rg::textlanguage::install(runtime);
     rg::mapchests::install(runtime);
+    rg::achievements::setExecutable(elf.string());
     rg::freecamera::install(runtime);
     rg::settingspages::install(runtime);
     rg::quickscenes::install();
