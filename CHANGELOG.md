@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 (pre-release)
+## 0.8.0 - 2026-11-18
 
 ### Changed
 
@@ -10,7 +10,7 @@
   title, loading), drawn for 4:3, are stretched to 16:10 instead of shown
   with bars. A new window opens at 16:10 too.
 
-## 0.7.0 (pre-release)
+## 0.7.0 - 2026-11-18
 
 ### New
 
@@ -24,14 +24,14 @@
   an emulator yet, so hardcore is not available. Nothing from the game is
   sent but the unlocks.
 
-## 0.6.2 (pre-release)
+## 0.6.2 - 2026-11-18
 
 ### Changed
 
 - Steam Deck fork: while the home screen's notes are being read, the buttons
   on the left show no selection (the notes' border is gold instead).
 
-## 0.6.1 (pre-release)
+## 0.6.1 - 2026-11-18
 
 ### New
 
@@ -40,7 +40,7 @@
   R1 a page), Left or B goes back to the buttons. The right stick and the
   mouse wheel still scroll them.
 
-## 0.6.0 (pre-release)
+## 0.6.0 - 2026-11-18
 
 ### New
 
@@ -48,7 +48,7 @@
   ("What's new", from this file) on the right; the mouse wheel or the right
   stick scrolls them.
 
-## 0.5.0 (pre-release)
+## 0.5.0 - 2026-11-18
 
 ### New
 
@@ -73,7 +73,7 @@
   `installer/art/home.jpg` draws a plain sky, and one without
   `installer/art/logo-home.png` writes the title in text.
 
-## 0.4.0 (pre-release)
+## 0.4.0 - 2026-11-17
 
 ### New
 
@@ -101,7 +101,7 @@
 - A first install configures the game in about a minute and a half less.
 - Frames reach the screen at an even pace.
 
-## 0.3.0 (pre-release)
+## 0.3.0 - 2026-11-12
 
 What the Japanese Director's Cut changed in battles, as options; the
 European texts (experimental); the mouse camera and new keyboard and mouse
@@ -236,7 +236,7 @@ install. Your saves (`disc\mc0`), settings, textures and the undub stay
 - An antivirus may block the compiler during the install: restore it and
   run `Install.bat` again.
 
-## 0.2.0 (pre-release)
+## 0.2.0 - 2026-11-04
 
 `Update.bat`, the Japanese voices (undub), texture packs, the F1 menu with
 only a controller, and new game options. No game data is included.
@@ -338,7 +338,7 @@ for the disc image, and your saves (`disc\mc0`) and settings stay. From
 - An antivirus may block the compiler during the install: restore it and
   run `Install.bat` again.
 
-## 0.1.0 (pre-release)
+## 0.1.0 - 2026-10-27
 
 First release: the source plus an installer that builds the game on your PC
 from your own disc image. No game data is included.
