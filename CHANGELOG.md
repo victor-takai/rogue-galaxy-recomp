@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1 (pre-release)
+
+### New
+
+- Steam Deck fork: the home screen's notes can be read with the controller:
+  Right (d-pad) from the buttons goes into them, Up and Down scroll (L1 and
+  R1 a page), Left or B goes back to the buttons. The right stick and the
+  mouse wheel still scroll them.
+
 ## 0.6.0 (pre-release)
 
 ### New
