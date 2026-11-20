@@ -223,8 +223,9 @@ The GS backend, the VIF1 and VU1 threads, and the native VU1 work.
 ### Install scripts
 
 The scripts behind `Install.bat`, `Update.bat`, `Install-European.bat` and
-`Install-Undub.bat` (`tools/install/`).
+`Install-Undub.bat` (`tools/install/`), and Linux's `install.sh`.
 
 | Variable | Effect |
 |---|---|
 | `RG_OWN_WINDOW=1` | Never open a window of their own. Started with no input, no output and no arguments, as a launcher's Play starts them, they run their batch file again in a new window and wait for it (`tools/install/launchers.ps1`); a script that runs them so, without `-Yes` or `-Iso`, sets this to keep them in its own output. The new window sets it too |
+| `RG_OWN_WINDOW=PID` | Linux's `install.sh`, not for setting by hand: started without a terminal, it sets this for the copy it runs in the terminal window it opens, PID being itself, which waits for that copy. The copy asks its questions in dialogs, keeps an error on screen until Enter, and starts the game itself at the end when PID no longer waits (a terminal that returned at once). Any argument but `--play` keeps `install.sh` in the output it was started with |
