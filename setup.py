@@ -823,6 +823,11 @@ GAME_BUILD = ROOT / "build" / "game"
 COMPILERS = [f"-DCMAKE_C_COMPILER={os.environ.get('CC') or 'clang'}",
              f"-DCMAKE_CXX_COMPILER={os.environ.get('CXX') or 'clang++'}"]
 GAME_EXE = "roguegalaxy.exe" if os.name == "nt" else "roguegalaxy"
+# On Windows FindPython3 looks in the registry before PATH; the game's build
+# needs Python (make_resources.py, src/CMakeLists.txt), and the one on PATH
+# is the one Install.bat gives the build, not another version installed in
+# Windows. Nothing is pinned, so a Python removed later is looked for again.
+GAME_PYTHON = ["-DPython3_FIND_REGISTRY=LAST"] if os.name == "nt" else []
 
 
 def run_step(what: str, command: list[str]) -> None:
@@ -890,7 +895,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     reset_future_times()
     if not configured(GAME_BUILD):
         run_step("configure build/game", [
-            "cmake", "-S", str(ROOT), "-B", str(GAME_BUILD), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", *COMPILERS])
+            "cmake", "-S", str(ROOT), "-B", str(GAME_BUILD), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", *COMPILERS,
+            *GAME_PYTHON])
     run_step("build the game", ["cmake", "--build", str(GAME_BUILD)])
     launcher = "Rogue Galaxy.exe" if os.name == "nt" else "rogue-galaxy.sh"
     print(f"built {GAME_BUILD / 'src' / GAME_EXE}; start it with \"{launcher}\"")

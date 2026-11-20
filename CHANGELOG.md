@@ -11,8 +11,10 @@
 
 ### Changed
 
-- `Install.bat` works in a folder with a long path, spaces or accented
-  letters, instead of offering a copy at `C:\RogueGalaxy`.
+- `Install.bat` works in a folder with a long path, spaces or letters of
+  any language (accents, Cyrillic, Japanese), instead of offering a copy at
+  `C:\RogueGalaxy`.
+- The options are kept for a Windows user whose name has accents.
 - In a launcher such as QuiverLauncher, Play installs the game the first
   time, in a window of its own.
 - `Rogue Galaxy.exe` offers to run `Install.bat` while the game is not

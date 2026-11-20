@@ -36,11 +36,12 @@ If it stops, `install.log` says why; run `Install.bat` again to continue
 where it stopped (`Rogue Galaxy.exe` offers it too). If an antivirus
 removes the compiler, restore it and run `Install.bat` again.
 
-A long path, or one with spaces or accented letters, is fine: while it
-builds, the build tools see the folder by a short name in
-`C:\RogueGalaxyBuild` (on the drive Windows is on), which leads to the
-folder and is removed when the install ends; an install closed before then
-leaves it until the next one.
+A long path, or one with spaces or letters of any language (accents,
+Cyrillic, Japanese; letters your Windows' language lacks need Windows 10
+version 1903 or later), is fine: while it builds, the build tools see the
+folder by a short name in `C:\RogueGalaxyBuild` (on the drive Windows is
+on), which leads to the folder and is removed when the install ends; an
+install closed before then leaves it until the next one.
 
 In a launcher that installs into its own folder, such as QuiverLauncher,
 Play installs the game the first time, in a window of its own, and starts
