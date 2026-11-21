@@ -57,7 +57,15 @@ brightness (halved by bilinear blits to 256 texels wide, then nine taps in
 `present_sides.frag`), or an
 image the host loads (`SdlGpuBackend::setSideImageLoader`), each scaled to
 cover the window and drawn before the picture, which then loads instead
-of clearing; the script's `sides black|blurred|image` sets it.
+of clearing; the script's `sides black|blurred|image` sets it. Display >
+Scaling filter has FSR 1 (`SdlGpuFilter::Fsr`, `filter = fsr`): AMD's
+EASU up to the window's size, then RCAS at the sharpness of the slider
+below it (`fsr_sharpness =`, 70 by default; at 0 EASU draws into the window
+alone), in `present_fsr.frag` (AMD's MIT notice in it) through
+`SdlGpuDevice::drawFsr`. It acts only on a picture enlarged on both sides
+and with SPIR-V shaders, Smooth drawing otherwise; `SdlGpuBackend::fsrState`
+tells the menu, which greys the sharpness out with the reason. The script's
+`filter fsr` picks it.
 
 ## Changes for Rogue Galaxy
 

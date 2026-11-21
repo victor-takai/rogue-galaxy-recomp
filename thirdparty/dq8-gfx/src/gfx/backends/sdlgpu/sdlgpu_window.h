@@ -31,6 +31,7 @@ enum class SdlGpuFsrState : uint8_t {
     Acts,
     NotEnlarged,
     Unsupported,
+    Failed, // its passes failed; tried again when the display options change
 };
 
 // What fills the window beside a picture that does not reach its edges

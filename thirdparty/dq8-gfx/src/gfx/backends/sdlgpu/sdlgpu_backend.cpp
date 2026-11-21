@@ -5872,6 +5872,10 @@ void SdlGpuBackend::setOverlay(SdlGpuOverlay *overlay) {
 
 void SdlGpuBackend::setDisplayOptions(const SdlGpuDisplayOptions &options) {
     m_impl->displayOptions = options;
+    // FSR 1 (Rogue Galaxy: added): a failed pass is tried again with new
+    // options, so a one-off failure (no memory for the scratch during a
+    // resize) does not leave Smooth until a restart.
+    m_impl->fsrUnavailable = false;
     m_impl->removeLineBlend.store(options.removeLineBlend, std::memory_order_relaxed);
 }
 
@@ -5906,9 +5910,10 @@ SdlGpuRect SdlGpuBackend::displayRect() const {
 }
 
 SdlGpuFsrState SdlGpuBackend::fsrState() const {
-    if (m_impl->fsrUnavailable ||
-        (SDL_GetGPUShaderFormats(m_impl->device.handle()) & SDL_GPU_SHADERFORMAT_SPIRV) == 0)
+    if ((SDL_GetGPUShaderFormats(m_impl->device.handle()) & SDL_GPU_SHADERFORMAT_SPIRV) == 0)
         return SdlGpuFsrState::Unsupported;
+    if (m_impl->fsrUnavailable)
+        return SdlGpuFsrState::Failed;
     return m_impl->fsrEnlarged ? SdlGpuFsrState::Acts : SdlGpuFsrState::NotEnlarged;
 }
 
