@@ -1,0 +1,30 @@
+name: Feature request
+description: An option, an improvement or something new.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Changes that make the game look or play differently from the console come
+        only as options, off by default.
+
+  - type: checkboxes
+    attributes:
+      label: Before you post
+      options:
+        - label: I searched the open and closed issues, and docs/OPTIONS.md, for this.
+          required: true
+
+  - type: textarea
+    attributes:
+      label: What
+      description: What you would like the game to do.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Why
+      description: What it would make better, and for whom.
+    validations:
+      required: true

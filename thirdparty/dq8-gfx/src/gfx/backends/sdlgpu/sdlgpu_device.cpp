@@ -354,6 +354,11 @@ void SdlGpuDevice::destroy() {
     if (m_sidesPipeline)
         SDL_ReleaseGPUGraphicsPipeline(m_device, m_sidesPipeline);
     m_sidesPipeline = nullptr;
+    for (SDL_GPUGraphicsPipeline *&pipeline : m_fsrPipelines) {
+        if (pipeline)
+            SDL_ReleaseGPUGraphicsPipeline(m_device, pipeline);
+        pipeline = nullptr;
+    }
     m_sidesFormat = SDL_GPU_TEXTUREFORMAT_INVALID;
     if (m_linearSampler)
         SDL_ReleaseGPUSampler(m_device, m_linearSampler);

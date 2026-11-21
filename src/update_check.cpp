@@ -19,8 +19,10 @@ namespace rg::updates
 namespace
 {
 
+#if defined(_WIN32)
 constexpr const wchar_t *kHost = L"api.github.com";
 constexpr const wchar_t *kPath = L"/repos/victor-takai/rogue-galaxy-recomp/releases?per_page=10";
+#endif
 constexpr const char *kReleasePage = "https://github.com/victor-takai/rogue-galaxy-recomp/releases/tag/";
 // Long enough for the menu to have applied its settings, and for the game's
 // first loading to be under way.
@@ -94,6 +96,35 @@ std::string fetch()
         WinHttpCloseHandle(connect);
     }
     WinHttpCloseHandle(session);
+    return body;
+}
+#elif defined(__linux__)
+// curl does the TLS (SteamOS and nearly every distribution ship it), so the
+// game links no HTTP library; the same 5 seconds and 1 MB as WinHTTP's.
+std::string fetch()
+{
+    std::string body;
+    std::FILE *pipe = popen("curl --silent --fail --location --max-time 5 --user-agent RogueGalaxyRecompiled "
+                            "--header 'Accept: application/vnd.github+json' "
+                            "'https://api.github.com/repos/victor-takai/rogue-galaxy-recomp/releases?per_page=10' "
+                            "2>/dev/null",
+                            "r");
+    if (!pipe)
+    {
+        return body;
+    }
+    char chunk[4096];
+    size_t got;
+    while ((got = std::fread(chunk, 1, sizeof chunk, pipe)) > 0 && body.size() + got <= kMostBytes)
+    {
+        body.append(chunk, got);
+    }
+    // Over the cap or not, never a half-read list.
+    const int status = pclose(pipe);
+    if (status != 0)
+    {
+        body.clear();
+    }
     return body;
 }
 #else

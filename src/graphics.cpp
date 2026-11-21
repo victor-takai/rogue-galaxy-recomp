@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -61,6 +62,7 @@
 #include "ui/ui_overlay.h"
 
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <vector>
 
@@ -78,6 +80,27 @@ std::string env(const char *name, const char *fallback)
 {
     const char *value = std::getenv(name);
     return (value && *value) ? value : fallback;
+}
+
+// A Steam Deck: Steam sets SteamDeck=1 in Game Mode (natively and under
+// Proton); desktop mode does not, but the machine says what it is.
+bool onSteamDeck()
+{
+    if (env("SteamDeck", "0") == "1")
+    {
+        return true;
+    }
+#if defined(__linux__)
+    std::FILE *file = std::fopen("/sys/class/dmi/id/product_name", "r");
+    if (file)
+    {
+        char name[64] = {};
+        std::fgets(name, sizeof name, file);
+        std::fclose(file);
+        return std::strncmp(name, "Jupiter", 7) == 0 || std::strncmp(name, "Galileo", 7) == 0;
+    }
+#endif
+    return false;
 }
 
 #if defined(RG_HAS_SDLGPU)
@@ -101,10 +124,14 @@ void applySpeed()
     }
 }
 
-// RG_SPEED (createMenu): set once its pad read comes.
-double g_scriptedSpeed = 1.0;
-uint64_t g_scriptedSpeedFrom = 0u;
-bool g_scriptedSpeedPending = false;
+// RG_SPEED (createMenu): each speed set once its pad read comes, in order.
+struct ScriptedSpeed
+{
+    double value;
+    uint64_t from;
+};
+std::vector<ScriptedSpeed> g_scriptedSpeeds;
+size_t g_scriptedSpeedNext = 0u;
 
 void followQuickScenes()
 {
@@ -112,13 +139,17 @@ void followQuickScenes()
     {
         return;
     }
-    // Pad reads, the clock RG_INPUT_CLOCK=pad scripts count, not vsyncs.
-    if (g_scriptedSpeedPending &&
-        ps2_stubs::getPadDebugSnapshot().ports[0][0].readCount >= g_scriptedSpeedFrom)
+    // Pad reads, the clock RG_INPUT_CLOCK=pad scripts count, not vsyncs; read
+    // only while a step is left, since the snapshot takes the pad's locks.
+    // Checked once a present, so unpaced a step lands a few reads late.
+    if (g_scriptedSpeedNext < g_scriptedSpeeds.size())
     {
-        g_scriptedSpeedPending = false;
-        g_menuSpeed = g_scriptedSpeed;
-        applySpeed();
+        const uint64_t reads = ps2_stubs::getPadDebugSnapshot().ports[0][0].readCount;
+        while (g_scriptedSpeedNext < g_scriptedSpeeds.size() && reads >= g_scriptedSpeeds[g_scriptedSpeedNext].from)
+        {
+            g_menuSpeed = g_scriptedSpeeds[g_scriptedSpeedNext++].value;
+            applySpeed();
+        }
     }
     const double scene = rg::quickscenes::speed(g_runtime->memory().getRDRAM());
     if (scene != g_sceneSpeed)
@@ -129,7 +160,7 @@ void followQuickScenes()
 }
 
 // The game's text shows the buttons of the controller driving it (the menu's
-// "Controller's buttons").
+// "Buttons in the game's text").
 std::atomic<bool> g_controllerButtons{true};
 
 // What a controller calls the button a PlayStation button is bound to, as a
@@ -625,20 +656,37 @@ void writeNativeScreenshot(const PresentationFrame &frame)
     std::fclose(out);
 }
 
-// Step 7d of docs/NATIVE-PIPELINE.md: under the pipeline the presenting
-// thread shows the frame each flip closed (flip_pacing.cpp pushes its Present
-// record) through the backend's native present, in place of the GS's display
-// (PMODE/DISPFB). It also answers the game's colour reads, which wait on
-// the game's thread beside it. Without a flip for 200 ms (the game is not
-// drawing frames of its own) the last frame is shown at every vsync, so the
-// window and the menu keep up.
-bool presentNative(void *userData, bool newTick)
+// The runtime's host present hook (ps2_host_present.h), on every pass of the
+// presenter loop; newTick at a new guest vsync.
+//
+// On the GS display (the default), a flip that landed after the presenter's
+// look at a tick is shown at once instead of at the next tick
+// (flip_pacing.h, showLateFlip); at a tick the runtime's latch shows it.
+//
+// Under the native pipeline, step 7d of docs/NATIVE-PIPELINE.md: the
+// presenting thread shows the frame each flip closed (flip_pacing.cpp
+// pushes its Present record) through the backend's native present, in place
+// of the GS's display (PMODE/DISPFB). It also answers the game's colour
+// reads, which wait on the game's thread beside it. Without a flip for
+// 200 ms (the game is not drawing frames of its own) the last frame is shown
+// at every vsync, so the window and the menu keep up.
+bool presentHook(void *userData, bool newTick)
 {
     if (!dq8::gfx::native::enabled())
-        return false;
+        return rg::graphics::showLateFlip(newTick);
     auto *backend = static_cast<dq8::gfx::SdlGpuBackend *>(userData);
     backend->serveNativeReads();
-    if (!newTick)
+    // A flip returns from its vsync wait at the same tick this thread sees,
+    // so looking only at the tick loses the race about one frame in nine on
+    // the Steam Deck: the flip lands a moment later, waits for the next tick
+    // and is replaced there, unseen. A flip is shown as soon as it lands, on
+    // any pass of the presenter loop. RG_NATIVE_PRESENT_TICK=1 goes back to
+    // the tick.
+    static const bool onlyAtTick = [] {
+        const char *value = std::getenv("RG_NATIVE_PRESENT_TICK");
+        return value && *value && *value != '0';
+    }();
+    if (onlyAtTick && !newTick)
         return true;
     using Clock = std::chrono::steady_clock;
     static uint64_t shownFlip = 0u;
@@ -649,8 +697,11 @@ bool presentNative(void *userData, bool newTick)
     {
         shownFlip = flips;
         flipAt = now;
+        dq8::gfx::notePresentationFlip(rg::graphics::lastFlipTime(), now);
     }
-    else if (now - flipAt < std::chrono::milliseconds(200))
+    // Between ticks only a new flip is shown; at a tick, a paused game's
+    // last frame is shown again after 200 ms, as before.
+    else if (!newTick || now - flipAt < std::chrono::milliseconds(200))
         return true;
     const PresentationFrame frame = backend->presentNativeFrame();
     if (frame.mode == GSPresentationMode::HostPixels)
@@ -883,8 +934,14 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     dq8::ui::HostServices host;
     host.version = RG_APP_VERSION;
     host.revision = RG_REVISION;
-    // Steam sets SteamDeck=1 on the Deck, natively and under Proton.
-    host.steamDeck = env("SteamDeck", "0") == "1";
+    host.steamDeck = onSteamDeck();
+    // The game's own keys (countMarkKeys), kept out of Controls: F6 listed
+    // beside the menu's in the Shortcuts window; the diagnostics keys, which
+    // act in every run, not.
+    host.gameShortcuts = {{SDL_SCANCODE_F6, "Free camera"},
+                          {SDL_SCANCODE_F7, "Frame capture and state report", false},
+                          {SDL_SCANCODE_F9, "A mark in the log", false},
+                          {SDL_SCANCODE_F10, "Stall report", false}};
     // RG_MUTE=1 keeps the game silent whatever the menu's volume says.
     const bool mute = env("RG_MUTE", "0") != "0";
     host.setVolume = [mute](float volume) { ps2_native_iop::setVolume(mute ? 0.0f : volume); };
@@ -900,36 +957,55 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         g_menuSpeed = speed;
         applySpeed();
     };
-    // RG_SPEED=N[@READ]: the game's speed, as the menu's fast-forward (0
-    // unpaced), from the start or from that pad read on, for scripted runs
-    // whose window is hidden and so never runs the menu. A scripted walk
-    // keeps to its timing only at the speed it was written for: start it
-    // once the input is done. A value that does not parse is refused, not
-    // taken as unpaced.
+    // RG_SPEED=N[@READ][,N@READ...]: the game's speed, as the menu's
+    // fast-forward (0 unpaced), from the start or from that pad read on, for
+    // scripted runs whose window is hidden and so never runs the menu; a list
+    // changes it again at later reads (0@8600,1@54000: unpaced through a long
+    // stretch of scenes, then back to normal for what is measured). A
+    // scripted walk keeps to its timing only at the speed it was written for:
+    // start it once the input is done. A list that does not parse, or whose
+    // reads do not grow, is refused whole, not taken as unpaced.
     if (const std::string speed = env("RG_SPEED", ""); !speed.empty())
     {
+        std::vector<ScriptedSpeed> steps;
         const char *text = speed.c_str();
-        char *end = nullptr;
-        const double value = std::strtod(text, &end);
-        bool ok = end != text && value >= 0.0;
-        uint64_t from = 0u;
-        if (ok && *end == '@')
+        bool ok = true;
+        for (;;)
         {
-            const char *digits = end + 1;
-            ok = *digits >= '0' && *digits <= '9';
-            from = std::strtoull(digits, &end, 10);
+            char *end = nullptr;
+            const double value = std::strtod(text, &end);
+            // Finite: "inf" or an overflow such as 1e999 would run unpaced.
+            ok = end != text && std::isfinite(value) && value >= 0.0;
+            uint64_t from = 0u;
+            if (ok && *end == '@')
+            {
+                const char *digits = end + 1;
+                ok = *digits >= '0' && *digits <= '9';
+                errno = 0;
+                from = std::strtoull(digits, &end, 10);
+                // A read past 2^64 would come back as the largest one.
+                ok = ok && errno != ERANGE;
+            }
+            ok = ok && (*end == '\0' || *end == ',') && (steps.empty() || from > steps.back().from);
+            if (!ok)
+                break;
+            steps.push_back({value, from});
+            if (*end == '\0')
+                break;
+            text = end + 1;
         }
-        ok = ok && *end == '\0';
         if (ok)
         {
-            g_scriptedSpeed = value;
-            g_scriptedSpeedFrom = from;
-            g_scriptedSpeedPending = true;
-            std::fprintf(stderr, "[speed] RG_SPEED: %g%s from pad read %llu\n", value,
-                         value == 0.0 ? " (unpaced)" : "", (unsigned long long)from);
+            g_scriptedSpeeds = std::move(steps);
+            for (const ScriptedSpeed &step : g_scriptedSpeeds)
+                std::fprintf(stderr, "[speed] RG_SPEED: %g%s from pad read %llu\n", step.value,
+                             step.value == 0.0 ? " (unpaced)" : "", (unsigned long long)step.from);
         }
         else
-            std::fprintf(stderr, "[speed] RG_SPEED=\"%s\" ignored: N or N@READ, N >= 0 (0 unpaced)\n", text);
+            std::fprintf(stderr,
+                         "[speed] RG_SPEED=\"%s\" ignored: N or N@READ, or a list of them by growing reads, "
+                         "N >= 0 (0 unpaced)\n",
+                         speed.c_str());
     }
     // The game's flips: frames it finished, not presents, which go on while
     // it is paused.
@@ -948,12 +1024,13 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "ratio on Auto the picture fills the window, whatever its shape, once a game is loaded.",
          false},
         {"minimap_size", "Minimap size",
-         "The map in the field's corner, against the game's size (1.0x), smaller toward its corner. The "
-         "transporter menu's map stays as it is.",
+         "The map in the corner while exploring, against the game's size (1.0x); made smaller, it keeps to its "
+         "corner. The transporter menu's map stays as it is.",
          false, 50, 100, 100, kTimes, 5},
         {"compass_size", "Compass size",
-         "The compass in the field's corner, against the game's size (1.0x), smaller toward its corner.", false, 50,
-         100, 100, kTimes, 5},
+         "The compass in the corner while exploring, against the game's size (1.0x); made smaller, it keeps to "
+         "its corner.",
+         false, 50, 100, 100, kTimes, 5},
         {"field_of_view", "Field of view",
          "How wide the camera sees while exploring and in battle, in degrees across a 4:3 picture (the game's is "
          "52); a wide picture adds to it. Scenes keep their own camera.",
@@ -967,32 +1044,32 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          false},
         {"mouse_camera", "Mouse camera",
          "The mouse turns and tilts the camera, exploring, in battle and in the first-person view: to the right "
-         "looks right and up looks up, whatever the game's camera options. Locked on a target in battle it only "
-         "turns, as with the stick. Once you press a key or click, the mouse stays in the window with the cursor "
-         "hidden; F1, the pause (F2), Alt+Tab or a few seconds on the controller alone let it go.",
+         "looks right and up looks up, whatever the game's camera options. Locked on a target in battle, it only "
+         "turns, as with the stick. Once you press one of the game's keys or click, the mouse stays in the window "
+         "with the cursor hidden; F1, the pause (F2), Alt+Tab or five seconds on the controller alone let it go.",
          true},
-        {"mouse_sensitivity", "Mouse sensitivity", "How far the mouse turns the camera, against 1.0x.", false, 25,
-         400, 100, kTimes, 25},
-        {"mouse_invert_vertical", "Invert mouse vertical",
-         "Moving the mouse up tilts the camera the other way.", false},
+        {"mouse_sensitivity", "Mouse sensitivity",
+         "How far the mouse turns the camera: at 1.0x, an inch at 1,600 dpi turns it about 100 degrees.", false,
+         25, 400, 100, kTimes, 25},
+        {"mouse_invert_vertical", "Invert mouse up and down", "Moving the mouse up looks down.", false},
         {"draw_distance", "Draw distance",
          "How far away the scenery and the objects are still drawn, against the game's (1.0x), the fog thinned "
-         "in step. Most of Salgin has no limit to raise; the open areas gain more. From the next map loaded.",
+         "in step. Most of Salgin has no limit to raise; the open areas gain more. Takes effect from the next map loaded.",
          false, 100, 400, 100, kTimes, 25},
         {"free_camera", "Free camera (F6)",
          "The camera leaves the party, which stands still, and the controller moves it: the left stick moves the "
          "point it looks at (Square held, faster; L2 held, up and down), the right stick turns it around that "
-         "point and tilts it (R2 held, nearer and farther). Turn it off, or press F6, to play again. Off at every "
-         "start.",
+         "point and tilts it (R2 held, nearer and farther). Start or F6 turns it off, as this switch does, to "
+         "play again. Off at every start.",
          false, 0, 0, 0, "", 1, false},
-        {"controller_buttons", "Controller's buttons",
+        {"controller_buttons", "Buttons in the game's text",
          "The buttons shown in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, "
          "RB, LT and RT, or the keys and mouse buttons, as each button is bound in Controls. Off, or with a "
          "PlayStation or Nintendo controller, the game's PlayStation buttons.",
          true},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},
-        {"instant_loading_recap", "Show the loading recap at once",
+        {"instant_loading_recap", "Quick loading recap",
          "When a game loads, the story so far appears whole instead of line by line, and Press X comes as soon as "
          "it has loaded.",
          false},
@@ -1002,7 +1079,8 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          false},
         {"map_chests", "Chests on the map",
          "The chests not yet opened show on the maps in the parts you have explored, as the game shows them once "
-         "every save point of a planet is activated. Nothing is saved: the planet's own completion still comes.",
+         "every save point of a planet is activated. Only the map changes: nothing goes into your save, and "
+         "activating every save point still counts as before.",
          false},
         {"fast_transporter", "Fast transporters",
          "A transporter's warp plays at up to twice the speed. The music and the sounds keep their pace.", false},
@@ -1051,42 +1129,43 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "How fast the party's action gauge fills again in battle, against the game's (1.0x).",
          false, 25, 400, 100, kTimes, 25},
         {"director_cut_balance", "Director's Cut balance",
-         "Battles with the Japanese Director's Cut's numbers: smaller enemy groups, more money, some enemies "
+         "Battles with the numbers of the Japanese Director's Cut: smaller enemy groups, more money, some enemies "
          "weaker and the Area Masters stronger, bosses never knocked down. Needs your Japanese disc "
          "(Install-Undub.bat). Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"director_cut_enemies", "Director's Cut enemy behavior",
-         "The Japanese Director's Cut's enemy attacks and AI: enemies face you before they attack, some attack "
+         "The enemy attacks and AI of the Japanese Director's Cut: enemies face you before they attack, some attack "
          "from farther away. Needs your Japanese disc (Install-Undub.bat). Takes effect the next time the game "
          "starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"director_cut_party_ai", "Director's Cut party AI",
-         "The Japanese Director's Cut's ally AI: an ally low on health sometimes falls back to the leader and "
+         "The ally AI of the Japanese Director's Cut: an ally low on health sometimes falls back to the leader and "
          "guards. Needs your Japanese disc (Install-Undub.bat). Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"text_language", "Text",
-         "The game's text, menus and scenes, in one of the European release's languages, from your European disc "
-         "(SCES-54552): run Install-European.bat in the game's folder once and pick that disc's image. Without "
-         "it the text stays English. The voices stay as they are. Takes effect the next time the game starts.",
+         "The game's text, menus and scenes, in one of the European release's languages. Needs your European disc "
+         "(SCES-54552, Install-European.bat); without it the text stays English. The voices stay as they are. "
+         "Takes effect the next time the game starts.",
          false, 0, 4, 0, "", 1, true, true, "language",
          {"English", "Fran\xC3\xA7" "ais", "Deutsch", "Espa\xC3\xB1" "ol", "Italiano"}},
         {"japanese_voices", "Undub (Japanese voices)",
          "The voices in scenes and the movies come from your Japanese Director's Cut disc instead of the English "
-         "ones; the text stays as it is. It needs that disc's files: run Install-Undub.bat in the game's folder "
-         "once and pick your Japanese disc image. Without them the voices stay English. A few lines have no "
-         "Japanese voice and play silent. Takes effect the next time the game starts.",
+         "ones; the text stays as it is. Needs your Japanese disc (Install-Undub.bat); without it the voices "
+         "stay English. A few lines have no Japanese voice and play silent. Takes effect the next time the game "
+         "starts.",
          false, 0, 0, 0, "", 1, true, true, "language"},
         {"native_renderer", "Native renderer",
-         "Experimental, for development: the models and the post effects drawn by the PC's renderer instead of "
-         "through the emulation of the PS2's graphics chip, as that work lands; for now the models. Off, "
-         "everything goes through the emulation. Takes effect the next time the game starts.",
+         "Experimental, for development: the work on drawing the game with the PC's renderer, instead of through "
+         "the emulation of the PS2's graphics chip, goes behind it. For now, most of the work the PS2's vector "
+         "unit did on the models is done on the PC and its graphics card; the models are still drawn through the "
+         "emulation. Takes effect the next time the game starts.",
          false, 0, 0, 0, "", 1, true, true},
         {"dev_tools", "Developer tools",
          "The tools the developers left in the game, switched off for release. Main menu: R3 shows every item's "
-         "icon, R1 + R3 a list of them, and Cross gives one of the one picked. Help pages and info list: R1 + "
-         "Select unlocks every entry. Bestiary: Select fills it. Revelation Flow: R2 + Triangle gives one of each "
-         "item the picked cell asks for. Paused in a scene: Triangle + R1 + R2 ends it, also one the game would "
-         "not let you skip, which can leave the story out of order.",
+         "icon, R1 + R3 a list of them, and Cross gives you one of the item picked. Help pages and info list: R1 "
+         "+ Select unlocks every entry. Bestiary: Select fills it. Revelation Flow: R2 + Triangle gives one of "
+         "each item the picked cell asks for. Paused in a scene: Triangle + R1 + R2 ends it, even one the game "
+         "does not let you skip; this can leave the story out of order.",
          false},
     };
     // One switch for each pack found, on a page of their own in the menu (F1 > Settings > Textures).
@@ -1098,16 +1177,17 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
             flatPacks.insert("texture_pack_" + pack.key);
         dq8::ui::GameOption option{"texture_pack_" + pack.key, "Pack: " + pack.name,
                                    "The game's art is drawn from this pack's " + std::to_string(pack.regions) +
-                                       " pictures, where it has them: 2D art above 1x, a PCSX2 pack's 3D at any "
-                                       "scale. Packs are read by name, a later one over an earlier one, textures\\hd "
-                                       "first.",
+                                       (pack.regions == 1u ? " picture" : " pictures") +
+                                       ", where it has them: 2D art above 1\xC3\x97, a PCSX2 pack's 3D at any "
+                                       "scale. Where packs share a picture, the one lower in this list wins.",
                                    pack.enabled};
         option.page = "textures";
         host.gameOptions.push_back(std::move(option));
     }
     host.gameSections = {
         {"sixty_fps", "Camera and view"},
-        {"skip_opening", "Convenience"},
+        // The buttons in the game's text open it: they are no camera option.
+        {"controller_buttons", "Convenience"},
         {"encounter_rate", "Battles and rewards"},
         {"native_renderer", "Rendering"},
         {"dev_tools", "Developers"},
@@ -1129,7 +1209,7 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         // The scale as Display shows it: one picked while paused counts.
         const uint32_t scale = g_menu ? g_menu->shownResolutionScale() : backend.activeResolutionScale();
         if (flatPacks.count(key) != 0u && scale <= 1u)
-            return "Its 2D art shows above 1x: raise Display > Internal resolution for this.";
+            return "Its 2D art shows above 1\xC3\x97: raise Display > Internal resolution for this.";
         return gameOptionBlocked(key, backend.displayOptions().aspect);
     };
     host.gameChoiceBlocked = &gameChoiceBlocked;
@@ -1192,15 +1272,27 @@ Setup::Setup(PS2Runtime &runtime)
         {
             std::fprintf(stderr, "[rg] could not read %s; using default settings\n", settingsPath.c_str());
         }
-        // A Steam Deck (Steam sets SteamDeck=1, natively and under Proton)
-        // starts in fullscreen: its Game Mode shows a window letterboxed.
-        if (settings.windowWidth < 320 && env("SteamDeck", "0") == "1")
+        // A Steam Deck starts in fullscreen (its Game Mode shows a window
+        // letterboxed, and a window of another shape turns the widescreen
+        // off), whatever an earlier run saved; RG_WINDOWED=1 keeps the
+        // saved window. Its first run also starts at the native scale: the
+        // 1280x800 screen shows nothing of a 2x one, and the APU is the
+        // limit in battle.
+        if (onSteamDeck())
         {
-            settings.fullscreen = true;
+            std::error_code none;
+            if (!std::filesystem::exists(settingsPath, none))
+            {
+                settings.resolutionScale = 1u;
+            }
+            if (env("RG_WINDOWED", "0") != "1")
+            {
+                settings.fullscreen = true;
+            }
         }
         // Steam keeps the Deck's Steam button: View + Menu is the only way to
         // the game's menu there, so it cannot be left off.
-        if (env("SteamDeck", "0") == "1")
+        if (onSteamDeck())
         {
             settings.backStartOpensMenu = true;
         }
@@ -1246,7 +1338,7 @@ Setup::Setup(PS2Runtime &runtime)
                                 initialWindowPlacement(settings)))
             {
                 runtime.setExternalPresenter(&pump, sdl.get());
-                ps2SetHostPresentHook(&presentNative, sdl.get());
+                ps2SetHostPresentHook(&presentHook, sdl.get());
                 if (!sdl->supportsPresentMode(settings.display.presentMode))
                 {
                     settings.display.presentMode = SDL_GPU_PRESENTMODE_VSYNC;

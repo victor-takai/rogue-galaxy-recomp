@@ -11,7 +11,8 @@ builds on the same PS2Recomp fork this project pins.
 |---|---|
 | `src/gfx/gs/`, `src/gfx/backends/sdlgpu/` | `src/gfx/gs/`, `src/gfx/backends/sdlgpu/`, with the changes below |
 | `src/ui/` | `src/ui/`, the in-game menu (Dear ImGui), with the changes below |
-| `cmake/Dq8Shaders.cmake`, `Dq8EmbedSpirv.cmake`, `Dq8EmbedText.cmake`, `Dq8EmbedBinary.cmake`, `Dq8HostSimd.cmake` | `cmake/`, unchanged |
+| `cmake/Dq8Shaders.cmake`, `Dq8EmbedSpirv.cmake`, `Dq8EmbedText.cmake`, `Dq8EmbedBinary.cmake`, `Dq8HostSimd.cmake` | `cmake/`; `Dq8Shaders.cmake` and `Dq8EmbedSpirv.cmake` with the changes below |
+| `cmake/Dq8Sdl3Preseed.cmake`, `sdl3-preseed.cmake` | written for this project: SDL3's configure checks answered ahead (below) |
 | `CMakeLists.txt` | written for this project (DQ8's builds the same targets inside its own tree) |
 | `window_icon.cpp` | replaces `sdlgpu_window_icon.cpp`, which embeds DQ8's icon; sets none |
 
@@ -38,10 +39,16 @@ is not `remembered` stays out of the file and shows what
 `HostServices::gameOptionState` says; `Overlay::setGameOptionValue`,
 `setGameNumberValue` and `setSides` take a change made outside the menu
 (the game's own Settings screen) and keep it as the menu's own. A `restart` switch changed
-since the run started says in red that it waits for the next start. F6,
-the game's free camera, cannot be bound to a pad input, as the menu's own
-keys cannot, and `Overlay::capturingBinding` tells the host when the menu
-is waiting for a key to bind. The window opens with its last size, place
+since the run started says in red that it waits for the next start. The
+game's own keys (`HostServices::gameShortcuts`: F6, the free camera, shown
+in the Shortcuts window; F7, F9 and F10, the diagnostics keys, not) cannot
+be bound to a pad input, as the menu's own keys cannot, the binding prompt
+names them all, and `Overlay::capturingBinding` tells the host when the
+menu is waiting for a key to bind. An icon beside text is centred on that
+text (`iconRoom`, `drawIconBeside`) and on a pixel's centre; the
+controller, keyboard, undo and check icons follow Lucide's
+(`LICENSE-lucide.txt`),
+and `RG_UI_SCRIPT`'s `icons` shows every icon for a screenshot. The window opens with its last size, place
 and maximized state (`[window]` `x`, `y`, `maximized`;
 `SdlGpuWindowPlacement`). Display > Borders fills the window beside a
 picture that leaves it uncovered (`SdlGpuSides`, `sides =` under
@@ -50,7 +57,15 @@ brightness (halved by bilinear blits to 256 texels wide, then nine taps in
 `present_sides.frag`), or an
 image the host loads (`SdlGpuBackend::setSideImageLoader`), each scaled to
 cover the window and drawn before the picture, which then loads instead
-of clearing; the script's `sides black|blurred|image` sets it.
+of clearing; the script's `sides black|blurred|image` sets it. Display >
+Scaling filter has FSR 1 (`SdlGpuFilter::Fsr`, `filter = fsr`): AMD's
+EASU up to the window's size, then RCAS at the sharpness of the slider
+below it (`fsr_sharpness =`, 70 by default; at 0 EASU draws into the window
+alone), in `present_fsr.frag` (AMD's MIT notice in it) through
+`SdlGpuDevice::drawFsr`. It acts only on a picture enlarged on both sides
+and with SPIR-V shaders, Smooth drawing otherwise; `SdlGpuBackend::fsrState`
+tells the menu, which greys the sharpness out with the reason. The script's
+`filter fsr` picks it.
 
 ## Changes for Rogue Galaxy
 
@@ -71,6 +86,14 @@ commit of this folder is upstream as is, so `git log -p` on it shows them.
   PSMT4 and from 0.53 to 0.05 for PSMT8; CT32 and Z32 2.5x. Only rows
   narrower than one group fall back to texel-by-texel writes.
   `-DDQ8_GS_VRAM_SCALAR` builds the portable kernels, same bytes.
+  `readRowT8`, `readRowCT32` and `readRowZ32` read the same layout back a
+  block's row at a time (a PSMT8 group's 16 texels from four 8-byte
+  pieces, a 32-bit group's 8 pixels as four 8-byte copies), where GSMem's
+  row readers look up and copy each pixel; texture expansion and the
+  target patches use them. In Rogue Galaxy's plaza after the Juraika boss
+  the worker's share of wall went from 82% to 78% at 4x with the native
+  renderer on and from 79% to 74% with it off, byte-identical frames.
+  `DQ8_GFX_NO_BLOCK_READS=1` reads through GSMem's, as before.
 - `gs/gs_transfer.cpp`: host-to-local PSMT8, PSMT4, PSMCT32 and PSMZ32
   transfers write runs instead of one dispatched `write()` per pixel.
 - `sdlgpu_textures.cpp`: PSMT4 textures expand through the palette
@@ -302,8 +325,9 @@ Five more fix results:
 - `sdlgpu_backend.cpp`, `sdlgpu_device.cpp`, `shaders/gs_draw.frag`:
   destination reads without framebuffer fetch. A draw with a destination
   alpha test, a factor of destination alpha (/128 on the GS, /255 in a
-  fixed-function blend) or a factor past one (FIX, or vertex alpha where
-  the texture brings none, above 0x80) uses the `DQ8_DESTINATION_COPY`
+  fixed-function blend) or a factor past one (FIX, or vertex alpha above
+  0x80 where the texture brings none or is modulated by it; not on a
+  native mesh) uses the `DQ8_DESTINATION_COPY`
   build of the draw shader: a snapshot of its target, of the primitive's
   region, taken before each primitive and bound as a second texture, and
   the fetch path's integer blend, test and masks on it. Rogue Galaxy draws
@@ -378,6 +402,24 @@ Five more fix results:
   regions`, `borders` and `shadows`. First written for
   a pack of upscaled pictures (the `texture-pack` branch), from which
   the frame-target test and the clamp come.
+- `sdlgpu_backend.cpp`: a sprite of no width or no height (its two vertices
+  share an x or a y) covers no pixel and is dropped before any work. In
+  Rogue Galaxy's plaza after the Juraika boss six a frame sampled a buffer
+  the GPU path cannot read in that format, so each cost a readback: 39.7 to
+  51.2 frames a second at 4x. The stats line counts `empty sprites`;
+  `DQ8_GFX_NO_EMPTY_SPRITES=1` draws them as before.
+- `sdlgpu_targets.cpp`: a draw merges the region of the pages it wrote into
+  every other surface's pending upload; one already due whole is skipped
+  (`dueWhole`; regionForPages never leaves the surface, so nothing
+  changes), in `markDrawn` and in `invalidate`'s GPU-copy path, and only the
+  pages both share are walked. In the same plaza 93% of the surfaces a draw
+  shared pages with were due whole: at 4x the worker's share of wall went
+  from 91-92% to 83-87% with the native renderer on and from 84% to 80%
+  with it off, byte-identical frames at 1x, 3x and 4x. The stats line
+  counts the surfaces still merged into (`upload merges`; a merge can add
+  an empty region); `DQ8_GFX_NO_WHOLE_UPLOAD_SKIP=1` merges into every
+  one, as before, while the walk stays over the shared pages (the same
+  regions).
 
 Native strips (Rogue Galaxy: added). `SdlGpuBackend::SubmitNativeMesh`
 takes a `GSNativeMesh` (a strip a VU1 program would have drawn, as its
@@ -453,3 +495,31 @@ as a frame log numbers them. `DQ8_GFX_HIDDEN_WINDOW=1` creates the window
 hidden and never raises it, for scripted runs that should leave the desktop
 alone; the GS work is the same and `DQ8_GFX_SCREENSHOT_DIR` still writes
 frames.
+
+The present log (Rogue Galaxy: added). `DQ8_GFX_PRESENT_LOG=FILE` writes
+a CSV line per present to the window: when the game flipped the frame and
+when the presenting thread took it (`notePresentationFlip`, from the layer
+that hands flips to the presenter), the waits for the GS worker (under
+the native pipeline, for the frame's composing), for the frame's drawing (fence) and for a swapchain image (acquire,
+`showInWindow`), and when the present went out. The stats line's "longest
+frame" is taken when a frame is prepared, before that part of its way.
+Rogue Galaxy's `tools/bench/present_log.py` sums it up; it found the
+presenter taking a flip only at the next guest vsync when the flip landed
+a moment after its look.
+
+The build (Rogue Galaxy: changed). `Dq8EmbedSpirv.cmake` turns a module
+into words with two regexes over the whole file instead of a `list(GET)`
+per byte, which was quadratic: the largest draw shader took 47 s on its
+own, now 0.2 s, the header byte-identical. And the commands that compile
+the shaders to SPIR-V and embed them, and the menu font's, depend only on
+what they name (`DEPENDS_EXPLICIT_ONLY`, CMake 3.27; the macOS MSL ones
+are as they were): under Ninja each waited for every library its target
+links, here the runtime with its compiled VU blocks, so the shaders and
+all that includes them came last in a first build. SDL3's some 180
+configure checks took 71-75 s of a first configure with the installer's
+toolchain; `cmake/sdl3-preseed.cmake` holds their answers for that
+toolchain, which `Dq8Sdl3Preseed.cmake` loads when the SDL release and its
+patches, the compiler and its target, CMake, the flags and the headers match
+(2.5 s, the same `SDL_build_config.h`). In a fresh build folder
+`-DDQ8_SDL3_PRESEED=OFF` leaves them out, and `tools/install/sdl3_preseed.py`
+regenerates the file.

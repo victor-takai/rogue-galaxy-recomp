@@ -10,6 +10,10 @@ C++20, and your own dump of the game ([`DISC.md`](DISC.md) lists
 the one that works). The versions tested are the ones `Install.bat`
 downloads, pinned in [`tools/install/install.ps1`](../tools/install/install.ps1):
 llvm-mingw 20260616 (LLVM 22.1.8), CMake 3.31.12, Ninja 1.13.2, Python 3.12.
+With that llvm-mingw and CMake, SDL3's configure checks come answered from
+`thirdparty/dq8-gfx/cmake/sdl3-preseed.cmake` (a minute less); after
+changing either, SDL3's release or its patches, regenerate it with
+`python tools/install/sdl3_preseed.py` (its help says how).
 
 ```bash
 git clone --recurse-submodules <this repo>
@@ -32,10 +36,11 @@ python setup.py check
 
 From the repository root. The generated code is built with clang (the flags
 are GNU-style; on Windows an LLVM MinGW clang works). Configuring the game
-downloads raylib and SDL3, glslang (for the GPU backend's shaders) when no
-GLSL compiler is installed, and, on Windows, a prebuilt LGPL FFmpeg whose
-hash the framework pins. `-DRG_GS_SDLGPU=OFF` at configure leaves out the
-GPU backend, and with it the menu: the game draws with the software GS.
+downloads raylib (the 5.5 tag's archive) and SDL3, glslang (for the GPU
+backend's shaders) when no GLSL compiler is installed, and, on Windows, a
+prebuilt LGPL FFmpeg whose hash the framework pins. `-DRG_GS_SDLGPU=OFF`
+at configure leaves out the GPU backend, and with it the menu: the game
+draws with the software GS.
 
 ```bash
 # 1. The recompiler: applies patches/ps2recomp to the pinned framework, then
@@ -76,7 +81,10 @@ your disc into `build/vu-blocks-manifest`. A run with
 `PS2_VU_AOT_PROFILE=build/vu-blocks/NAME.txt` records the blocks the
 interpreter executes (both units; keep the lines starting with `0` for
 VU0 alone), and CMake compiles every `build/vu-blocks/*.txt` it finds too
-(as many shards at a time as memory allows: each takes 2.2 GB to compile); maintainers:
+(a shard for each distinct block, at least 128, counted at configure, or
+`-DRG_VU_AOT_SHARDS=N`; several at a time as memory and the processor
+allow: a four-word block takes up to about 0.5 GB and 18 s to compile);
+maintainers:
 `python setup.py vu-blocks-manifest` folds the recordings into the manifest.
 
 ## Rebuilding after a change
@@ -114,24 +122,83 @@ What each step keeps:
   (delete the manifest to extract again), then runs `tools`, `recompile` and
   `build` as above. `Install.bat` also keeps the toolchain it downloaded
   while its hash matches the version pinned in `tools/install/install.ps1`.
+  In a folder with a long path, or with spaces, symbols or letters other
+  than A-Z, it builds through a short name (`build/short-name.txt`, a
+  junction in `C:\RogueGalaxyBuild` that it removes at the end), and the
+  build's caches name that path: build such a folder again with
+  `Install.bat -Updating`, which makes the junction again, not with
+  `cmake --build` or `setup.py`.
 
-## Linux
+## Linux and Steam Deck
 
-The game builds on Linux too, but it is less tested than on Windows: it was
-built and played on Arch Linux, with clang 23 and GNU ld (pull request #2).
-The steps are the ones above, with these differences:
+`./install.sh [--iso FILE] [--container | --native]` does what `Install.bat`
+does: it builds on the machine when the tools are there, otherwise (SteamOS,
+whose root is read-only and has no compiler) in a distrobox container named
+`rg-build`, an Ubuntu 24.04 that it creates. `./rogue-galaxy.sh` is the
+launcher (the counterpart of `Rogue Galaxy.exe`): it starts the game, keeps
+the log in `build/last-run.log` and allows a single instance. The game it
+builds needs only the system's Vulkan, SDL's own dependencies (X11 or
+Wayland, ALSA or PulseAudio) and glibc 2.38 or later; the container is only
+for building.
 
-- clang is required: `setup.py` configures with `clang` and `clang++`.
-- FFmpeg comes from the system, through pkg-config. Install pkg-config and
-  the development packages of libavcodec, libavformat, libavutil,
-  libswresample and libswscale.
-- There is no `Rogue Galaxy.exe`. Run the game from the repository's folder:
-  `build/game/src/roguegalaxy disc/SCUS_974.90`.
-- Some diagnosis tools do nothing there: the profiler (`RG_PROFILE`), the
-  hardware watch (`RG_HWWATCH`), the host stacks in the stall report and
-  the crash report. The check for a newer release is Windows only too.
+To update, `git pull --recurse-submodules` and run `./install.sh` again: it
+keeps the extracted disc and rebuilds what changed (`Update.bat` is Windows
+only). The game checks for a new release at start through `curl`.
 
-## Steam Deck (untested)
+Started without a terminal, with a display and with no arguments (a launcher
+such as QuiverLauncher, whose Play runs the first script it finds,
+`install.sh`; a file manager; Steam), `install.sh` starts the game when it
+is built, and otherwise opens a terminal (the first that starts of Konsole,
+GNOME Terminal, Ptyxis, GNOME Console, Xfce Terminal, `xdg-terminal-exec`,
+Alacritty, kitty, foot, `x-terminal-emulator` and xterm), asks for the disc
+image through kdialog or zenity when there is one, builds, then starts the
+game.
+`rogue-galaxy.sh` hands over to `install.sh --play` the same way when the
+game is not built.
+
+A release archive carries `REVISION`; `install.sh` copies it to
+`build/installed-revision` once the build is done, and a newer archive
+unpacked over the folder (how QuiverLauncher updates) is built again on the
+next start, as is a build made by hand with `setup.py` in a release folder.
+Once for each archive unpacked, `install.sh` first removes from the code
+folders what the archive's `FILES` does not list, as `Update.bat` does (a
+dropped patch would otherwise still be applied), and gives every file
+today's date, since unzip gives them the archive's, older than the build: an
+update is a full build. The files the framework's patches create stay; the
+configure removes them itself when the framework is back unpatched, as an
+unpack leaves it, before it applies the patches again. One install or update
+runs at a time in a folder (`build/install.lock`, through `flock`; its build
+in the container holds `build/container.lock`), and `rogue-galaxy.sh` does
+not start the game while one runs.
+
+By hand, the steps above work as they are, with these needs:
+
+- curl (the update check), clang with lld, CMake 3.24+, Ninja, Python 3.11+, git, GNU make, nasm,
+  xz, pkg-config and `glslc` (or let the build fetch glslang), plus the
+  development packages of Vulkan, X11 (Xext, Xrandr, Xinerama, Xcursor, Xi,
+  Xfixes, Xss), xkbcommon, Wayland, libdecor, udev, GL/EGL, ALSA, PulseAudio
+  and D-Bus.
+- `CC=clang CXX=clang++` in the environment if clang is not your default
+  compiler (`setup.py` passes them on to CMake).
+- FFmpeg is built from source inside the game (a minimal static build with
+  the MPEG-2 decoder and swscale: `PS2X_FFMPEG_BUNDLE`, ON by default on
+  Linux, patch 0022), so no FFmpeg package is needed. `-DPS2X_FFMPEG_BUNDLE=OFF`
+  uses the system's through pkg-config instead.
+- The GNU linker reads each archive once; the game links the generated
+  libraries as a rescanned group (`src/CMakeLists.txt`).
+- Some diagnosis tools are Windows only: the profiler (`RG_PROFILE`), the
+  hardware watch (`RG_HWWATCH`) and the host stacks in the stall report.
+
+On a Steam Deck play in game mode, with `rogue-galaxy.sh` added to Steam as
+a non-Steam game: a game started from desktop mode gets Steam's desktop
+layout, where the controller acts as a mouse and keyboard. The game starts
+in fullscreen when Steam sets `SteamDeck=1` (game mode) and `aspect = auto`
+follows the window's shape. In desktop mode the CPU can drop to 400 MHz
+during battles (amd-pstate, governor `powersave`); `echo performance | sudo
+tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference`
+avoids it until the next reboot.
+
+## Steam Deck through Proton (untested)
 
 The installer needs Windows, but the game it builds can go to a Steam Deck
 and run through Proton. On the Windows PC, after the install:

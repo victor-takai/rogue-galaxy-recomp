@@ -155,6 +155,10 @@ struct GsTargetCacheStats {
     // Surfaces a whole-surface sprite took over without an import
     // (Rogue Galaxy: added).
     uint64_t wholeClaims = 0u;
+    // Surfaces a draw merged its pages' region into (markDrawn): those that
+    // share a page with it and are not already due whole. The region merged
+    // can be empty (Rogue Galaxy: added).
+    uint64_t uploadMerges = 0u;
     // Resolves by reason, and the wall time spent in their readbacks
     // (Rogue Galaxy: added).
     std::array<uint64_t, static_cast<size_t>(GsResolveReason::Count)> resolvesByReason{};

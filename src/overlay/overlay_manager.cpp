@@ -3,6 +3,8 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <type_traits>
+#include <vector>
 
 #include "overlay/overlay_image.h"
 #include "ps2_runtime.h"
@@ -162,6 +164,82 @@ const char *residentName()
 uint32_t loadCount()
 {
     return g_loads.load(std::memory_order_acquire);
+}
+
+static_assert(std::is_same_v<Function, PS2Runtime::RecompiledFunction>,
+              "rg::overlay::Function must stay PS2Runtime::RecompiledFunction");
+
+namespace
+{
+// What hookFunction found at a slot before putting a hook there, for the
+// resume points' check below.
+struct Replaced
+{
+    const PS2Runtime::FunctionRegion *region;
+    uint32_t slot;
+    Function original;
+};
+std::vector<Replaced> g_replaced;
+
+// The function a slot stood for before any hook went in.
+Function generatedAt(const PS2Runtime::FunctionRegion *region, uint32_t slot)
+{
+    for (const Replaced &r : g_replaced)
+    {
+        if (r.region == region && r.slot == slot)
+        {
+            return r.original;
+        }
+    }
+    return region->slots[slot];
+}
+} // namespace
+
+bool hookFunction(const char *name, uint32_t address, Function replacement, Function &original)
+{
+    original = nullptr;
+    for (const auto image : kImages)
+    {
+        const Image &candidate = image();
+        if (std::strcmp(candidate.name, name) != 0)
+        {
+            continue;
+        }
+        PS2Runtime::FunctionRegion *region = candidate.region;
+        const uint32_t slot = (address - region->base) >> 2;
+        if (address < region->base || address >= region->end || (address & 3u) != 0u ||
+            slot >= region->slotCount || region->slots[slot] == nullptr)
+        {
+            std::fprintf(stderr, "[overlay] %s has no function at 0x%08X to hook\n", name, address);
+            return false;
+        }
+        // A function's resume points (the places a call unwound at a safe
+        // point resumes) have its entry too: the same function at the
+        // nearest entry below, with only empty slots between, means this is
+        // not where it starts (compared as generated, a hook at its start
+        // notwithstanding).
+        const Function self = generatedAt(region, slot);
+        for (uint32_t before = slot; before-- > 0u;)
+        {
+            if (region->slots[before] == nullptr)
+            {
+                continue;
+            }
+            if (generatedAt(region, before) == self)
+            {
+                std::fprintf(stderr, "[overlay] 0x%08X is inside a function of %s, not its start\n", address,
+                             name);
+                return false;
+            }
+            break;
+        }
+        g_replaced.push_back({region, slot, region->slots[slot]});
+        original = region->slots[slot];
+        region->slots[slot] = replacement;
+        return true;
+    }
+    std::fprintf(stderr, "[overlay] no overlay called %s to hook 0x%08X in\n", name, address);
+    return false;
 }
 
 } // namespace rg::overlay

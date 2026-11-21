@@ -3,6 +3,7 @@
 
 #include "gs_display.frag.spv.h"
 #include "gs_reinterpret.vert.spv.h"
+#include "present_fsr.frag.spv.h"
 #include "present_sides.frag.spv.h"
 #ifdef DQ8_GFX_HAS_MSL
 #include "gs_display.frag.msl.h"
@@ -254,6 +255,107 @@ bool SdlGpuDevice::drawSides(SDL_GPUCommandBuffer *commands, SDL_GPUTexture *tar
     SDL_BindGPUFragmentSamplers(pass, 0u, &binding, 1u);
     const float uniforms[8] = {float(width), float(height), brightness, blur ? 1.0f : 0.0f,
                                float(sourceWidth), float(sourceHeight), 0.0f, 0.0f};
+    SDL_PushGPUFragmentUniformData(commands, 0u, uniforms, sizeof(uniforms));
+    SDL_DrawGPUPrimitives(pass, 3u, 1u, 0u, 0u);
+    SDL_EndGPURenderPass(pass);
+    return true;
+}
+
+bool SdlGpuDevice::drawFsr(SDL_GPUCommandBuffer *commands, SDL_GPUTexture *target, SDL_GPUTextureFormat format,
+                           const uint32_t to[4], SDL_GPULoadOp loadOp, SDL_GPUTexture *source,
+                           const uint32_t region[4], bool rcas, float sharpness, std::string &error) {
+    if ((SDL_GetGPUShaderFormats(m_device) & SDL_GPU_SHADERFORMAT_SPIRV) == 0) {
+        error = "no SPIR-V shaders on this device";
+        return false;
+    }
+    // A pipeline per target format: the scratch's RGBA8 and the window's.
+    size_t slot = 0u;
+    while (slot < 2u && m_fsrPipelines[slot] && m_fsrFormats[slot] != format)
+        ++slot;
+    if (slot == 2u) {
+        SDL_ReleaseGPUGraphicsPipeline(m_device, m_fsrPipelines[1]);
+        m_fsrPipelines[1] = nullptr;
+        slot = 1u;
+    }
+    if (!m_fsrPipelines[slot]) {
+        SDL_GPUShaderCreateInfo vertexInfo{};
+        vertexInfo.code = reinterpret_cast<const uint8_t *>(kGsReinterpretVertSpirv);
+        vertexInfo.code_size = sizeof(kGsReinterpretVertSpirv);
+        vertexInfo.entrypoint = "main";
+        vertexInfo.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        vertexInfo.stage = SDL_GPU_SHADERSTAGE_VERTEX;
+        SDL_GPUShaderCreateInfo fragmentInfo{};
+        fragmentInfo.code = reinterpret_cast<const uint8_t *>(kPresentFsrFragSpirv);
+        fragmentInfo.code_size = sizeof(kPresentFsrFragSpirv);
+        fragmentInfo.entrypoint = "main";
+        fragmentInfo.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        fragmentInfo.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
+        fragmentInfo.num_samplers = 1u;
+        fragmentInfo.num_uniform_buffers = 1u;
+        SDL_GPUShader *vertex = SDL_CreateGPUShader(m_device, &vertexInfo);
+        if (!vertex) {
+            error = std::string("SDL_CreateGPUShader(fsr vertex): ") + SDL_GetError();
+            return false;
+        }
+        SDL_GPUShader *fragment = SDL_CreateGPUShader(m_device, &fragmentInfo);
+        if (!fragment) {
+            error = std::string("SDL_CreateGPUShader(fsr fragment): ") + SDL_GetError();
+            SDL_ReleaseGPUShader(m_device, vertex);
+            return false;
+        }
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = format;
+        SDL_GPUGraphicsPipelineCreateInfo info{};
+        info.vertex_shader = vertex;
+        info.fragment_shader = fragment;
+        info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+        info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+        info.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
+        info.target_info.color_target_descriptions = &colorTarget;
+        info.target_info.num_color_targets = 1u;
+        m_fsrPipelines[slot] = SDL_CreateGPUGraphicsPipeline(m_device, &info);
+        SDL_ReleaseGPUShader(m_device, fragment);
+        SDL_ReleaseGPUShader(m_device, vertex);
+        if (!m_fsrPipelines[slot]) {
+            error = std::string("SDL_CreateGPUGraphicsPipeline(fsr): ") + SDL_GetError();
+            return false;
+        }
+        m_fsrFormats[slot] = format;
+    }
+    if (!m_linearSampler) {
+        SDL_GPUSamplerCreateInfo samplerInfo{};
+        samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+        samplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+        samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+        samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        m_linearSampler = SDL_CreateGPUSampler(m_device, &samplerInfo);
+        if (!m_linearSampler) {
+            error = std::string("SDL_CreateGPUSampler(fsr): ") + SDL_GetError();
+            return false;
+        }
+    }
+    SDL_GPUColorTargetInfo targetInfo{};
+    targetInfo.texture = target;
+    targetInfo.load_op = loadOp;
+    targetInfo.store_op = SDL_GPU_STOREOP_STORE;
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(commands, &targetInfo, 1u, nullptr);
+    if (!pass) {
+        error = std::string("SDL_BeginGPURenderPass(fsr): ") + SDL_GetError();
+        return false;
+    }
+    SDL_BindGPUGraphicsPipeline(pass, m_fsrPipelines[slot]);
+    const SDL_GPUViewport viewport{float(to[0]), float(to[1]), float(to[2]), float(to[3]), 0.0f, 1.0f};
+    SDL_SetGPUViewport(pass, &viewport);
+    const SDL_Rect scissor{int(to[0]), int(to[1]), int(to[2]), int(to[3])};
+    SDL_SetGPUScissor(pass, &scissor);
+    const SDL_GPUTextureSamplerBinding binding{source, m_linearSampler};
+    SDL_BindGPUFragmentSamplers(pass, 0u, &binding, 1u);
+    const float uniforms[12] = {float(to[0]),     float(to[1]),     float(to[2]),     float(to[3]),
+                                float(region[0]), float(region[1]), float(region[2]), float(region[3]),
+                                rcas ? 1.0f : 0.0f, sharpness, 0.0f, 0.0f};
     SDL_PushGPUFragmentUniformData(commands, 0u, uniforms, sizeof(uniforms));
     SDL_DrawGPUPrimitives(pass, 3u, 1u, 0u, 0u);
     SDL_EndGPURenderPass(pass);

@@ -24,8 +24,8 @@ Then:
 1. Download `RogueGalaxy-<version>.zip` from the
    [releases](https://github.com/victor-takai/rogue-galaxy-recomp/releases)
    page (not "Source code").
-2. Extract it to a short path, such as `C:\`. You get `C:\RogueGalaxy`,
-   your game folder.
+2. Extract it to a folder on this PC, outside OneDrive, such as `C:\`.
+   You get `C:\RogueGalaxy`, your game folder.
 3. Double-click `Install.bat` and choose your disc image.
 4. Wait about 20 minutes on a fast PC, up to an hour on a slower one. It
    downloads the build tools (about 300 MB) into the folder, extracts the
@@ -33,8 +33,22 @@ Then:
 5. Play with `Rogue Galaxy.exe`.
 
 If it stops, `install.log` says why; run `Install.bat` again to continue
-where it stopped. If an antivirus removes the compiler, restore it and run
-`Install.bat` again.
+where it stopped (`Rogue Galaxy.exe` offers it too). If an antivirus
+removes the compiler, restore it and run `Install.bat` again.
+
+A long path, or one with spaces or letters of any language (accents,
+Cyrillic, Japanese; letters your Windows' language lacks need Windows 10
+version 1903 or later), is fine: while it builds, the build tools see the
+folder by a short name in `C:\RogueGalaxyBuild` (on the drive Windows is
+on), which leads to the folder and is removed when the install ends; an
+install closed before then leaves it until the next one.
+
+In a launcher that installs into its own folder, such as QuiverLauncher,
+Play installs the game the first time, in a window of its own, and starts
+it from then on. If the install stops halfway, Play offers to go on with
+it; if it stops in its first minutes, before `Rogue Galaxy.exe` is made,
+Play may open a build tool instead: run `Install.bat` from the game's
+folder then.
 
 ## Undub (optional)
 
@@ -50,6 +64,11 @@ Director's Cut (SCPS-17013).
 
 The text stays in its language: English, or one of the
 [European texts](#european-texts-optional) with the Japanese voices.
+
+`Install-Undub.bat` also reads what the Director's Cut changed in
+battles, which the US release did not get. Three options in
+F1 > Settings > Game turn it on, each part on its own
+([DIRECTORS-CUT.md](DIRECTORS-CUT.md)). The voices can stay English.
 
 ## European texts (optional)
 
@@ -71,13 +90,6 @@ something looks wrong (text, a menu, the picture), open an
 [issue](https://github.com/victor-takai/rogue-galaxy-recomp/issues) with a
 screenshot and the game's log. Picking English again brings the game back as
 it was.
-
-The same step reads what the Director's Cut changed in battles, which the
-US release did not get: smaller groups of enemies, more money, some enemies
-weaker and others stronger, and that release's enemy attacks and AI. Three
-options in F1 > Settings > Game turn it on, each part on its own:
-[Director's Cut balance, enemy behavior and party AI](OPTIONS.md#game-options).
-The voices can stay English.
 
 ## Update
 

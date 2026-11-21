@@ -43,18 +43,47 @@ endif()
 # would skip every patch, and the recompiler would be built without them.
 # The first patch applies to the pinned commit as it is, and not once it
 # is in: when it applies again, the checkout lost the patches. (The last
-# one cannot tell: it applies only over the others, 2026-10-27.)
+# one cannot tell: it applies only over the others, 2026-10-27.) The files
+# the patches create are no checkout's files either, and outlast such a
+# reset (a release archive unpacked over the folder, 2026-11-14): left
+# there, the patch that creates one fails ("already exists in working
+# directory"), so they go too.
+set(rg_patch_first "")
 if(rg_patches_applied)
     list(GET rg_patches_applied 0 rg_patch_first)
-    if(EXISTS "${rg_root}/patches/ps2recomp/${rg_patch_first}")
-        execute_process(COMMAND "${GIT_EXECUTABLE}" apply --check "${rg_root}/patches/ps2recomp/${rg_patch_first}"
-            WORKING_DIRECTORY "${rg_root}/thirdparty/PS2Recomp"
-            RESULT_VARIABLE rg_patch_out OUTPUT_QUIET ERROR_QUIET)
-        if(rg_patch_out EQUAL 0)
+    set(rg_patch_first "${rg_root}/patches/ps2recomp/${rg_patch_first}")
+endif()
+if(NOT EXISTS "${rg_patch_first}" AND rg_framework_patches)
+    list(GET rg_framework_patches 0 rg_patch_first)
+endif()
+if(EXISTS "${rg_patch_first}")
+    execute_process(COMMAND "${GIT_EXECUTABLE}" apply --check "${rg_patch_first}"
+        WORKING_DIRECTORY "${rg_root}/thirdparty/PS2Recomp"
+        RESULT_VARIABLE rg_patch_out OUTPUT_QUIET ERROR_QUIET)
+    if(rg_patch_out EQUAL 0)
+        if(rg_patches_applied)
+            get_filename_component(rg_patch_first "${rg_patch_first}" NAME)
             message(STATUS "thirdparty/PS2Recomp lost its patches (${rg_patch_first} applies again); applying them all")
             file(REMOVE "${rg_patch_stamp}")
             set(rg_patches_applied "")
         endif()
+        foreach(patch IN LISTS rg_framework_patches)
+            file(STRINGS "${patch}" rg_patch_lines REGEX "^(--- /dev/null|\\+\\+\\+ b/)")
+            set(rg_patch_new FALSE)
+            foreach(rg_patch_line IN LISTS rg_patch_lines)
+                if(rg_patch_line MATCHES "^--- /dev/null")
+                    set(rg_patch_new TRUE)
+                elseif(rg_patch_new)
+                    string(SUBSTRING "${rg_patch_line}" 6 -1 rg_patch_created)
+                    string(STRIP "${rg_patch_created}" rg_patch_created)
+                    if(EXISTS "${rg_root}/thirdparty/PS2Recomp/${rg_patch_created}")
+                        message(STATUS "Removing thirdparty/PS2Recomp/${rg_patch_created}, which a patch creates")
+                        file(REMOVE "${rg_root}/thirdparty/PS2Recomp/${rg_patch_created}")
+                    endif()
+                    set(rg_patch_new FALSE)
+                endif()
+            endforeach()
+        endforeach()
     endif()
 endif()
 foreach(patch IN LISTS rg_framework_patches)

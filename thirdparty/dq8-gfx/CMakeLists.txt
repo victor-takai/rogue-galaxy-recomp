@@ -21,10 +21,15 @@ set(SDL_RENDER_VULKAN OFF CACHE BOOL "" FORCE)
 # (SDL_GPU_BLENDFACTOR_SRC1_ALPHA), so a source-alpha blend stores its exact
 # alpha in the same pass as its colour; and, with DQ8_GFX_GPU_TIMES=1, a GPU
 # timestamp at each debug label, the GPU's time logged by label
-# (cmake/patches).
+# (cmake/patches). Its configure checks come answered ahead for the
+# installer's toolchain (Rogue Galaxy: added; cmake/Dq8Sdl3Preseed.cmake):
+# a new tag or patch needs them regenerated (tools/install/sdl3_preseed.py).
+set(DQ8_SDL3_TAG release-3.2.24)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dq8Sdl3Preseed.cmake")
+dq8_sdl3_preseed("${DQ8_SDL3_TAG}")
 FetchContent_Declare(SDL3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG release-3.2.24
+    GIT_TAG ${DQ8_SDL3_TAG}
     GIT_SHALLOW TRUE
     GIT_PROGRESS TRUE
     PATCH_COMMAND "${CMAKE_COMMAND}"
@@ -33,7 +38,9 @@ FetchContent_Declare(SDL3
     COMMAND "${CMAKE_COMMAND}"
         -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/sdl3-gpu-timestamps.patch
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dq8ApplyPatch.cmake")
+get_cmake_property(DQ8_CACHE_BEFORE_SDL3 CACHE_VARIABLES)
 FetchContent_MakeAvailable(SDL3)
+dq8_sdl3_record_answers("${DQ8_CACHE_BEFORE_SDL3}")
 
 # Backend-neutral GS support: local memory, swizzled access, transfers.
 add_library(dq8_gfx_gs STATIC
@@ -87,7 +94,8 @@ foreach(shader IN ITEMS
         "gs_display.frag;frag;kGsDisplayFragSpirv"
         "gs_index8.frag;frag;kGsIndex8FragSpirv"
         "gs_local_copy.frag;frag;kGsLocalCopyFragSpirv"
-        "present_sides.frag;frag;kPresentSidesFragSpirv")
+        "present_sides.frag;frag;kPresentSidesFragSpirv"
+        "present_fsr.frag;frag;kPresentFsrFragSpirv")
     list(GET shader 0 file)
     list(GET shader 1 stage)
     list(GET shader 2 symbol)
@@ -132,11 +140,13 @@ target_link_libraries(dq8_imgui PUBLIC SDL3::SDL3-static)
 # menu needs no files beside the executable.
 set(DQ8_UI_FONT "${DQ8_IMGUI_DIR}/misc/fonts/Roboto-Medium.ttf")
 set(DQ8_UI_FONT_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/ui_font_data.cpp")
+# Depending only on what it names, as the shaders do (cmake/Dq8Shaders.cmake).
 add_custom_command(
     OUTPUT "${DQ8_UI_FONT_SOURCE}"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${DQ8_UI_FONT}" "-DOUTPUT=${DQ8_UI_FONT_SOURCE}"
             -DSYMBOL=kUiFontData -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dq8EmbedBinary.cmake"
     DEPENDS "${DQ8_UI_FONT}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dq8EmbedBinary.cmake"
+    ${DQ8_DEPENDS_EXPLICIT_ONLY}
     COMMENT "Embedding the menu font"
     VERBATIM)
 

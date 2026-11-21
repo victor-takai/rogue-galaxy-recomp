@@ -6,8 +6,10 @@
 // VU1 programs computed natively and drawn as GPU meshes, and the post
 // effects drawn by the renderer instead of as the GS packets the game
 // builds for them. Off, everything goes through the GS emulation, as
-// before. Here it turns on RG_VU1_NATIVE=gpu (src/vu1_native.h), which its
-// variable still overrides.
+// before. Here it turns on RG_VU1_NATIVE=gpu (src/vu1_native.h) and the
+// VU0's matrix program native (RG_VU0_NATIVE, src/vu0_native.cpp), which
+// their variables still override, and RG_NATIVE_PIPELINE=1 and
+// RG_VU1_CLIP_ON_GPU=1 (src/vif1_thread.cpp) work only with it on.
 //
 // graphics.cpp hands the menu's setting over when the menu applies its
 // settings, before the game starts. The first read of enabled() keeps it for
