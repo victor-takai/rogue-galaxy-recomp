@@ -1,0 +1,61 @@
+--- /dev/null
++++ b/ps2xRuntime/include/ps2_host_present.h
+@@ -0,0 +1,13 @@
++#pragma once
++
++// A host's own present, in place of the GS's (Rogue Galaxy: added; patch
++// 0033). With an external presenter, the runtime's loop calls the hook at
++// every pass: `newTick` is true at a new guest vsync, where the loop would
++// latch the GS's display. A hook that returns true at a new tick has shown
++// the frame itself, and the GS present is skipped; false falls back to it.
++// Its own header so that setting it does not rebuild what includes
++// ps2_runtime.h.
++
++using HostPresentHook = bool (*)(void *userData, bool newTick);
++
++void ps2SetHostPresentHook(HostPresentHook hook, void *userData);
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -1,4 +1,5 @@
+ #include "ps2_runtime.h"
++#include "ps2_host_present.h"
+ #include "ps2_log.h"
+ #include "ps2_stubs.h"
+ #include "ps2_syscalls.h"
+@@ -91,6 +92,9 @@
+ 
+ namespace
+ {
++    HostPresentHook g_hostPresentHook = nullptr;
++    void *g_hostPresentUserData = nullptr;
++
+     template <class Present>
+     bool presentHostFrame(PS2Runtime &runtime, Present &&present)
+     {
+@@ -2717,9 +2721,15 @@
+             static uint64_t s_lastNativeTick = std::numeric_limits<uint64_t>::max();
+             const uint64_t currentTick = eeScheduler().currentVSyncTick();
+             const bool newFrame = currentTick != s_lastNativeTick;
++            // A host's own present (ps2_host_present.h) stands in for the
++            // GS's when it says it has shown the frame.
++            bool hostPresented = false;
++            if (g_hostPresentHook &&
++                !presentHostFrame(*this, [&] { hostPresented = g_hostPresentHook(g_hostPresentUserData, newFrame); }))
++                break;
+             if (newFrame)
+             {
+-                if (!presentHostFrame(*this, [&] { gs().latchHostPresentationFrame(); }))
++                if (!hostPresented && !presentHostFrame(*this, [&] { gs().latchHostPresentationFrame(); }))
+                     break;
+                 s_lastNativeTick = currentTick;
+             }
+@@ -2816,3 +2826,9 @@
+ 
+     RUNTIME_LOG("[run] exiting loop");
+ }
++
++void ps2SetHostPresentHook(HostPresentHook hook, void *userData)
++{
++    g_hostPresentUserData = userData;
++    g_hostPresentHook = hook;
++}

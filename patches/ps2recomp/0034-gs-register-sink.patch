@@ -1,0 +1,67 @@
+--- a/ps2xRuntime/include/runtime/gs/gs_frontend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_frontend.h
+@@ -6,6 +6,7 @@
+ #include <cstdint>
+ #include <memory>
+ #include <mutex>
++#include <utility>
+ #include <vector>
+ 
+ #include "runtime/gs/gs_backend.h"
+@@ -144,6 +145,13 @@
+                            const uint8_t *data,
+                            uint32_t sizeBytes);
+     void writeRegister(uint8_t regAddr, uint64_t value);
++    // Rogue Galaxy: while a thread has a sink set, its writeRegister calls
++    // are appended to it instead of applied, and its framebuffer clears are
++    // dropped (the clear sprite that follows them is among the writes). The
++    // native pipeline replays them through its own producer, so the kernel
++    // stubs' draw environments and clears never reach the GS.
++    using RegisterSink = std::vector<std::pair<uint8_t, uint64_t>>;
++    static void setRegisterSink(RegisterSink *sink);
+ 
+     const uint8_t *lockDisplaySnapshot(uint32_t &outSize);
+     void unlockDisplaySnapshot();
+--- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+@@ -1223,8 +1223,23 @@
+     }
+ }
+ 
++namespace
++{
++thread_local GS::RegisterSink *t_registerSink = nullptr;
++}
++
++void GS::setRegisterSink(RegisterSink *sink)
++{
++    t_registerSink = sink;
++}
++
+ void GS::writeRegister(uint8_t regAddr, uint64_t value)
+ {
++    if (t_registerSink)
++    {
++        t_registerSink->emplace_back(regAddr, value);
++        return;
++    }
+     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+     writeRegisterUnlocked(regAddr, value);
+ }
+@@ -1778,12 +1793,16 @@
+ 
+ bool GS::clearFramebufferContext(uint32_t contextIndex, uint32_t rgba)
+ {
++    if (t_registerSink)
++        return true;
+     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+     return m_backend && m_backend->ClearFramebuffer(m_ctx[(contextIndex != 0u) ? 1 : 0], rgba);
+ }
+ 
+ bool GS::clearActiveFramebuffer(uint32_t rgba)
+ {
++    if (t_registerSink)
++        return true;
+     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+     return m_backend && m_backend->ClearFramebuffer(activeContext(), rgba);
+ }

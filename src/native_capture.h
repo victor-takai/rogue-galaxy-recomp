@@ -7,7 +7,8 @@ class PS2Runtime;
 // (DrawEnvSetFrameFromDesc, and the frame's and the display's descriptor
 // getters) and the textures and palettes it uploads (TexBuildUploadPkt),
 // each read from the game's own data before the function runs, and handed
-// to src/native_producer.h. Installed only with the native pipeline on.
+// to src/native_producer.h; and the game's reads of GS memory, answered from
+// the renderer (steps 7b, 7c). Installed only with the native pipeline on.
 namespace rg::nativecapture
 {
 void install(PS2Runtime &runtime);

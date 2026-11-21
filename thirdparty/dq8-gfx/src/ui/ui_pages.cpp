@@ -12,6 +12,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <string>
 
 namespace dq8::ui {
@@ -31,13 +32,35 @@ constexpr ImGuiWindowFlags kDialogFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWin
 
 ImVec4 color(ImU32 packed) { return ImGui::ColorConvertU32ToFloat4(packed); }
 
+// A setting that does nothing now, given the line that says what would make
+// it work (null while it works): what is drawn while this lives is greyed
+// out, and the line goes under it (Rogue Galaxy: added).
+class Blocked {
+public:
+    explicit Blocked(const char *reason) : m_reason(reason) { ImGui::BeginDisabled(reason != nullptr); }
+    ~Blocked() {
+        ImGui::EndDisabled();
+        if (m_reason) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(color(palette::kWarn), "%s", m_reason);
+            ImGui::PopTextWrapPos();
+        }
+    }
+    Blocked(const Blocked &) = delete;
+    Blocked &operator=(const Blocked &) = delete;
+
+private:
+    const char *m_reason;
+};
+
 // A round "x" in a window's corner, for the mouse: keyboard and controller
 // close with Back, and the cursor would otherwise start on it.
 bool closeButton(const char *id) {
     const float size = ImGui::GetFrameHeight();
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const bool pressed = ImGui::InvisibleButton(id, ImVec2(size, size));
-    const ImVec2 center(pos.x + size * 0.5f, pos.y + size * 0.5f);
+    // Where drawIcon puts the cross, so the hover disc stays around it.
+    const ImVec2 center = pixelCentre(ImVec2(pos.x + size * 0.5f, pos.y + size * 0.5f));
     ImDrawList *list = ImGui::GetWindowDrawList();
     if (ImGui::IsItemHovered())
         list->AddCircleFilled(center, size * 0.5f, palette::kHover);
@@ -46,20 +69,29 @@ bool closeButton(const char *id) {
     return pressed;
 }
 
+// closeButton at the right end of the line that starts at `lineTop`, centred
+// on `middle` (its title's): the button is a frame of the smaller font, so at
+// the line's top it sat above a bigger title's middle.
+bool closeButtonBeside(const char *id, float lineTop, float middle) {
+    const float frame = ImGui::GetFrameHeight();
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - frame);
+    ImGui::SetCursorScreenPos(
+        ImVec2(ImGui::GetCursorScreenPos().x, std::floor(std::max(lineTop, middle - frame * 0.5f))));
+    return closeButton(id);
+}
+
 // A window's title row: icon, title, and a close button at the right end.
 void dialogHeader(Icon kind, const char *title, bool *open) {
-    icon(kind, em(1.4f), palette::kGold);
+    const IconRoom room = iconRoom(em(1.4f));
     ImGui::SameLine(0.0f, em(0.6f));
     ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.3f);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(title);
     ImGui::PopFont();
-    if (open) {
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::GetFrameHeight());
-        if (closeButton("##close"))
-            *open = false;
-    }
+    drawIconBeside(room, kind, palette::kGold);
+    if (open && closeButtonBeside("##close", room.pos.y, lastItemMiddle()))
+        *open = false;
     const ImVec2 at = ImGui::GetCursorScreenPos();
     ImGui::GetWindowDrawList()->AddLine(ImVec2(at.x, at.y + em(0.15f)),
                                         ImVec2(at.x + ImGui::GetContentRegionAvail().x, at.y + em(0.15f)),
@@ -261,7 +293,8 @@ void Overlay::drawPadHints(float height) {
     } else if (g.NavLayer == ImGuiNavLayer_Menu) {
         hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Open"}, {SDL_GAMEPAD_BUTTON_EAST, kNone, "Back"}};
     } else if (inPage) {
-        hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Select"}, {SDL_GAMEPAD_BUTTON_EAST, kNone, "Back"}};
+        // "Choose", as in lists: Controls shows the PS2's Select button here.
+        hints = {{SDL_GAMEPAD_BUTTON_SOUTH, kNone, "Choose"}, {SDL_GAMEPAD_BUTTON_EAST, kNone, "Back"}};
         if (m_page == SettingsPage::Controls)
             hints.push_back({SDL_GAMEPAD_BUTTON_WEST, kNone, "Clear a binding"});
         hints.push_back({SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, "Page"});
@@ -311,7 +344,8 @@ void Overlay::drawDisplayPage() {
         if (segmented("mode", &mode, kModes, 2))
             setFullscreen(mode == 1);
 
-        settingRow("Vertical sync", "Fast avoids tearing with less delay, where the system offers it.");
+        settingRow("Vertical sync", "On waits for the screen. Fast avoids tearing with less delay, where the "
+                                    "system offers it. Off shows each frame at once and can tear.");
         static constexpr SDL_GPUPresentMode kPresent[] = {SDL_GPU_PRESENTMODE_VSYNC, SDL_GPU_PRESENTMODE_MAILBOX,
                                                          SDL_GPU_PRESENTMODE_IMMEDIATE};
         static constexpr const char *kSync[] = {"On", "Fast", "Off"};
@@ -331,7 +365,8 @@ void Overlay::drawDisplayPage() {
     sectionHeader("Picture");
     if (beginSettings("picture")) {
         settingRow("Internal resolution",
-                   "Draws the game at a multiple of the PS2's own resolution. Above 1\xC3\x97 is slower for now.",
+                   "Draws the game at a multiple of the PS2's own resolution: sharper, and more work for the "
+                   "graphics card.",
                    "Experimental");
         const uint32_t active = m_backend.activeResolutionScale();
         const uint32_t shown = m_pendingScale != 0u ? m_pendingScale : active;
@@ -419,13 +454,31 @@ void Overlay::drawDisplayPage() {
             "What fills the window beside a 4:3 picture: the picture itself, softly blurred and a little darker.",
             "What fills the window beside a 4:3 picture: your image, the first PNG or JPG in the game's "
             "\"borders\" folder (the blurred picture without one)."};
-        settingRow("Borders", kSidesHelp[static_cast<int>(m_settings.display.sides)]);
-        static constexpr const char *kSides[] = {"Black", "Blurred", "Image"};
-        int sides = static_cast<int>(m_settings.display.sides);
-        if (segmented("sides", &sides, kSides, 3)) {
-            m_settings.display.sides = static_cast<gfx::SdlGpuSides>(sides);
-            m_backend.setDisplayOptions(m_settings.display);
-            markDirty();
+        // Greyed out while the picture covers the whole window at both of
+        // the game's shapes (under Auto the loading screens and the title
+        // stay 4:3 with Widescreen on), as well as in the last frame shown:
+        // there is never anything beside it.
+        const gfx::SdlGpuRect picture = m_backend.displayRect();
+        bool bars = picture.width == 0u || picture.width < m_targetWidth || picture.height < m_targetHeight;
+        for (const int wide : {0, 1}) {
+            const gfx::SdlGpuRect rect =
+                gfx::sdlGpuDisplayRect(m_settings.display, 512u, 448u, m_targetWidth, m_targetHeight, wide);
+            bars = bars || rect.width < m_targetWidth || rect.height < m_targetHeight;
+        }
+        {
+            const Blocked blocked(bars ? nullptr
+                                  : m_settings.display.aspect == gfx::SdlGpuAspect::Stretch
+                                      ? "Stretch fills the window: pick another Aspect ratio for this."
+                                      : "The picture fills the window: change Aspect ratio or turn on Integer "
+                                        "scaling for this.");
+            settingRow("Borders", kSidesHelp[static_cast<int>(m_settings.display.sides)]);
+            static constexpr const char *kSides[] = {"Black", "Blurred", "Image"};
+            int sides = static_cast<int>(m_settings.display.sides);
+            if (segmented("sides", &sides, kSides, 3)) {
+                m_settings.display.sides = static_cast<gfx::SdlGpuSides>(sides);
+                m_backend.setDisplayOptions(m_settings.display);
+                markDirty();
+            }
         }
 
         settingRow("Integer scaling", "Whole multiples of the picture's height: even lines, with borders.");
@@ -446,20 +499,29 @@ void Overlay::drawDisplayPage() {
 void Overlay::drawSoundPage() {
     sectionHeader("Volume");
     if (beginSettings("sound")) {
-        settingRow("Master volume");
-        if (ImGui::SliderInt("##volume", &m_settings.volume, 0, 100, "%d%%")) {
-            applyVolume();
-            markDirty();
+        // The volume and the background's mute greyed out while Mute
+        // silences the game anyway (Rogue Galaxy: added).
+        const char *unmute = m_settings.muted ? "Turn off Mute for this." : nullptr;
+        {
+            const Blocked blocked(unmute);
+            settingRow("Master volume");
+            if (ImGui::SliderInt("##volume", &m_settings.volume, 0, 100, "%d%%")) {
+                applyVolume();
+                markDirty();
+            }
         }
         settingRow("Mute");
         if (toggle("mute", &m_settings.muted)) {
             applyVolume();
             markDirty();
         }
-        settingRow("Mute in the background", "Silences the game while its window is not in front.");
-        if (toggle("background", &m_settings.muteInBackground)) {
-            applyVolume();
-            markDirty();
+        {
+            const Blocked blocked(unmute);
+            settingRow("Mute in the background", "Silences the game while its window is not in front.");
+            if (toggle("background", &m_settings.muteInBackground)) {
+                applyVolume();
+                markDirty();
+            }
         }
         endSettings();
     }
@@ -489,7 +551,9 @@ void Overlay::drawInterfacePage() {
         // Not on a Steam Deck: Steam keeps its own button, so View + Menu is
         // the only way to the menu there.
         if (!m_host.steamDeck) {
-            settingRow("Back + Start opens the menu", "The Guide button (Xbox, PS, Home) always does.");
+            settingRow("Back + Start opens the menu",
+                       "Back and Start are View and Menu on newer Xbox controllers, Share or Create and Options "
+                       "on PlayStation ones. The Guide button (Xbox, PS, Home) always opens the menu.");
             if (toggle("backstart", &m_settings.backStartOpensMenu))
                 markDirty();
         }
@@ -538,12 +602,16 @@ void Overlay::drawInterfacePage() {
         settingRow("Show the frame rate", "Frames the game draws each second. F3 toggles it.");
         if (toggle("fps", &m_settings.showFps))
             markDirty();
-        settingRow("Position");
-        static constexpr const char *kCorners[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
-        int corner = static_cast<int>(m_settings.fpsCorner);
-        if (segmented("corner", &corner, kCorners, 4)) {
-            m_settings.fpsCorner = static_cast<Corner>(corner);
-            markDirty();
+        {
+            // Greyed out while there is no counter to place (Rogue Galaxy: added).
+            const Blocked blocked(m_settings.showFps ? nullptr : "Turn on Show the frame rate for this.");
+            settingRow("Position");
+            static constexpr const char *kCorners[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
+            int corner = static_cast<int>(m_settings.fpsCorner);
+            if (segmented("corner", &corner, kCorners, 4)) {
+                m_settings.fpsCorner = static_cast<Corner>(corner);
+                markDirty();
+            }
         }
         endSettings();
     }
@@ -562,14 +630,18 @@ void Overlay::drawLanguagePage() {
 void Overlay::drawTexturesPage() {
     drawGameOptions("textures",
                     "No texture packs found: put one (a folder or a .zip) in textures\\packs.\n"
-                    "They are drawn above 1x. The game ships none (docs\\TEXTURE_PACKS.md).",
+                    "A pack's 2D art shows above 1\xC3\x97, a PCSX2 pack's 3D at any scale. None are included "
+                    "(docs\\TEXTURE_PACKS.md).",
                     "Texture packs");
 }
 
 void Overlay::drawGameOptions(const std::string &page, const char *emptyText, const char *firstTitle) {
     if (std::none_of(m_host.gameOptions.begin(), m_host.gameOptions.end(),
                      [&](const GameOption &option) { return option.page == page; })) {
+        // Wrapped at the pane's edge, which a long line would run past.
+        ImGui::PushTextWrapPos(0.0f);
         mutedText("%s", emptyText);
+        ImGui::PopTextWrapPos();
         return;
     }
     bool started = false, table = false;
@@ -587,90 +659,105 @@ void Overlay::drawGameOptions(const std::string &page, const char *emptyText, co
         }
         if (!table)
             continue;
-        settingRow(option.label.c_str(), option.help.empty() ? nullptr : option.help.c_str());
-        if (option.number() && !option.choices.empty()) {
-            // Rogue Galaxy: added, a value a button (the text's language).
-            const int value = gameNumber(option);
-            int index = value - option.minimum;
-            std::vector<const char *> labels;
-            for (const std::string &choice : option.choices)
-                labels.push_back(choice.c_str());
-            if (segmented(option.key.c_str(), &index, labels.data(), static_cast<int>(labels.size()))) {
-                const int next = std::clamp(option.minimum + index, option.minimum, option.maximum);
-                if (next != value) {
-                    m_settings.gameNumbers[option.key] = next;
-                    m_settings.gameOptions.erase(option.key);
-                    if (m_host.setGameNumber)
-                        m_host.setGameNumber(option.key, next);
-                    markDirty();
-                }
-            }
-            if (waitsForRestart(option))
-                ImGui::TextColored(color(palette::kBad), "Restart the game for this to take effect.");
-            continue;
+        // Greyed out, with the line that says what would make it work, while
+        // it does nothing (Rogue Galaxy: added).
+        const char *reason = m_host.gameOptionBlocked ? m_host.gameOptionBlocked(option.key) : nullptr;
+        {
+            const Blocked blocked(reason);
+            settingRow(option.label.c_str(), option.help.empty() ? nullptr : option.help.c_str());
+            drawGameControl(option);
         }
-        if (option.number()) {
-            const int value = gameNumber(option);
-            int next = value;
-            const ImGuiStyle &style = ImGui::GetStyle();
-            const float button = ImGui::GetFrameHeight();
-            const float reset = ImGui::CalcTextSize("Default").x + style.FramePadding.x * 2.0f;
-            ImGui::PushID(option.key.c_str());
-            if (ImGui::Button("-", ImVec2(button, 0.0f)))
-                next = value - option.step;
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(std::max(button * 3.0f, ImGui::GetContentRegionAvail().x - button -
-                                                                reset - style.ItemSpacing.x * 2.0f));
-            // A multiplier's text has its value written in already: the
-            // slider prints it as it is (no % in it), and typing a value in
-            // is off, as what it would read is hundredths.
-            const bool multiplier = option.format == kMultiplierFormat;
-            char text[16];
-            const char *format = option.format.empty() ? "%d" : option.format.c_str();
-            if (multiplier) {
-                multiplierText(value, text, sizeof(text));
-                format = text;
-            }
-            ImGui::SliderInt("##value", &next, option.minimum, option.maximum, format,
-                             multiplier ? ImGuiSliderFlags_NoInput : ImGuiSliderFlags_None);
-            ImGui::SameLine();
-            if (ImGui::Button("+", ImVec2(button, 0.0f)))
-                next = value + option.step;
-            ImGui::SameLine();
-            ImGui::BeginDisabled(value == option.defaultNumber);
-            if (ImGui::Button("Default"))
-                next = option.defaultNumber;
-            ImGui::EndDisabled();
-            ImGui::PopID();
-            next = std::clamp(next, option.minimum, option.maximum);
+        if (!reason && waitsForRestart(option))
+            ImGui::TextColored(color(palette::kBad), "Restart the game for this to take effect.");
+    }
+    if (table)
+        endSettings();
+}
+
+void Overlay::drawGameControl(const GameOption &option) {
+    if (option.number() && !option.choices.empty()) {
+        // Rogue Galaxy: added, a value a button (the text's language).
+        const int value = gameNumber(option);
+        int index = value - option.minimum;
+        std::vector<const char *> labels;
+        for (const std::string &choice : option.choices)
+            labels.push_back(choice.c_str());
+        // The values that would do nothing greyed out (Rogue Galaxy: added).
+        std::unique_ptr<bool[]> usable;
+        if (m_host.gameChoiceBlocked) {
+            usable = std::make_unique<bool[]>(labels.size());
+            for (size_t choice = 0; choice < labels.size(); ++choice)
+                usable[choice] = !m_host.gameChoiceBlocked(option.key, option.minimum + static_cast<int>(choice));
+        }
+        if (segmented(option.key.c_str(), &index, labels.data(), static_cast<int>(labels.size()), usable.get())) {
+            const int next = std::clamp(option.minimum + index, option.minimum, option.maximum);
             if (next != value) {
                 m_settings.gameNumbers[option.key] = next;
-                // A "0" or "1" in the file reads as a switch too.
                 m_settings.gameOptions.erase(option.key);
                 if (m_host.setGameNumber)
                     m_host.setGameNumber(option.key, next);
                 markDirty();
             }
-            continue;
         }
-        bool on = gameOption(option);
-        if (!option.remembered) {
-            if (toggle(option.key.c_str(), &on) && m_host.setGameOption)
-                m_host.setGameOption(option.key, on);
-            continue;
+        return;
+    }
+    if (option.number()) {
+        const int value = gameNumber(option);
+        int next = value;
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float button = ImGui::GetFrameHeight();
+        const float reset = ImGui::CalcTextSize("Default").x + style.FramePadding.x * 2.0f;
+        ImGui::PushID(option.key.c_str());
+        if (ImGui::Button("-", ImVec2(button, 0.0f)))
+            next = value - option.step;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(std::max(button * 3.0f, ImGui::GetContentRegionAvail().x - button -
+                                                            reset - style.ItemSpacing.x * 2.0f));
+        // A multiplier's text has its value written in already: the
+        // slider prints it as it is (no % in it), and typing a value in
+        // is off, as what it would read is hundredths.
+        const bool multiplier = option.format == kMultiplierFormat;
+        char text[16];
+        const char *format = option.format.empty() ? "%d" : option.format.c_str();
+        if (multiplier) {
+            multiplierText(value, text, sizeof(text));
+            format = text;
         }
-        if (toggle(option.key.c_str(), &on)) {
-            m_settings.gameOptions[option.key] = on;
-            m_settings.gameNumbers.erase(option.key);
-            if (m_host.setGameOption)
-                m_host.setGameOption(option.key, on);
+        ImGui::SliderInt("##value", &next, option.minimum, option.maximum, format,
+                         multiplier ? ImGuiSliderFlags_NoInput : ImGuiSliderFlags_None);
+        ImGui::SameLine();
+        if (ImGui::Button("+", ImVec2(button, 0.0f)))
+            next = value + option.step;
+        ImGui::SameLine();
+        ImGui::BeginDisabled(value == option.defaultNumber);
+        if (ImGui::Button("Default"))
+            next = option.defaultNumber;
+        ImGui::EndDisabled();
+        ImGui::PopID();
+        next = std::clamp(next, option.minimum, option.maximum);
+        if (next != value) {
+            m_settings.gameNumbers[option.key] = next;
+            // A "0" or "1" in the file reads as a switch too.
+            m_settings.gameOptions.erase(option.key);
+            if (m_host.setGameNumber)
+                m_host.setGameNumber(option.key, next);
             markDirty();
         }
-        if (waitsForRestart(option))
-            ImGui::TextColored(color(palette::kBad), "Restart the game for this to take effect.");
+        return;
     }
-    if (table)
-        endSettings();
+    bool on = gameOption(option);
+    if (!option.remembered) {
+        if (toggle(option.key.c_str(), &on) && m_host.setGameOption)
+            m_host.setGameOption(option.key, on);
+        return;
+    }
+    if (toggle(option.key.c_str(), &on)) {
+        m_settings.gameOptions[option.key] = on;
+        m_settings.gameNumbers.erase(option.key);
+        if (m_host.setGameOption)
+            m_host.setGameOption(option.key, on);
+        markDirty();
+    }
 }
 
 void Overlay::drawControlsPage() {
@@ -729,9 +816,12 @@ void Overlay::drawControlsPage() {
     } else {
         for (const auto &controller : controllers) {
             ImGui::PushID(&controller);
-            icon(Icon::Controls, em(1.1f), controller.active ? palette::kGold : palette::kTextMuted);
+            // The name's height: a taller icon is held at the line's top,
+            // below the unframed name's middle.
+            const IconRoom room = iconRoom(em(1.0f));
             ImGui::SameLine(0.0f, em(0.5f));
             ImGui::TextUnformatted(controller.name.c_str());
+            drawIconBeside(room, Icon::Controls, controller.active ? palette::kGold : palette::kTextMuted);
             ImGui::SameLine(0.0f, em(0.6f));
             mutedText("%s", controllerFamilyName(controller.type));
             if (controller.batteryPercent >= 0 && (controller.power == SDL_POWERSTATE_ON_BATTERY ||
@@ -803,9 +893,10 @@ void Overlay::drawControlsPage() {
             config.triggerThreshold = threshold / 100.0f;
             changed = true;
         }
-        settingRow("Invert camera left and right");
+        settingRow("Invert camera left and right", "The right stick and the keys bound to it.");
         changed |= toggle("invertx", &config.invertCameraX);
-        settingRow("Invert camera up and down");
+        settingRow("Invert camera up and down",
+                   "The right stick and the keys bound to it; the mouse has its own, on the Game page.");
         changed |= toggle("inverty", &config.invertCameraY);
         endSettings();
         if (changed)
@@ -896,11 +987,12 @@ void Overlay::drawAbout() {
     ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetMainViewport()->WorkSize.x - em(2.0f), em(31.0f)), 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(1.4f), em(1.2f)));
     if (beginWindow("##about", nullptr, kDialogFlags & ~ImGuiWindowFlags_AlwaysAutoResize)) {
-        icon(Icon::Disc, em(3.0f), palette::kGold);
+        const IconRoom room = iconRoom(em(3.0f));
         ImGui::SameLine(0.0f, em(0.9f));
         ImGui::BeginGroup();
         ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.6f);
         ImGui::TextUnformatted("Rogue Galaxy Recompiled");
+        const float titleMiddle = lastItemMiddle();
         ImGui::PopFont();
         if (m_host.revision.empty())
             mutedText("Version %s", m_host.version.c_str());
@@ -911,9 +1003,8 @@ void Overlay::drawAbout() {
             ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(palette::kGold), "Version %s is out",
                                newer.first.c_str());
         ImGui::EndGroup();
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::GetFrameHeight());
-        if (closeButton("##close"))
+        drawIconBeside(room, Icon::Disc, palette::kGold);
+        if (closeButtonBeside("##close", room.pos.y, titleMiddle))
             m_aboutOpen = false;
         ImGui::Dummy(ImVec2(0.0f, em(0.3f)));
         ImGui::PushTextWrapPos(0.0f);
@@ -975,9 +1066,16 @@ void Overlay::drawShortcuts() {
             shortcutRow(kF3, 1, "Show the frame rate");
             if (canChangeSpeed())
                 shortcutRow(kF4, 1, "Fast-forward");
+            // The game's own keys (Rogue Galaxy: added; F6, the free camera).
+            for (const HostServices::Shortcut &shortcut : m_host.gameShortcuts) {
+                if (!shortcut.listed)
+                    continue;
+                const char *const keys[] = {SDL_GetScancodeName(shortcut.key)};
+                shortcutRow(keys, 1, shortcut.what.c_str());
+            }
             shortcutRow(kF11, 1, "Fullscreen");
             shortcutRow(kAltEnter, 2, "Fullscreen");
-            shortcutRow(kF12, 1, "Screenshot of the game");
+            shortcutRow(kF12, 1, "Take screenshot");
             shortcutRow(kShiftF12, 2, "Screenshot with the menu");
             shortcutRow(kEsc, 1, "Back, in the menu");
             ImGui::EndTable();
@@ -1024,7 +1122,7 @@ void Overlay::drawStats() {
         flags |= ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em(1.0f), em(0.8f)));
     if (beginWindow("##stats", nullptr, flags)) {
-        dialogHeader(Icon::Chart, "Renderer", m_menuOpen ? &m_statsOpen : nullptr);
+        dialogHeader(Icon::Chart, "Renderer statistics", m_menuOpen ? &m_statsOpen : nullptr);
         const double span = m_statsSpan > 0.0 ? m_statsSpan : 1.0;
         const auto rate = [&](uint64_t now, uint64_t before) {
             return m_statsSpan > 0.0 && now >= before ? static_cast<double>(now - before) / span : 0.0;

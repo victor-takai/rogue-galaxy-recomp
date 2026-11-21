@@ -79,4 +79,10 @@ void setBalance(bool on);
 void setEnemyBehavior(bool on);
 void setPartyAi(bool on);
 
+// What Install-Undub.bat put in disc/JA/balance, for the menu (it reads the
+// disc folder each call): the balance's tables.txt, and the files.idx and
+// files.dat the enemy behavior and the party AI are served from.
+bool balanceInstalled();
+bool filesInstalled();
+
 } // namespace rg::dcbalance

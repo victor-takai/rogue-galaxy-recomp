@@ -98,6 +98,7 @@ struct Pack
     std::unordered_set<uint64_t> ignore;          // regionKeys left as the game draws them
     std::unordered_set<uint64_t> ignoreWildcard;
     size_t regions = 0u;
+    size_t wholes = 0u; // of the regions, a PCSX2 pack's whole textures
 };
 
 // What the enabled packs make together: a later pack over an earlier one, its
@@ -359,6 +360,7 @@ bool loadPack(const Source &source, const std::string &id, Pack &pack)
             pack.wildcard[anyKey] = made;
             pack.exact[key] = std::move(made);
             ++pack.regions;
+            ++pack.wholes;
         }
     }
     if (const auto *aliases = index.find("aliases"); aliases && aliases->type == rg::json::Value::Type::Object)
@@ -811,7 +813,7 @@ std::vector<PackInfo> packs()
     std::vector<PackInfo> list;
     for (const Pack &pack : g_packs)
     {
-        list.push_back({pack.key, pack.name, pack.regions, pack.enabled});
+        list.push_back({pack.key, pack.name, pack.regions, pack.enabled, pack.wholes});
     }
     return list;
 }

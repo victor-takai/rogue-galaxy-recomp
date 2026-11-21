@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <mutex>
 #include <string>
@@ -16,6 +17,7 @@
 
 #include "return_hook.h"
 #include "scene_timing.h"
+#include "widescreen.h"
 
 namespace rg::textlanguage
 {
@@ -95,6 +97,14 @@ Index g_us[2];
 Index g_text;
 std::mutex g_mutex;
 int g_logged = 0;
+// The Attack Chain's pictures with the language's words (european.py adds the
+// pack to texts built since): the PAL places for them only then.
+constexpr const char *kChainPack = "chn\\common.pac";
+std::atomic<bool> g_chainPictures{false};
+// The PAL map packs' minimap icons, with every language's shop letter
+// (european.py's MINIMAP_ICON, in texts built since): a name the game never
+// asks for, read by the minimap's hooks below.
+constexpr const char *kMinimapIcon = "rg\\minimap_icon.tm2";
 
 uint32_t readWord(const uint8_t *rdram, uint32_t address)
 {
@@ -280,8 +290,19 @@ Index &textIndex(uint8_t *rdram, R5900Context *ctx)
         g_text.baseLbn = discSector(rdram, ctx, std::string("cdrom0:\\") + kFolder + "\\" + upper + ".DAT;1");
         g_text.ok = g_text.baseLbn != 0;
     }
+    g_chainPictures.store(g_text.ok && g_text.files.count(kChainPack) != 0u, std::memory_order_relaxed);
     std::fprintf(stderr, "[rg] %s.idx: %zu files%s\n", upper.c_str(), g_text.files.size(),
                  g_text.ok ? "" : " (not usable)");
+    if (g_text.ok && g_text.files.count(kChainPack) == 0u)
+    {
+        std::fprintf(stderr, "[rg] the Attack Chain keeps its English words: this text was built before "
+                             "they came in (run Install-European.bat again)\n");
+    }
+    if (g_text.ok && g_text.files.count(kMinimapIcon) == 0u)
+    {
+        std::fprintf(stderr, "[rg] the minimap's shops keep the English S: this text was built before "
+                             "the European letters came in (run Install-European.bat again)\n");
+    }
     return g_text;
 }
 
@@ -303,6 +324,7 @@ std::string englishName(const std::string &name, std::vector<size_t> &at)
 
 // Below: the European lists' widths.
 void patchItemCommands(uint8_t *rdram);
+void patchItemKindIcons(uint8_t *rdram);
 void centrePartyLabel(R5900Context *ctx);
 
 void dirTableFindFile(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -324,6 +346,7 @@ void dirTableFindFile(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         // The game's first file is found long before any menu opens; by
         // then the text's own files are known usable or not.
         patchItemCommands(rdram);
+        patchItemKindIcons(rdram);
         const auto found = text.ok ? text.files.find(name) : text.files.end();
         if (found != text.files.end())
         {
@@ -742,8 +765,6 @@ uint32_t findWidget(const uint8_t *rdram, uint32_t ui, uint16_t id)
     return 0u;
 }
 
-int europeanColumn();
-
 void afterSubLayout(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t list)
 {
     if (europeanColumn() < 0)
@@ -806,14 +827,6 @@ int16_t readHalf(const uint8_t *rdram, uint32_t address)
 void writeHalf(uint8_t *rdram, uint32_t address, int16_t value)
 {
     std::memcpy(rdram + (address & 0x1FFFFFFFu), &value, sizeof(value));
-}
-
-// French 0 to Italian 3, or -1 in English (and while the language's files
-// are not known usable, when the game reads the English ones).
-int europeanColumn()
-{
-    const int language = g_language.load(std::memory_order_relaxed);
-    return g_active && g_text.loaded && g_text.ok && language >= 1 && language <= 4 ? language - 1 : -1;
 }
 
 // The item commands' lists (Use, Equip, Discard...), six of them: their
@@ -893,6 +906,15 @@ uint32_t widgetSprites(const uint8_t *rdram, uint32_t ui, uint16_t id)
 {
     const uint32_t widget = ui ? findWidget(rdram, ui, id) : 0u;
     return widget ? readWord(rdram, widget + kWidgetSprites) : 0u;
+}
+
+// A widget's sub-items (numbers and the like), 0x20 bytes each, x an s16 at +0.
+constexpr uint32_t kWidgetSubItems = 0x24u;
+
+uint32_t widgetSubItems(const uint8_t *rdram, uint32_t ui, uint16_t id)
+{
+    const uint32_t widget = ui ? findWidget(rdram, ui, id) : 0u;
+    return widget ? readWord(rdram, widget + kWidgetSubItems) : 0u;
 }
 
 void afterPartyOpen(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t)
@@ -987,6 +1009,578 @@ void partyCmdHighlight(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     }
     rg::hooks::callThen(g_originalPartyHighlight, rdram, ctx, runtime, &afterPartyHighlight,
                         menu | (id == kPartyLists[0].id ? 1u : 0u));
+}
+
+// An item's description (MenuItemInfoPopupLayout, 0x289F30) shows a weapon's
+// kind as a 22x22 cell of gaiji2, picked from {s16 kind, u, v} x13 at
+// 0x461060, read only there: the main weapon's "M", the sub weapon's "S".
+// The PAL executable has a table per language (0x46E580): "P" in French,
+// Spanish and Italian, "H" and "Z" in German. The European font pack
+// carries PAL's gaiji2, which has those cells (the US one is blank there):
+// only with that pack in the text. Written once, like the item commands;
+// the caller holds g_mutex, the text's index loaded.
+constexpr uint32_t kItemKindIcons = 0x00461060u;
+struct KindIcon
+{
+    int16_t kind, u, v;
+};
+constexpr KindIcon kKindIconsUs[2] = {{0, 66, 126}, {1, 88, 126}};
+constexpr KindIcon kKindIcons[2][4] = {
+    {{0, 110, 82}, {0, 110, 104}, {0, 110, 82}, {0, 110, 82}},
+    {{1, 88, 126}, {1, 110, 126}, {1, 88, 126}, {1, 88, 126}},
+};
+bool g_kindIconsPatched = false;
+
+void patchItemKindIcons(uint8_t *rdram)
+{
+    const int column = europeanColumn();
+    if (g_kindIconsPatched || column < 0)
+    {
+        return;
+    }
+    g_kindIconsPatched = true;
+    std::string font = "meswin\\fontset_main_" + upperCode() + ".pak";
+    std::transform(font.begin(), font.end(), font.begin(), [](unsigned char c) { return std::tolower(c); });
+    if (g_text.files.count(font) == 0u)
+    {
+        std::fprintf(stderr, "[rg] the weapons' kind icons stay M and S (no European font in the text)\n");
+        return;
+    }
+    for (uint32_t entry = 0; entry < 2u; ++entry)
+    {
+        const uint32_t at = kItemKindIcons + 6u * entry;
+        const KindIcon &us = kKindIconsUs[entry];
+        if (readHalf(rdram, at) != us.kind || readHalf(rdram, at + 2u) != us.u || readHalf(rdram, at + 4u) != us.v)
+        {
+            std::fprintf(stderr, "[rg] the weapons' kind icons stay M and S (not the table expected)\n");
+            return;
+        }
+    }
+    for (uint32_t entry = 0; entry < 2u; ++entry)
+    {
+        const uint32_t at = kItemKindIcons + 6u * entry;
+        writeHalf(rdram, at + 2u, kKindIcons[entry][column].u);
+        writeHalf(rdram, at + 4u, kKindIcons[entry][column].v);
+    }
+}
+
+// The item menu's Rare Items tab: once the story is far enough (the flag
+// MenuItemTabsAvailUpdate, 0x2B0070, reads), the "Ancient Key Pieces"
+// heading shows, a picture 256 wide (widget 0x6D's sprite 0x11, in the UI at
+// 0x482360) with the word at its left. The layout puts it at x 210, which
+// centres the English word (132 wide) on 276; the PAL executable sets x to
+// 276 - half the language's word (0x46EAA0: 160, 160, 116, 138 for Spanish,
+// French, Italian, German). As it, after the original.
+constexpr uint32_t kItemTabsUpdate = 0x002B0070u;
+constexpr uint16_t kItemTabsWidget = 0x6Du;
+constexpr uint32_t kKeyPiecesSprite = 0x11u;
+constexpr int16_t kKeyPiecesUsX = 210;
+constexpr int16_t kKeyPiecesWidth = 0x100;
+constexpr int16_t kKeyPiecesX[4] = {196, 207, 196, 218};
+PS2Runtime::RecompiledFunction g_originalItemTabs = nullptr;
+
+void afterItemTabs(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t)
+{
+    const int column = europeanColumn();
+    const uint32_t sprites = column < 0 ? 0u : widgetSprites(rdram, readWord(rdram, kMenuUi), kItemTabsWidget);
+    if (sprites == 0u)
+    {
+        return;
+    }
+    const uint32_t sprite = sprites + kKeyPiecesSprite * kSpriteBytes;
+    if (readHalf(rdram, sprite + kSpriteWidth) == kKeyPiecesWidth && readHalf(rdram, sprite) == kKeyPiecesUsX)
+    {
+        writeHalf(rdram, sprite, kKeyPiecesX[column]);
+    }
+}
+
+void itemTabsUpdate(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (europeanColumn() < 0)
+    {
+        g_originalItemTabs(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalItemTabs, rdram, ctx, runtime, &afterItemTabs, 0u);
+}
+
+// The "Open Revelation Flow spaces" list (Items > an item > Revelation, and
+// the transporter's): a title window and a list window, both as wide as the
+// title plus 40 (UiWindowFitToText, 0x28D0C0, centred in a box), then a row
+// per member with its name, "Available" or "None", an icon and a count
+// (MenuPartyItemSkillListLayoutMaybe, 0x2A2EE0). The US code leaves the
+// title bar (238), the highlight bar (200 between its caps) and the icons
+// (row + 160) where a window 246 wide has them. The PAL executable gives
+// the windows a minimum width per language (0x46EAD8), sizes the title bar
+// W - 8 and the highlight W - 46, and puts the icons at its own offset
+// (0x46EA28), the counts 24 after. As it, after each original: a window
+// narrower than the minimum is laid out again at that width about the same
+// centre, then the list's pieces follow its width.
+constexpr uint32_t kWindowFit = 0x0028D0C0u;
+constexpr uint32_t kRevelationFitReturns[] = {0x002A6C40u, 0x002A6C54u, 0x0037C6D4u, 0x0037C6E8u};
+constexpr uint32_t kFitSprite = 0x0u; // the window's first sprite, as the fit is called
+constexpr int kRevelationMinWidth[4] = {265, 260, 270, 265};
+constexpr uint32_t kSkillLayout = 0x002A2EE0u;
+constexpr uint32_t kSkillLayoutMain = 0x002A6DA8u;
+constexpr uint32_t kSkillLayoutTransporter = 0x0037C83Cu;
+struct RevelationIds
+{
+    uint16_t list, highlight, icons, counts, titleBar;
+};
+constexpr RevelationIds kRevelationMain = {0x9Cu, 0x9Fu, 0x9Du, 0x9Eu, 0x9Au};
+constexpr RevelationIds kRevelationTransporter = {0x761Au, 0x761Du, 0x761Bu, 0x761Cu, 0x7618u};
+constexpr int kRevelationIconOffset[4] = {178, 170, 190, 175};
+constexpr int kRevelationUsIcon = 0xC0;  // from the window's left: row 32 + 160
+constexpr int kRevelationUsCount = 0xD8; // row 32 + 184
+constexpr int kRevelationIconWidth = 0x1C;
+constexpr int16_t kRevelationUsHighlight = 200;
+constexpr int16_t kRevelationUsTitleBar = 238;
+PS2Runtime::RecompiledFunction g_originalWindowFit = nullptr;
+PS2Runtime::RecompiledFunction g_originalSkillLayout = nullptr;
+
+// `first`: the window's first sprite (the fit's thirteen follow it). Both
+// windows are centred in a box (the fit's mode 4), so the new width keeps
+// the centre. The text the fit also places is the list's, which its caller
+// empties right after.
+void afterRevelationFit(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t first)
+{
+    const int column = europeanColumn();
+    if (column < 0 || first == 0u)
+    {
+        return;
+    }
+    auto sprite = [first](uint32_t index) { return first + index * kSpriteBytes; };
+    const int16_t middle = readHalf(rdram, sprite(8) + kSpriteWidth);
+    const int width = middle + 32;
+    const int minimum = kRevelationMinWidth[column];
+    if (middle <= 0 || width >= minimum)
+    {
+        return;
+    }
+    // The fit's x is the box's centre less half the width.
+    const int x = readHalf(rdram, sprite(5)) + width / 2 - minimum / 2;
+    const int inner = minimum - 32;
+    const int16_t left = static_cast<int16_t>(x);
+    const int16_t right = static_cast<int16_t>(x + 16 + inner);
+    for (const uint32_t index : {0u, 1u, 2u, 10u, 11u, 12u})
+    {
+        writeHalf(rdram, sprite(index), right);
+    }
+    for (const uint32_t index : {3u, 5u, 6u, 7u})
+    {
+        writeHalf(rdram, sprite(index), left);
+    }
+    writeHalf(rdram, sprite(4), static_cast<int16_t>(x + 6));
+    writeHalf(rdram, sprite(4) + kSpriteWidth, static_cast<int16_t>(inner + 0x15));
+    for (const uint32_t index : {8u, 9u})
+    {
+        writeHalf(rdram, sprite(index), static_cast<int16_t>(x + 16));
+        writeHalf(rdram, sprite(index) + kSpriteWidth, static_cast<int16_t>(inner));
+    }
+}
+
+void windowFit(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    // Every window of the game fits through here: the four calls first.
+    const uint32_t ra = getRegU32(ctx, 31);
+    const bool revelation = europeanColumn() >= 0 &&
+                            std::find(std::begin(kRevelationFitReturns), std::end(kRevelationFitReturns), ra) !=
+                                std::end(kRevelationFitReturns);
+    const uint32_t desc = revelation ? getRegU32(ctx, 4) : 0u;
+    const uint32_t first = desc != 0u ? readWord(rdram, desc + kFitSprite) : 0u;
+    if (first == 0u)
+    {
+        g_originalWindowFit(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalWindowFit, rdram, ctx, runtime, &afterRevelationFit, first);
+}
+
+// `data`: the layout's a0 (where the UI's address is), its low bit set in
+// the transporter.
+void afterRevelationList(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t data)
+{
+    const int column = europeanColumn();
+    if (column < 0)
+    {
+        return;
+    }
+    const RevelationIds &ids = (data & 1u) ? kRevelationTransporter : kRevelationMain;
+    const uint32_t ui = readWord(rdram, data & ~1u);
+    const uint32_t list = widgetSprites(rdram, ui, ids.list);
+    if (list == 0u)
+    {
+        return;
+    }
+    const int16_t middle = readHalf(rdram, list + 8u * kSpriteBytes + kSpriteWidth);
+    const int width = middle + 32;
+    const int left = readHalf(rdram, list) - middle - 16;
+    const int icon = left + 32 + kRevelationIconOffset[column];
+    if (const uint32_t icons = widgetSprites(rdram, ui, ids.icons))
+    {
+        for (uint32_t row = 0; row < 8u; ++row)
+        {
+            const uint32_t at = icons + row * kSpriteBytes;
+            if (readHalf(rdram, at + kSpriteWidth) == kRevelationIconWidth &&
+                readHalf(rdram, at) == left + kRevelationUsIcon)
+            {
+                writeHalf(rdram, at, static_cast<int16_t>(icon));
+            }
+        }
+    }
+    if (const uint32_t counts = widgetSubItems(rdram, ui, ids.counts))
+    {
+        for (uint32_t row = 0; row < 8u; ++row)
+        {
+            const uint32_t at = counts + row * kSpriteBytes;
+            if (readHalf(rdram, at) == left + kRevelationUsCount)
+            {
+                writeHalf(rdram, at, static_cast<int16_t>(icon + 24));
+            }
+        }
+    }
+    if (const uint32_t bar = widgetSprites(rdram, ui, ids.highlight);
+        bar != 0u && readHalf(rdram, bar + kSpriteBytes + kSpriteWidth) == kRevelationUsHighlight)
+    {
+        const int16_t barMiddle = static_cast<int16_t>(width - 46);
+        writeHalf(rdram, bar + kSpriteBytes + kSpriteWidth, barMiddle);
+        writeHalf(rdram, bar + 2u * kSpriteBytes,
+                  static_cast<int16_t>(readHalf(rdram, bar + kSpriteBytes) + barMiddle));
+    }
+    if (const uint32_t title = widgetSprites(rdram, ui, ids.titleBar);
+        title != 0u && readHalf(rdram, title + kSpriteWidth) == kRevelationUsTitleBar)
+    {
+        writeHalf(rdram, title + kSpriteWidth, static_cast<int16_t>(width - 8));
+    }
+}
+
+void skillLayout(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t ra = getRegU32(ctx, 31);
+    const uint32_t where = getRegU32(ctx, 4);
+    const uint16_t list = static_cast<uint16_t>(getRegU32(ctx, 5));
+    const bool main = ra == kSkillLayoutMain && list == kRevelationMain.list;
+    const bool transporter = ra == kSkillLayoutTransporter && list == kRevelationTransporter.list;
+    if (europeanColumn() < 0 || where == 0u || (where & 1u) != 0u || (!main && !transporter))
+    {
+        g_originalSkillLayout(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalSkillLayout, rdram, ctx, runtime, &afterRevelationList,
+                        where | (transporter ? 1u : 0u));
+}
+
+// The main menu's weapons page heads "JASTER's Weapons" with two pictures
+// (widget 0x24B: sprite 0 the name, sprite 1 the label), and tags the two
+// slots "M-W" and "S-W" (widget 0x248, a letter a sprite: 0 to 2 and 3 to
+// 5). MenuModelPageCharaLabelLayoutMaybe (0x359120, a0 the page, its UI at
+// +0x134) puts the label after the name, at a place per character, and never
+// touches the tags. The European pictures say "Armas de", "Waffen von"...,
+// which the PAL executable puts first, the name after it, each sprite as wide
+// as its word, and it reverses the tags in Spanish, French and Italian
+// ("A-P", "A-S"). As it, after the original.
+constexpr uint32_t kWeaponsHeader = 0x00359120u;
+constexpr uint32_t kWeaponsPageUi = 0x134u;
+constexpr uint32_t kWeaponsPageChara = 0xDAu;    // s16 ids, indexed by the byte at +0x175
+constexpr uint32_t kWeaponsPageCharaAt = 0x175u;
+constexpr int kWeaponsFirstChara = 0x2AF9;
+constexpr uint16_t kWeaponsLabelWidget = 0x24Bu;
+constexpr uint16_t kWeaponsTagWidget = 0x248u;
+constexpr uint32_t kSpriteUvWidth = 0xCu;
+constexpr int16_t kWeaponsLabelUsX[8] = {0x78, 0x74, 0x72, 0x75, 0x70, 0x70, 0x6D, 0x80};
+constexpr int16_t kWeaponsNameWidth[8] = {64, 60, 58, 60, 58, 56, 54, 74};
+constexpr int16_t kWeaponsLabelWidth[4] = {72, 84, 71, 58};
+constexpr int16_t kWeaponsLabelX = 57;
+constexpr int16_t kWeaponsTagLayoutX[6] = {246, 260, 268, 300, 312, 320};
+constexpr int16_t kWeaponsTagLayoutWidth[6] = {14, 8, 14, 14, 8, 14};
+constexpr int16_t kWeaponsTagX[2][6] = {{268, 260, 246, 322, 314, 300}, {246, 260, 268, 300, 312, 320}};
+constexpr int16_t kWeaponsTagWidth[2][6] = {{13, 8, 14, 12, 8, 14}, {14, 8, 14, 12, 8, 14}};
+PS2Runtime::RecompiledFunction g_originalWeaponsHeader = nullptr;
+
+void setSpriteWidth(uint8_t *rdram, uint32_t sprite, int16_t width)
+{
+    writeHalf(rdram, sprite + kSpriteWidth, width);
+    writeHalf(rdram, sprite + kSpriteUvWidth, width);
+}
+
+void afterWeaponsHeader(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t page)
+{
+    const int column = europeanColumn();
+    if (column < 0)
+    {
+        return;
+    }
+    const uint8_t slot = rdram[(page + kWeaponsPageCharaAt) & 0x1FFFFFFFu];
+    const int chara = readHalf(rdram, page + kWeaponsPageChara + 2u * slot) - kWeaponsFirstChara;
+    const uint32_t ui = readWord(rdram, page + kWeaponsPageUi);
+    const uint32_t label = widgetSprites(rdram, ui, kWeaponsLabelWidget);
+    if (chara < 0 || chara >= 8 || label == 0u)
+    {
+        return;
+    }
+    // The label where the US code has just put it (a place per character).
+    const uint32_t name = label, word = label + kSpriteBytes;
+    if (std::find(std::begin(kWeaponsLabelUsX), std::end(kWeaponsLabelUsX), readHalf(rdram, word)) !=
+        std::end(kWeaponsLabelUsX))
+    {
+        const int16_t labelWidth = kWeaponsLabelWidth[column];
+        writeHalf(rdram, word, kWeaponsLabelX);
+        setSpriteWidth(rdram, word, labelWidth);
+        writeHalf(rdram, name, static_cast<int16_t>(kWeaponsLabelX + labelWidth + 1));
+        setSpriteWidth(rdram, name, kWeaponsNameWidth[chara]);
+    }
+    // The tags as the layout has them (nothing else moves them), else as
+    // they were left here.
+    const uint32_t tags = widgetSprites(rdram, ui, kWeaponsTagWidget);
+    if (tags == 0u)
+    {
+        return;
+    }
+    for (uint32_t letter = 0; letter < 6u; ++letter)
+    {
+        const uint32_t sprite = tags + letter * kSpriteBytes;
+        if (readHalf(rdram, sprite) != kWeaponsTagLayoutX[letter] ||
+            readHalf(rdram, sprite + kSpriteWidth) != kWeaponsTagLayoutWidth[letter])
+        {
+            return;
+        }
+    }
+    const int order = column == 1 ? 1 : 0; // German keeps "H-W" and "Z-W"
+    for (uint32_t letter = 0; letter < 6u; ++letter)
+    {
+        const uint32_t sprite = tags + letter * kSpriteBytes;
+        writeHalf(rdram, sprite, kWeaponsTagX[order][letter]);
+        setSpriteWidth(rdram, sprite, kWeaponsTagWidth[order][letter]);
+    }
+}
+
+// The Attack Chain (the button presses some abilities ask for) shows "PUSH!!",
+// the hits with a "Hits" label at the bottom right and the damage at the
+// bottom left, pictures of chn\common.pac. A European text carries the PAL
+// pack's picture of its language (european.py), longer words ("Golpes",
+// "Treffer"), and the PAL executable draws the label and the count further
+// left by an offset per language (0x471970). As it, on the x (f12) of those
+// draws in AttackChainDraw (0x380660), told by where they return. In a wide
+// frame (IsWidescreen, 0x1C6AB0: the game's flag at 0x481638 or our wide
+// mode) the game draws the chain 0.75 as wide and places it so; the offset
+// shrinks with it.
+constexpr uint32_t kSpriteAnchorBL = 0x00383860u;
+constexpr uint32_t kGameWidescreen = 0x00481638u;
+constexpr float kWideScale = 0.75f;
+constexpr uint32_t kSpriteAnchorBR = 0x003836A0u;
+constexpr uint32_t kChainLabelReturn = 0x00381A18u;
+constexpr uint32_t kChainCountReturns[] = {0x00381C84u, 0x00381CB8u, 0x00381CF8u, 0x00381D94u};
+constexpr float kChainOffset[4] = {-8.0f, -14.0f, -10.0f, -4.0f};
+PS2Runtime::RecompiledFunction g_originalAnchorBL = nullptr;
+PS2Runtime::RecompiledFunction g_originalAnchorBR = nullptr;
+
+void moveChainPiece(const uint8_t *rdram, R5900Context *ctx, bool count)
+{
+    const int column = europeanColumn();
+    if (column < 0 || !g_chainPictures.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+    const uint32_t ra = getRegU32(ctx, 31);
+    const bool chain = count ? std::find(std::begin(kChainCountReturns), std::end(kChainCountReturns), ra) !=
+                                   std::end(kChainCountReturns)
+                             : ra == kChainLabelReturn;
+    if (chain)
+    {
+        const bool wide = rg::widescreen::wide() || readWord(rdram, kGameWidescreen) == 1u;
+        ctx->f[12] += kChainOffset[column] * (wide ? kWideScale : 1.0f);
+    }
+}
+
+void spriteAnchorBL(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    moveChainPiece(rdram, ctx, false);
+    g_originalAnchorBL(rdram, ctx, runtime);
+}
+
+void spriteAnchorBR(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    moveChainPiece(rdram, ctx, true);
+    g_originalAnchorBR(rdram, ctx, runtime);
+}
+
+// The minimap marks a shop with an "S" (MinimapDrawEntry, 0x325720: the people
+// with f8 & 6), a 14x14 cut at (0, 50) of the minimap_icon picture in the map
+// pack's minimap IM3. The PAL map packs' picture has the other languages'
+// letters beside it, and the PAL executable cuts the language's (0x4603E0):
+// M in French, G in German, T in Spanish, B in Italian. A European text carries
+// that picture (european.py); MinimapLoad (0x32A240, a1 the IM3, a2 its size,
+// copied whole) gets it in place of the US one, and then the sign's call to
+// MinimapEmitSprite (0x324D30, t2 and t3 the cut's u and v) takes the letter.
+constexpr uint32_t kMinimapLoad = 0x0032A240u;
+constexpr uint32_t kMinimapEmitSprite = 0x00324D30u;
+constexpr uint32_t kShopSignReturn = 0x00327074u;
+constexpr uint32_t kRdramSize = 0x02000000u;
+constexpr char kIconPicture[] = "minimap_icon";
+constexpr size_t kTim2Head = 0x40; // the file's header and the picture's, alike in both
+struct Cut
+{
+    int32_t u;
+    int32_t v;
+};
+constexpr Cut kShopSignUs = {0, 50};
+constexpr Cut kShopSign[4] = {{42, 50}, {42, 36}, {28, 50}, {14, 50}};
+PS2Runtime::RecompiledFunction g_originalMinimapLoad = nullptr;
+PS2Runtime::RecompiledFunction g_originalEmitSprite = nullptr;
+std::vector<uint8_t> g_minimapIcon; // empty when the text has none
+bool g_minimapIconRead = false;
+// The minimap loaded last has the PAL picture.
+std::atomic<bool> g_shopLetters{false};
+
+const std::vector<uint8_t> &minimapIcon()
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_minimapIconRead)
+    {
+        return g_minimapIcon;
+    }
+    g_minimapIconRead = true;
+    const auto found = g_text.files.find(kMinimapIcon);
+    if (found == g_text.files.end() || found->second.size < kTim2Head || found->second.size > 0x10000u)
+    {
+        return g_minimapIcon;
+    }
+    const std::string upper = upperCode();
+    std::ifstream in(PS2Runtime::getIoPaths().cdRoot / kFolder / (upper + ".DAT"), std::ios::binary);
+    std::vector<uint8_t> icon(found->second.size);
+    in.seekg(static_cast<std::streamoff>(found->second.sector) * 2048);
+    if (in.read(reinterpret_cast<char *>(icon.data()), static_cast<std::streamsize>(icon.size())) &&
+        std::memcmp(icon.data(), "TIM2", 4) == 0)
+    {
+        g_minimapIcon = std::move(icon);
+    }
+    else
+    {
+        std::fprintf(stderr, "[rg] %s.DAT: the minimap's icons could not be read; the shops keep the S\n",
+                     upper.c_str());
+    }
+    return g_minimapIcon;
+}
+
+// Puts the PAL picture over the US one in a minimap IM3 (entries of 0x40 bytes
+// from 0x10, a name of 0x20, the TIM2's offset at +0x24); the headers must match.
+bool swapMinimapIcon(uint8_t *rdram, uint32_t data, int32_t size)
+{
+    const std::vector<uint8_t> &icon = minimapIcon();
+    const uint32_t at = data & 0x1FFFFFFFu;
+    if (icon.empty() || size < 0x10 || at >= kRdramSize || static_cast<uint32_t>(size) > kRdramSize - at)
+    {
+        return false;
+    }
+    uint8_t *im3 = rdram + at;
+    if (std::memcmp(im3, "IM3\0", 4) != 0)
+    {
+        return false;
+    }
+    uint32_t count = 0;
+    std::memcpy(&count, im3 + 8, 4);
+    count = std::min<uint32_t>(count, static_cast<uint32_t>(size - 0x10) / 0x40u);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        const uint8_t *entry = im3 + 0x10 + 0x40 * i;
+        if (std::memcmp(entry, kIconPicture, sizeof(kIconPicture)) != 0)
+        {
+            continue;
+        }
+        uint32_t offset = 0;
+        std::memcpy(&offset, entry + 0x24, 4);
+        if (offset > static_cast<uint32_t>(size) || icon.size() > static_cast<uint32_t>(size) - offset ||
+            std::memcmp(im3 + offset, icon.data(), kTim2Head) != 0)
+        {
+            return false;
+        }
+        std::memcpy(im3 + offset, icon.data(), icon.size());
+        return true;
+    }
+    return false;
+}
+
+void minimapLoad(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const bool swapped = europeanColumn() >= 0 &&
+                         swapMinimapIcon(rdram, getRegU32(ctx, 5), static_cast<int32_t>(getRegU32(ctx, 6)));
+    g_shopLetters.store(swapped, std::memory_order_relaxed);
+    g_originalMinimapLoad(rdram, ctx, runtime);
+}
+
+void minimapEmitSprite(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    if (column >= 0 && getRegU32(ctx, 31) == kShopSignReturn && g_shopLetters.load(std::memory_order_relaxed) &&
+        static_cast<int32_t>(getRegU32(ctx, 10)) == kShopSignUs.u &&
+        static_cast<int32_t>(getRegU32(ctx, 11)) == kShopSignUs.v)
+    {
+        ctx->r[10] = _mm_set_epi64x(0, kShopSign[column].u);
+        ctx->r[11] = _mm_set_epi64x(0, kShopSign[column].v);
+    }
+    g_originalEmitSprite(rdram, ctx, runtime);
+}
+
+// The Seventh Mystery quiz (its UI at 0x4E9550). Its title banner (widget 3,
+// the picture 7mys_01) is two halves 128 wide at 128 and 256 in the PAL
+// layout a European text takes, the words not centred in them; the PAL
+// executable moves them when the quiz starts (SeventhMysteryQuizStart,
+// 0x394ED0, a1 set the first time) to (512 - W) / 2 - O and on, W the words'
+// width and O where they start (0x471EA0, 0x471E80). Its result box puts
+// "Correct!" at x 60 (UiSetTextPos, 0x28F5D0, a2 the x, from
+// SeventhMysteryQuizResult), where a longer word reaches the count beside
+// it; the PAL executable puts it at 45 in Spanish and French (0x471E68).
+constexpr uint32_t kQuizStart = 0x00394ED0u;
+constexpr uint32_t kUiSetTextPos = 0x0028F5D0u;
+constexpr uint32_t kQuizUi = 0x004E9550u;
+constexpr uint16_t kQuizBannerWidget = 3;
+constexpr int16_t kQuizBannerUsX[2] = {128, 256};
+constexpr int16_t kQuizBannerHalf = 128;
+constexpr int16_t kQuizBannerWords[4] = {194, 200, 178, 168};
+constexpr int16_t kQuizBannerStart[4] = {12, 26, 28, 38};
+constexpr uint32_t kQuizResultTextReturn = 0x0039442Cu;
+constexpr int32_t kQuizResultUsX = 0x3C;
+constexpr int32_t kQuizResultX[4] = {45, 60, 45, 60};
+PS2Runtime::RecompiledFunction g_originalQuizStart = nullptr;
+PS2Runtime::RecompiledFunction g_originalTextPos = nullptr;
+
+void quizStart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    const uint32_t sprites = column >= 0 && getRegU32(ctx, 5) != 0u ? widgetSprites(rdram, kQuizUi, kQuizBannerWidget)
+                                                                    : 0u;
+    // Only on the PAL layout's halves (the US layout's are 90 wide).
+    if (sprites != 0u && readHalf(rdram, sprites) == kQuizBannerUsX[0] &&
+        readHalf(rdram, sprites + kSpriteBytes) == kQuizBannerUsX[1] &&
+        readHalf(rdram, sprites + kSpriteWidth) == kQuizBannerHalf)
+    {
+        const int16_t x = static_cast<int16_t>((512 - kQuizBannerWords[column]) / 2 - kQuizBannerStart[column]);
+        writeHalf(rdram, sprites, x);
+        writeHalf(rdram, sprites + kSpriteBytes, static_cast<int16_t>(x + kQuizBannerHalf));
+    }
+    g_originalQuizStart(rdram, ctx, runtime);
+}
+
+void uiSetTextPos(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    if (column >= 0 && getRegU32(ctx, 31) == kQuizResultTextReturn &&
+        static_cast<int32_t>(getRegU32(ctx, 6)) == kQuizResultUsX)
+    {
+        ctx->r[6] = _mm_set_epi64x(0, kQuizResultX[column]);
+    }
+    g_originalTextPos(rdram, ctx, runtime);
+}
+
+void weaponsHeader(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t page = getRegU32(ctx, 4);
+    if (europeanColumn() < 0 || page == 0u)
+    {
+        g_originalWeaponsHeader(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalWeaponsHeader, rdram, ctx, runtime, &afterWeaponsHeader, page);
 }
 
 // The save screens' Yes/No box (SaveMsgBoxShow, 0x376BF0, a1 the UI): the US
@@ -1093,6 +1687,270 @@ void uiSetTextCenteredX(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     g_originalCentredX(rdram, ctx, runtime);
 }
 
+// The Insectron cage's commands (View Abilities, Feed, ... Rename; the cage
+// menu's UI at 0x483308). InsectCageMenuLoadRes (0x38B280) lays out the
+// list's frame (widget 0x7562, six rows) and the frame of resource 0x7558
+// 162 wide (UiLayoutWindowFrame, 0x28B8E0, a1 the width), and sizes widget
+// 0x756C's frame the same (UiWindowFrameSetSize, 0x388380, a1);
+// InsectCageMenuSetCursorTarget (0x389790) sets the unselected rows and the
+// highlight 152 wide (UiSetSpriteW, 0x28FBF0, a2). The PAL executable takes
+// that width from a table per language (0x4719C0: the longest command in the
+// system font and some room, 162 in English) and the rows and highlight 10
+// less: German "Weiteren Käfig prüfen" ran past the US frame, French and
+// Italian had room to spare. As it, on those calls, told by where they return.
+constexpr uint32_t kUiLayoutWindowFrame = 0x0028B8E0u;
+constexpr uint32_t kUiWindowFrameSetSize = 0x00388380u;
+constexpr uint32_t kUiSetSpriteW = 0x0028FBF0u;
+constexpr uint32_t kCageFrameReturns[] = {0x0038B754u, 0x0038B774u};
+constexpr uint32_t kCageBoxReturn = 0x0038B7F0u;
+constexpr uint32_t kCageRowReturns[] = {0x0038992Cu, 0x00389958u};
+constexpr int32_t kCageListUs = 0xA2;
+constexpr int32_t kCageRowInset = 10;
+constexpr int32_t kCageList[4] = {142, 170, 168, 124};
+PS2Runtime::RecompiledFunction g_originalWindowFrame = nullptr;
+PS2Runtime::RecompiledFunction g_originalFrameSize = nullptr;
+PS2Runtime::RecompiledFunction g_originalSpriteW = nullptr;
+
+void setArg(R5900Context *ctx, int reg, int32_t value)
+{
+    ctx->r[reg] = _mm_set_epi64x(0, static_cast<int64_t>(value));
+}
+
+void uiLayoutWindowFrame(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    const uint32_t from = getRegU32(ctx, 31);
+    if (column >= 0 && static_cast<int32_t>(getRegU32(ctx, 5)) == kCageListUs &&
+        std::find(std::begin(kCageFrameReturns), std::end(kCageFrameReturns), from) != std::end(kCageFrameReturns))
+    {
+        setArg(ctx, 5, kCageList[column]);
+    }
+    g_originalWindowFrame(rdram, ctx, runtime);
+}
+
+void uiWindowFrameSetSize(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    if (column >= 0 && getRegU32(ctx, 31) == kCageBoxReturn &&
+        static_cast<int32_t>(getRegU32(ctx, 5)) == kCageListUs)
+    {
+        setArg(ctx, 5, kCageList[column]);
+    }
+    g_originalFrameSize(rdram, ctx, runtime);
+}
+
+void uiSetSpriteW(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    const uint32_t from = getRegU32(ctx, 31);
+    if (column >= 0 && static_cast<int32_t>(getRegU32(ctx, 6)) == kCageListUs - kCageRowInset &&
+        std::find(std::begin(kCageRowReturns), std::end(kCageRowReturns), from) != std::end(kCageRowReturns))
+    {
+        setArg(ctx, 6, kCageList[column] - kCageRowInset);
+    }
+    g_originalSpriteW(rdram, ctx, runtime);
+}
+
+// The text entry (the cage's Rename, the game's only one: InsectCageMenuRename
+// opens it in mode 1, TextEntrySetMode at 0x436450). Its letters stand in
+// cells 21 wide: the palette's text style (TextEntryPaletteTextStyle,
+// 0x433490: TextStyleSetFixedCell, 0x26F0E0, a1 the width) and the grid
+// cursor's step (TextEntrySetMode: an s16 at +8 of the palette's entry, tag
+// 0x6D61, in the list at the entry's +4); the PAL executable has 20 in
+// Spanish (0x476F60). The commands at the grid's right (widgets 8, 9 and 10:
+// Delete and Confirm in mode 1) stand at x 410, put there by
+// TextEntrySetupState (0x4359F0) on its first call (a1 set), where German
+// "Bestätigen" ran past the window; the PAL code measures the labels
+// (UiGetWidgetTextWidth, 0x28F400; in modes 1 and 3 those of widgets 8 and 9)
+// and puts the three at 468 less the widest, 410 at most, and moves the grid
+// cursor on that column (18) by that x less 18 cells and 32, which keeps it
+// beside them with Spanish's narrower cells too (TextEntryPaletteCursorBob,
+// 0x433DC0: UiMoveWidgetUniform, 0x290F50, a2 the x, s0 the cursor's place,
+// its column an s16 at +0x10). As it, with the step the palette really holds
+// (TextEntrySetMode runs first). The PAL code moves the labels in the other
+// modes too (measuring both words of Upper/Lower as well); nothing in the game
+// opens those, so they keep 410 here, the cursor beside them.
+constexpr uint32_t kTextStyleSetFixedCell = 0x0026F0E0u;
+constexpr uint32_t kPaletteCellReturn = 0x004334D8u;
+constexpr uint32_t kTextEntrySetMode = 0x00436450u;
+constexpr uint32_t kTextEntrySetupState = 0x004359F0u;
+constexpr uint32_t kUiMoveWidgetUniform = 0x00290F50u;
+constexpr uint32_t kPaletteCursorReturn = 0x00433E70u;
+constexpr uint32_t kUiGetWidgetTextWidth = 0x0028F400u;
+constexpr int32_t kEntryCellUs = 21;
+constexpr int32_t kEntryCell[4] = {21, 21, 20, 21};
+constexpr uint32_t kEntryUi = 0x0u;
+constexpr uint32_t kEntryParts = 0x4u;
+constexpr uint32_t kEntryMode = 0xE0u;
+constexpr uint16_t kPaletteTag = 0x6D61u;
+constexpr uint32_t kPartBytes = 0x20u;
+constexpr uint32_t kPartCellStep = 0x8u;
+constexpr uint16_t kEntryCommands[3] = {8u, 9u, 10u};
+constexpr int32_t kEntryCommandsUsX = 410;
+constexpr int32_t kEntryCommandsRight = 468;
+constexpr int32_t kEntryCommandColumn = 18;
+constexpr int32_t kEntryColumnStart = 32;
+constexpr uint32_t kCursorColumn = 0x10u;
+// A widget's place, floats: UiSetWidgetPos writes x at +0x14 and +0x60.
+constexpr uint32_t kWidgetX = 0x14u;
+constexpr uint32_t kWidgetMoveX = 0x60u;
+PS2Runtime::RecompiledFunction g_originalFixedCell = nullptr;
+PS2Runtime::RecompiledFunction g_originalSetMode = nullptr;
+PS2Runtime::RecompiledFunction g_originalEntrySetup = nullptr;
+PS2Runtime::RecompiledFunction g_originalMoveWidget = nullptr;
+PS2Runtime::RecompiledFunction g_textWidth = nullptr;
+// How far the cursor on the commands' column goes from the US place, set
+// with the commands' x (the game thread's only).
+int32_t g_entryShift = 0;
+
+float readFloat(const uint8_t *rdram, uint32_t address)
+{
+    float value = 0.0f;
+    std::memcpy(&value, rdram + (address & 0x1FFFFFFFu), sizeof(value));
+    return value;
+}
+
+void writeFloat(uint8_t *rdram, uint32_t address, float value)
+{
+    std::memcpy(rdram + (address & 0x1FFFFFFFu), &value, sizeof(value));
+}
+
+// The text entry's part with `tag` (UiEntryListFindByTag, 0x28EA40: parts of
+// 0x20 bytes from the list's +4, each a node with the tag, a u16, at its
+// +0; ended by a null node), or 0.
+uint32_t entryPart(const uint8_t *rdram, uint32_t entry, uint16_t tag)
+{
+    const uint32_t list = readWord(rdram, entry + kEntryParts);
+    uint32_t part = list ? readWord(rdram, list + 4u) : 0u;
+    for (int guard = 0; part != 0u && guard < 256; ++guard, part += kPartBytes)
+    {
+        const uint32_t node = readWord(rdram, part);
+        if (node == 0u)
+        {
+            return 0u;
+        }
+        if (static_cast<uint16_t>(readHalf(rdram, node)) == tag)
+        {
+            return part;
+        }
+    }
+    return 0u;
+}
+
+void textStyleSetFixedCell(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    if (column >= 0 && getRegU32(ctx, 31) == kPaletteCellReturn &&
+        static_cast<int32_t>(getRegU32(ctx, 5)) == kEntryCellUs)
+    {
+        setArg(ctx, 5, kEntryCell[column]);
+    }
+    g_originalFixedCell(rdram, ctx, runtime);
+}
+
+void afterSetMode(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t entry)
+{
+    const int column = europeanColumn();
+    const uint32_t palette = column >= 0 ? entryPart(rdram, entry, kPaletteTag) : 0u;
+    if (palette != 0u && readHalf(rdram, palette + kPartCellStep) == kEntryCellUs)
+    {
+        writeHalf(rdram, palette + kPartCellStep, static_cast<int16_t>(kEntryCell[column]));
+    }
+}
+
+void textEntrySetMode(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = europeanColumn();
+    const uint32_t entry = getRegU32(ctx, 4);
+    if (column < 0 || entry == 0u || kEntryCell[column] == kEntryCellUs)
+    {
+        g_originalSetMode(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalSetMode, rdram, ctx, runtime, &afterSetMode, entry);
+}
+
+// UiGetWidgetTextWidth(ui, id, 0), the game's own, or -1.
+int32_t widgetTextWidth(uint8_t *rdram, const R5900Context *ctx, PS2Runtime *runtime, uint32_t ui, uint32_t id)
+{
+    if (!g_textWidth)
+    {
+        return -1;
+    }
+    R5900Context local = *ctx;
+    setArg(&local, 4, static_cast<int32_t>(ui));
+    setArg(&local, 5, static_cast<int32_t>(id));
+    setArg(&local, 6, 0);
+    if (!rg::hooks::runToEnd(g_textWidth, kUiGetWidgetTextWidth, rdram, local, runtime))
+    {
+        std::fprintf(stderr, "[rg] measuring a label stopped at 0x%08X\n", local.pc);
+        return -1;
+    }
+    return static_cast<int32_t>(getRegU32(&local, 2));
+}
+
+void afterEntrySetup(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t entry)
+{
+    if (europeanColumn() < 0)
+    {
+        return;
+    }
+    // The commands where the US code has just put them; when one is not, they
+    // stay and the cursor keeps the US place.
+    const uint32_t ui = readWord(rdram, entry + kEntryUi);
+    uint32_t commands[3] = {};
+    bool found = ui != 0u;
+    for (size_t i = 0; found && i < std::size(kEntryCommands); ++i)
+    {
+        commands[i] = findWidget(rdram, ui, kEntryCommands[i]);
+        found = commands[i] != 0u &&
+                readFloat(rdram, commands[i] + kWidgetX) == static_cast<float>(kEntryCommandsUsX);
+    }
+    int32_t x = kEntryCommandsUsX;
+    const int16_t mode = readHalf(rdram, entry + kEntryMode);
+    if (found && (mode == 1 || mode == 3))
+    {
+        const int32_t first = widgetTextWidth(rdram, ctx, runtime, ui, kEntryCommands[0]);
+        const int32_t second = widgetTextWidth(rdram, ctx, runtime, ui, kEntryCommands[1]);
+        if (first >= 0 && second >= 0)
+        {
+            x = std::min(kEntryCommandsUsX, kEntryCommandsRight - std::max(first, second));
+            for (const uint32_t command : commands)
+            {
+                writeFloat(rdram, command + kWidgetX, static_cast<float>(x));
+                writeFloat(rdram, command + kWidgetMoveX, static_cast<float>(x));
+            }
+        }
+    }
+    // The cursor's step as the grid uses it: 21 unless the cell hooks set it.
+    const uint32_t palette = entryPart(rdram, entry, kPaletteTag);
+    const int16_t held = palette != 0u ? readHalf(rdram, palette + kPartCellStep) : int16_t{0};
+    const int32_t step = held > 0 ? held : kEntryCellUs;
+    g_entryShift = x - (kEntryCommandColumn * step + kEntryColumnStart);
+}
+
+void textEntrySetupState(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t entry = getRegU32(ctx, 4);
+    if (europeanColumn() < 0 || entry == 0u || getRegU32(ctx, 5) == 0u)
+    {
+        g_originalEntrySetup(rdram, ctx, runtime);
+        return;
+    }
+    g_entryShift = 0; // not the last entry's while this one is set up
+    rg::hooks::callThen(g_originalEntrySetup, rdram, ctx, runtime, &afterEntrySetup, entry);
+}
+
+void uiMoveWidgetUniform(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (g_entryShift != 0 && europeanColumn() >= 0 && getRegU32(ctx, 31) == kPaletteCursorReturn &&
+        readHalf(rdram, getRegU32(ctx, 16) + kCursorColumn) == kEntryCommandColumn)
+    {
+        setArg(ctx, 6, static_cast<int32_t>(getRegU32(ctx, 6)) + g_entryShift);
+    }
+    g_originalMoveWidget(rdram, ctx, runtime);
+}
+
 // The open state's labels, centred on the language's list (in the label
 // call's a3: the US W/2+11, 73 or 53).
 void centrePartyLabel(R5900Context *ctx)
@@ -1163,6 +2021,12 @@ void resGroupStackInit(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 
 } // namespace
 
+int europeanColumn()
+{
+    const int language = g_language.load(std::memory_order_relaxed);
+    return g_active && g_text.loaded && g_text.ok && language >= 1 && language <= 4 ? language - 1 : -1;
+}
+
 void setPreferred(int choice)
 {
     g_preferred.store(choice, std::memory_order_relaxed);
@@ -1171,6 +2035,17 @@ void setPreferred(int choice)
 int language()
 {
     return g_language.load(std::memory_order_relaxed);
+}
+
+bool installed(int language)
+{
+    if (language == 0)
+    {
+        return true;
+    }
+    std::error_code ec;
+    return language > 0 && language < static_cast<int>(std::size(kCodes)) &&
+           std::filesystem::is_regular_file(languageIndex(kCodes[language]), ec);
 }
 
 void chooseAtBoot(uint8_t *rdram, PS2Runtime &runtime)
@@ -1239,6 +2114,32 @@ void chooseAtBoot(uint8_t *rdram, PS2Runtime &runtime)
     std::fprintf(stderr, "[rg] %s is not in the game's language table; the text stays English\n", wanted.c_str());
 }
 
+struct Hook
+{
+    uint32_t address;
+    PS2Runtime::RecompiledFunction replacement;
+    PS2Runtime::RecompiledFunction &original;
+};
+
+// Hooks that only work together: all in, or none (those already in are put
+// back when one cannot go in).
+bool hookAll(PS2Runtime &runtime, std::initializer_list<Hook> hooks)
+{
+    for (const Hook *hook = hooks.begin(); hook != hooks.end(); ++hook)
+    {
+        if (!rg::timing::hookFunction(runtime, hook->address, hook->replacement, hook->original))
+        {
+            while (hook != hooks.begin())
+            {
+                --hook;
+                runtime.replaceFunction(hook->address, hook->original);
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
 void install(PS2Runtime &runtime)
 {
     g_runtime = &runtime;
@@ -1287,6 +2188,37 @@ void install(PS2Runtime &runtime)
     {
         std::fprintf(stderr, "[rg] a party member's commands keep the US widths\n");
     }
+    if (!rg::timing::hookFunction(runtime, kItemTabsUpdate, &itemTabsUpdate, g_originalItemTabs))
+    {
+        std::fprintf(stderr, "[rg] the Rare Items tab's heading keeps the English place\n");
+    }
+    if (!hookAll(runtime,
+                 {{kWindowFit, &windowFit, g_originalWindowFit}, {kSkillLayout, &skillLayout, g_originalSkillLayout}}))
+    {
+        std::fprintf(stderr, "[rg] the Revelation Flow list keeps the US layout\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kWeaponsHeader, &weaponsHeader, g_originalWeaponsHeader))
+    {
+        std::fprintf(stderr, "[rg] the weapons page keeps the US heading order\n");
+    }
+    if (!hookAll(runtime, {{kSpriteAnchorBL, &spriteAnchorBL, g_originalAnchorBL},
+                           {kSpriteAnchorBR, &spriteAnchorBR, g_originalAnchorBR}}))
+    {
+        std::fprintf(stderr, "[rg] the Attack Chain's count keeps the English place\n");
+    }
+    if (!hookAll(runtime, {{kMinimapLoad, &minimapLoad, g_originalMinimapLoad},
+                           {kMinimapEmitSprite, &minimapEmitSprite, g_originalEmitSprite}}))
+    {
+        std::fprintf(stderr, "[rg] the minimap's shops keep the English S\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kQuizStart, &quizStart, g_originalQuizStart))
+    {
+        std::fprintf(stderr, "[rg] the Seventh Mystery's title keeps the English place\n");
+    }
+    if (!rg::timing::hookFunction(runtime, kUiSetTextPos, &uiSetTextPos, g_originalTextPos))
+    {
+        std::fprintf(stderr, "[rg] the Seventh Mystery's result keeps the English place\n");
+    }
     if (!rg::timing::hookFunction(runtime, kSaveMsgBoxShow, &saveMsgBoxShow, g_originalSaveMsgBox))
     {
         std::fprintf(stderr, "[rg] the save screens' Yes and No keep the US places\n");
@@ -1300,6 +2232,31 @@ void install(PS2Runtime &runtime)
             g_originalCentredX = runtime.lookupFunction(kUiSetTextCenteredX);
         }
     }
+    if (!hookAll(runtime, {{kUiLayoutWindowFrame, &uiLayoutWindowFrame, g_originalWindowFrame},
+                           {kUiWindowFrameSetSize, &uiWindowFrameSetSize, g_originalFrameSize},
+                           {kUiSetSpriteW, &uiSetSpriteW, g_originalSpriteW}}))
+    {
+        std::fprintf(stderr, "[rg] the Insectron cage's commands keep the US width\n");
+    }
+    if (runtime.hasFunction(kUiGetWidgetTextWidth))
+    {
+        g_textWidth = runtime.lookupFunction(kUiGetWidgetTextWidth);
+    }
+    // Apart: the column's cursor follows the step the grid really has.
+    if (!hookAll(runtime, {{kTextStyleSetFixedCell, &textStyleSetFixedCell, g_originalFixedCell},
+                           {kTextEntrySetMode, &textEntrySetMode, g_originalSetMode}}))
+    {
+        std::fprintf(stderr, "[rg] the name entry keeps the US cells\n");
+    }
+    if (!hookAll(runtime, {{kTextEntrySetupState, &textEntrySetupState, g_originalEntrySetup},
+                           {kUiMoveWidgetUniform, &uiMoveWidgetUniform, g_originalMoveWidget}}))
+    {
+        std::fprintf(stderr, "[rg] the name entry keeps the US command column\n");
+    }
+    // Last: three of its hooks wrap ones above (UiLayoutWindowFrame and
+    // UiSetSpriteW, the cage's; UiMoveWidgetUniform, the name entry's), as the
+    // original they call.
+    installInsectronLayouts(runtime);
 }
 
 } // namespace rg::textlanguage

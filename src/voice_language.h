@@ -16,6 +16,10 @@ namespace rg::voicelanguage
 // The menu's switch: Japanese voices and movies at the next start.
 void setEnabled(bool on);
 
+// Install-Undub.bat has put the Japanese disc's voices in disc/JA, for the
+// menu; it reads the disc folder each call.
+bool installed();
+
 // After loadELF().
 void install(PS2Runtime &runtime);
 

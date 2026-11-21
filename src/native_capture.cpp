@@ -1,8 +1,15 @@
 #include "native_capture.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
+#include <vector>
+
+#if defined(RG_HAS_SDLGPU)
+#include "gfx/native/native_pipeline.h"
+#endif
 
 #include "native_producer.h"
 #include "ps2_runtime.h"
@@ -192,6 +199,143 @@ void texBuildUpload(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     }
     g_texBuildUploadOriginal(rdram, ctx, runtime);
 }
+// Steps 7b and 7c of docs/NATIVE-PIPELINE.md: the game's reads of GS memory
+// (libgraph's sceGsSetDefStoreImage(si, sbp, sbw, spsm, x, y, w, h), then
+// sceGsExecStoreImage(si, buf) and sceGsSyncPath(0, 0)) answered from the
+// renderer instead: a depth read (the lens flare's 8x8 block of Z at the
+// sun) from its depth a frame or two late, a colour read (the fades' and
+// the menus' frame captures) from its targets as the last frame drawn left
+// them. Straight into buf, with no GS transfer. The sceGsSyncPath after it
+// is left alone: the game drains VIF1 before these reads, so it has nothing
+// to wait for. A colour read the renderer does not answer in time gets the
+// last answer of its size, or black (under the pipeline the GS has nothing
+// to give); a depth read it cannot place goes to the GS as before.
+constexpr uint32_t kSceGsSetDefStoreImage = 0x00109348u;
+constexpr uint32_t kSceGsExecStoreImage = 0x00109488u;
+PS2Runtime::RecompiledFunction g_setDefStoreImageOriginal = nullptr;
+PS2Runtime::RecompiledFunction g_execStoreImageOriginal = nullptr;
+
+struct StoreImageCall
+{
+    uint32_t si = 0u;
+    uint32_t base = 0u, psm = 0u, x = 0u, y = 0u, width = 0u, height = 0u;
+};
+thread_local StoreImageCall t_storeImage;
+
+void setDefStoreImage(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    StoreImageCall &r = t_storeImage;
+    r.si = getRegU32(ctx, 4);
+    r.base = getRegU32(ctx, 5) & 0x3FFFu;
+    r.psm = getRegU32(ctx, 7) & 0x3Fu;
+    r.x = getRegU32(ctx, 8) & 0x7FFu;
+    r.y = getRegU32(ctx, 9) & 0x7FFu;
+    r.width = getRegU32(ctx, 10) & 0xFFFFu;
+    r.height = getRegU32(ctx, 11) & 0xFFFFu;
+    g_setDefStoreImageOriginal(rdram, ctx, runtime);
+}
+
+// A colour read's RGBA pixels in the read's format (CT32, CT24, CT16).
+void toFormat(const std::vector<uint8_t> &rgba, uint32_t psm, size_t pixels, std::vector<uint8_t> &out)
+{
+    if (psm == 0x00u)
+    {
+        out = rgba;
+        return;
+    }
+    if (psm == 0x01u)
+    {
+        out.resize(pixels * 3u);
+        for (size_t i = 0; i < pixels; ++i)
+            std::memcpy(out.data() + i * 3u, rgba.data() + i * 4u, 3u);
+        return;
+    }
+    out.resize(pixels * 2u);
+    for (size_t i = 0; i < pixels; ++i)
+    {
+        const uint8_t *c = rgba.data() + i * 4u;
+        const uint16_t v = static_cast<uint16_t>((c[0] >> 3) | ((c[1] >> 3) << 5) | ((c[2] >> 3) << 10) |
+                                                 (c[3] >= 0x80u ? 0x8000u : 0u));
+        out[i * 2u] = static_cast<uint8_t>(v);
+        out[i * 2u + 1u] = static_cast<uint8_t>(v >> 8);
+    }
+}
+
+// The read's bytes, or false to leave it to the GS.
+bool answer(const StoreImageCall &q, std::vector<uint8_t> &bytes)
+{
+    const uint32_t psm = q.psm;
+    const bool depth = psm == 0x30u || psm == 0x31u || psm == 0x32u || psm == 0x3Au;
+    if (depth)
+        return rg::nativeproducer::readDepth(q.base, q.psm, q.x, q.y, q.width, q.height, bytes) && !bytes.empty();
+#if defined(RG_HAS_SDLGPU)
+    const bool colour = psm == 0x00u || psm == 0x01u || psm == 0x02u || psm == 0x0Au;
+    if (!colour)
+        return false;
+    namespace native = dq8::gfx::native;
+    native::ColorRead read;
+    read.target = rg::nativeproducer::captureTarget(q.base);
+    read.rect = {static_cast<int32_t>(q.x), static_cast<int32_t>(q.y), static_cast<int32_t>(q.x + q.width),
+                 static_cast<int32_t>(q.y + q.height)};
+    // The presenting thread answers it (step 7d), nothing on the GS queue.
+    const uint32_t id = native::beginColorRead(read);
+    thread_local std::vector<uint8_t> rgba;
+    // The last answer, by the read's size and format, for a read not served.
+    static std::mutex lastMutex;
+    static std::vector<uint8_t> last;
+    static uint32_t lastWidth = 0u, lastHeight = 0u, lastPsm = ~0u;
+    if (native::waitColorRead(id, rgba, 2000u))
+    {
+        toFormat(rgba, psm, static_cast<size_t>(q.width) * q.height, bytes);
+        if (!bytes.empty())
+        {
+            std::lock_guard lock(lastMutex);
+            last = bytes;
+            lastWidth = q.width;
+            lastHeight = q.height;
+            lastPsm = psm;
+            return true;
+        }
+    }
+    {
+        std::lock_guard lock(lastMutex);
+        const bool same = !last.empty() && lastWidth == q.width && lastHeight == q.height && lastPsm == psm;
+        static int told = 0;
+        if (told < 8)
+        {
+            ++told;
+            std::fprintf(stderr, "[native-capture] a colour read (%ux%u) was not served; %s\n", q.width, q.height,
+                         same ? "the last one of its size is given" : "black is given");
+        }
+        if (same)
+            bytes = last;
+        else
+            bytes.assign(static_cast<size_t>(q.width) * q.height * (psm == 0x00u ? 4u : psm == 0x01u ? 3u : 2u),
+                         0u);
+    }
+    return !bytes.empty();
+#else
+    return false;
+#endif
+}
+
+void execStoreImage(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const uint32_t si = getRegU32(ctx, 4);
+    const uint32_t buffer = getRegU32(ctx, 5);
+    thread_local std::vector<uint8_t> bytes;
+    if (si == t_storeImage.si && answer(t_storeImage, bytes))
+    {
+        std::memcpy(g_rdram + physical(buffer), bytes.data(), std::min<size_t>(bytes.size(), PS2_RAM_SIZE - physical(buffer)));
+        t_storeImage.si = 0u;
+        setReturnS32(ctx, 0);
+        ctx->pc = getRegU32(ctx, 31);
+        return;
+    }
+    t_storeImage.si = 0u;
+    g_execStoreImageOriginal(rdram, ctx, runtime);
+}
+
 } // namespace
 
 void install(PS2Runtime &runtime)
@@ -205,6 +349,9 @@ void install(PS2Runtime &runtime)
         std::fprintf(stderr, "[native-capture] the target declarations could not be hooked\n");
     if (!rg::timing::hookFunction(runtime, kTexBuildUploadPkt, &texBuildUpload, g_texBuildUploadOriginal))
         std::fprintf(stderr, "[native-capture] TexBuildUploadPkt could not be hooked\n");
+    if (!rg::timing::hookFunction(runtime, kSceGsSetDefStoreImage, &setDefStoreImage, g_setDefStoreImageOriginal) ||
+        !rg::timing::hookFunction(runtime, kSceGsExecStoreImage, &execStoreImage, g_execStoreImageOriginal))
+        std::fprintf(stderr, "[native-capture] the GS memory reads could not be hooked: they stay GS transfers\n");
 }
 
 } // namespace rg::nativecapture

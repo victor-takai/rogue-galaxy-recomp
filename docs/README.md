@@ -11,6 +11,8 @@ What each page here is for, by who it is for. New to the project? Start with
   updating, saves from PCSX2 and uninstalling.
 - [OPTIONS.md](OPTIONS.md): the F1 menu and every game option, with where to
   find each one.
+- [DIRECTORS-CUT.md](DIRECTORS-CUT.md): what the Japanese Director's Cut
+  changed in battles, which three options bring to the US release.
 - [DISC.md](DISC.md): which disc images work, and how they are checked and
   extracted.
 - [TEXTURE_PACKS.md](TEXTURE_PACKS.md): putting texture packs in, and making
@@ -27,6 +29,8 @@ What each page here is for, by who it is for. New to the project? Start with
 
 ## Building and changing the game
 
+- [CONTRIBUTING.md](../CONTRIBUTING.md): the rules for issues and pull
+  requests.
 - [BUILDING.md](BUILDING.md): building by hand, on Windows or Linux, and the
   project's layout.
 - [DEVELOPMENT.md](DEVELOPMENT.md): the debug launchers, profiling, and the
@@ -53,6 +57,8 @@ Start with [NATIVE-RENDERER.md](NATIVE-RENDERER.md): it says where things
 stand and what each of the others is for.
 
 - [VU1-NATIVE.md](VU1-NATIVE.md): the VU1's 3D programs run as native code.
+- [NATIVE-PIPELINE.md](NATIVE-PIPELINE.md): the whole frame drawn with no
+  GS (`RG_NATIVE_PIPELINE=1`).
 - [VU1-RECON.md](VU1-RECON.md): groundwork for temporal upscaling (object
   identity, jitter, cameras).
 - [GS-AUDIT.md](GS-AUDIT.md): where a frame's GPU time goes, and what was

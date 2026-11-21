@@ -78,6 +78,7 @@ add_executable(roguegalaxy
     draw_distance.cpp
     ee_fpu.cpp
     flip_pacing.cpp
+    gs_tripwire.cpp
     free_camera.cpp
     mouse_camera.cpp
     movie_audio.cpp
@@ -90,6 +91,7 @@ add_executable(roguegalaxy
     native_renderer.cpp
     opening.cpp
     text_language.cpp
+    insectron_layouts.cpp
     voice_language.cpp
     widescreen.cpp
     hud_size.cpp
@@ -105,6 +107,8 @@ add_executable(roguegalaxy
     vu1_native.cpp
     draw_state_mirror.cpp
     native_capture.cpp
+    native_2d.cpp
+    native_effects.cpp
     native_producer.cpp
     gif_events.cpp
     vu0_flags.cpp
@@ -119,6 +123,7 @@ add_executable(roguegalaxy
     debug/input_script.cpp
     debug/pos_trace.cpp
     debug/encounter.cpp
+    debug/force_return.cpp
     debug/jump_trace.cpp
     debug/sampler.cpp
     debug/stall_watch.cpp
@@ -138,6 +143,20 @@ endif()
 if(WIN32)
     # update_check.cpp asks GitHub through WinHTTP.
     target_link_libraries(roguegalaxy PRIVATE winhttp)
+    # Its manifest makes UTF-8 its code page (roguegalaxy.manifest says why),
+    # in a .res file that launcher/make_resources.py writes, as the
+    # launcher's below. Python is required: without the manifest the game
+    # stops at boot in a folder named in letters the system's code page
+    # lacks, which Install.bat no longer turns away.
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    set(rg_game_resources "${CMAKE_CURRENT_BINARY_DIR}/roguegalaxy_resources.res")
+    add_custom_command(OUTPUT "${rg_game_resources}"
+        COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/launcher/make_resources.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/roguegalaxy.manifest" "${rg_game_resources}"
+        DEPENDS launcher/make_resources.py roguegalaxy.manifest
+        VERBATIM)
+    set_source_files_properties("${rg_game_resources}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+    target_sources(roguegalaxy PRIVATE "${rg_game_resources}")
 endif()
 target_compile_definitions(roguegalaxy PRIVATE RG_APP_VERSION="${PROJECT_VERSION}")
 
@@ -220,22 +239,17 @@ endif()
 # debug\ launchers and for runs from a terminal. Plain C linked statically, so it
 # needs no DLL beside it. Its icon and manifest are a .res file that
 # launcher/make_resources.py writes and the linker takes as it is (it says
-# why not windres); without Python the launcher is built without them.
+# why not windres), with the Python found for the game's above.
 if(WIN32)
-    set(rg_launcher_sources launcher/launcher.c)
-    find_package(Python3 COMPONENTS Interpreter)
-    if(Python3_Interpreter_FOUND)
-        set(rg_launcher_resources "${CMAKE_CURRENT_BINARY_DIR}/launcher_resources.res")
-        add_custom_command(OUTPUT "${rg_launcher_resources}"
-            COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/launcher/make_resources.py"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/launcher/rogue-galaxy.ico"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/launcher/launcher.manifest" "${rg_launcher_resources}"
-            DEPENDS launcher/make_resources.py launcher/rogue-galaxy.ico launcher/launcher.manifest
-            VERBATIM)
-        set_source_files_properties("${rg_launcher_resources}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-        list(APPEND rg_launcher_sources "${rg_launcher_resources}")
-    endif()
-    add_executable(rg_launcher WIN32 ${rg_launcher_sources})
+    set(rg_launcher_resources "${CMAKE_CURRENT_BINARY_DIR}/launcher_resources.res")
+    add_custom_command(OUTPUT "${rg_launcher_resources}"
+        COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/launcher/make_resources.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/launcher/rogue-galaxy.ico"
+                "${CMAKE_CURRENT_SOURCE_DIR}/launcher/launcher.manifest" "${rg_launcher_resources}"
+        DEPENDS launcher/make_resources.py launcher/rogue-galaxy.ico launcher/launcher.manifest
+        VERBATIM)
+    set_source_files_properties("${rg_launcher_resources}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+    add_executable(rg_launcher WIN32 launcher/launcher.c "${rg_launcher_resources}")
     set_target_properties(rg_launcher PROPERTIES
         OUTPUT_NAME "Rogue Galaxy"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}")

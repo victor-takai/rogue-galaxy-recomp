@@ -965,20 +965,59 @@ void Renderer::serveColorReads(SDL_GPUDevice *device)
             finish(id, {}, false);
             continue;
         }
-        const uint32_t hostW = w * s, hostH = h * s, bytes = hostW * hostH * 4u;
+        // Halved on the GPU while the scale is even (a bilinear blit at
+        // half size is the mean of each 2 x 2), so a read at 4x downloads
+        // the game's size, not 16 times it; an odd factor left (3x, 6x's 3)
+        // is averaged below. The EE waits on this read.
+        SDL_GPUCommandBuffer *commands = SDL_AcquireGPUCommandBuffer(device);
+        std::vector<SDL_GPUTexture *> halves;
+        SDL_GPUTexture *from = texture;
+        uint32_t fromX = uint32_t(r.x0) * s, fromY = uint32_t(r.y0) * s;
+        uint32_t left = s;
+        while (commands && left % 2u == 0u)
+        {
+            const uint32_t halfW = w * left / 2u, halfH = h * left / 2u;
+            SDL_GPUTextureCreateInfo halfInfo{};
+            halfInfo.type = SDL_GPU_TEXTURETYPE_2D;
+            halfInfo.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            halfInfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+            halfInfo.width = halfW;
+            halfInfo.height = halfH;
+            halfInfo.layer_count_or_depth = 1;
+            halfInfo.num_levels = 1;
+            SDL_GPUTexture *half = SDL_CreateGPUTexture(device, &halfInfo);
+            if (!half)
+                break;
+            halves.push_back(half);
+            SDL_GPUBlitInfo blit{};
+            blit.source.texture = from;
+            blit.source.x = fromX;
+            blit.source.y = fromY;
+            blit.source.w = w * left;
+            blit.source.h = h * left;
+            blit.destination.texture = half;
+            blit.destination.w = halfW;
+            blit.destination.h = halfH;
+            blit.load_op = SDL_GPU_LOADOP_DONT_CARE;
+            blit.filter = SDL_GPU_FILTER_LINEAR;
+            SDL_BlitGPUTexture(commands, &blit);
+            from = half;
+            fromX = fromY = 0u;
+            left /= 2u;
+        }
+        const uint32_t hostW = w * left, hostH = h * left, bytes = hostW * hostH * 4u;
         SDL_GPUTransferBufferCreateInfo info{};
         info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
         info.size = bytes;
-        SDL_GPUTransferBuffer *download = SDL_CreateGPUTransferBuffer(device, &info);
-        SDL_GPUCommandBuffer *commands = download ? SDL_AcquireGPUCommandBuffer(device) : nullptr;
-        SDL_GPUCopyPass *pass = commands ? SDL_BeginGPUCopyPass(commands) : nullptr;
+        SDL_GPUTransferBuffer *download = commands ? SDL_CreateGPUTransferBuffer(device, &info) : nullptr;
+        SDL_GPUCopyPass *pass = download ? SDL_BeginGPUCopyPass(commands) : nullptr;
         SDL_GPUFence *fence = nullptr;
         if (pass)
         {
             SDL_GPUTextureRegion region{};
-            region.texture = texture;
-            region.x = uint32_t(r.x0) * s;
-            region.y = uint32_t(r.y0) * s;
+            region.texture = from;
+            region.x = fromX;
+            region.y = fromY;
             region.w = hostW;
             region.h = hostH;
             region.d = 1u;
@@ -1000,18 +1039,18 @@ void Renderer::serveColorReads(SDL_GPUDevice *device)
             SDL_ReleaseGPUFence(device, fence);
             if (const auto *p = static_cast<const uint8_t *>(SDL_MapGPUTransferBuffer(device, download, false)))
             {
-                // Each game pixel the mean of the s x s it covers; alpha
-                // from the stored A / 0x80 back to the game's.
+                // Each game pixel the mean of the left x left it covers;
+                // alpha from the stored A / 0x80 back to the game's.
                 rgba.resize(size_t(w) * h * 4u);
                 for (uint32_t y = 0; y < h; ++y)
                     for (uint32_t x = 0; x < w; ++x)
                         for (uint32_t c = 0; c < 4u; ++c)
                         {
                             uint32_t sum = 0;
-                            for (uint32_t dy = 0; dy < s; ++dy)
-                                for (uint32_t dx = 0; dx < s; ++dx)
-                                    sum += p[(size_t(y * s + dy) * hostW + x * s + dx) * 4u + c];
-                            float v = float(sum) / float(s * s);
+                            for (uint32_t dy = 0; dy < left; ++dy)
+                                for (uint32_t dx = 0; dx < left; ++dx)
+                                    sum += p[(size_t(y * left + dy) * hostW + x * left + dx) * 4u + c];
+                            float v = float(sum) / float(left * left);
                             if (c == 3u)
                                 v = v * 128.0f / 255.0f;
                             rgba[(size_t(y) * w + x) * 4u + c] = uint8_t(std::min(v + 0.5f, 255.0f));
@@ -1020,6 +1059,8 @@ void Renderer::serveColorReads(SDL_GPUDevice *device)
                 ok = true;
             }
         }
+        for (SDL_GPUTexture *half : halves)
+            SDL_ReleaseGPUTexture(device, half);
         if (download)
             SDL_ReleaseGPUTransferBuffer(device, download);
         if (!ok)

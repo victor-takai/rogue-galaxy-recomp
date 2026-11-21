@@ -41,6 +41,9 @@ struct PackInfo
     std::string key, name;
     size_t regions;
     bool enabled;
+    // Of the regions, a PCSX2 pack's whole textures, drawn at any scale; the
+    // rest is 2D art, drawn above 1x only.
+    size_t wholes;
 };
 std::vector<PackInfo> packs();
 

@@ -9,6 +9,7 @@
 #include "gfx/backends/sdlgpu/sdlgpu_regions.h"
 #include "gfx/backends/sdlgpu/sdlgpu_window.h"
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <functional>
@@ -38,6 +39,12 @@ struct SdlGpuStats {
     // done in the shader from a snapshot, without framebuffer fetch (Rogue
     // Galaxy: added).
     uint64_t destinationReads = 0u;
+    // Depth a surface held, thrown away by a host write to its pages or by
+    // growing the surface, and of those the losses a draw then tested
+    // against before depth was written there again (Rogue Galaxy: added,
+    // issue 53).
+    uint64_t depthLosses = 0u;
+    uint64_t depthLossesTested = 0u;
     // Primitives drawn from the host's larger versions of their regions,
     // glyph borders drawn from its border versions and shadows from its
     // shadow versions (Rogue Galaxy: added).
@@ -70,6 +77,9 @@ struct SdlGpuStats {
     // screen, not drawn (Rogue Galaxy: added).
     uint64_t nativeDraws = 0u;
     uint64_t nativeMeshesCulled = 0u;
+    // Sprites of no width or no height, which cover no pixel, dropped before
+    // any work (Rogue Galaxy: added).
+    uint64_t emptySprites = 0u;
     // Drawn through the same-state fast path (Rogue Galaxy: added).
     uint64_t sameStatePrimitives = 0u;
     uint64_t trianglesDrawn = 0u;
@@ -294,8 +304,19 @@ public:
     SdlGpuStats stats() const;
     void resetStats();
 
+    // The native pipeline's present (Rogue Galaxy: added;
+    // docs/NATIVE-PIPELINE.md step 7d): the renderer's scene into the window,
+    // with no GS display registers and nothing on the GS queue. The
+    // presenting thread calls it for each frame a flip closed. The frame
+    // carries host pixels when screenshots are on.
+    PresentationFrame presentNativeFrame();
+    // Answers the native pipeline's waiting colour reads (step 7c) from what
+    // was drawn last. Any thread; a no-op when none wait.
+    void serveNativeReads();
+
 private:
     friend std::unique_ptr<SdlGpuBackend> createSdlGpuBackend(std::string &error);
+    GSPresentationTicket prepare(const GSPresentationRequest *request);
 
     struct Impl;
     std::unique_ptr<Impl> m_impl;
@@ -303,5 +324,14 @@ private:
 
 // Returns null and fills `error` when SDL cannot create a GPU device.
 std::unique_ptr<SdlGpuBackend> createSdlGpuBackend(std::string &error);
+
+// For DQ8_GFX_PRESENT_LOG (Rogue Galaxy: added): when the game flipped the
+// frame the presenting thread is about to show and when that thread took
+// it, from the layer that hands the game's flips to the presenter. Called
+// on the presenting thread before that frame's DisplayPreparedPresentation
+// or presentNativeFrame, which logs the two and forgets them; a frame shown
+// without this note is logged as a vblank presentation (no flip).
+void notePresentationFlip(std::chrono::steady_clock::time_point flipped,
+                          std::chrono::steady_clock::time_point taken);
 
 } // namespace dq8::gfx

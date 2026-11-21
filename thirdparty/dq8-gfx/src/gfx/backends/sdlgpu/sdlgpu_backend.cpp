@@ -29,6 +29,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 // Debug accounting published by ps2xRuntime's GIF frontend (gs_frontend.cpp).
@@ -217,6 +218,20 @@ struct DrawBatch {
                            sizeof(fragmentUniforms)) == 0;
     }
 };
+
+// The width a draw or a clear needs of its colour and depth surfaces. A frame
+// buffer is FBW*64 pixels wide: on the GS, x past that lands in the next row
+// of pages, not in a column beside the buffer. Rogue Galaxy's scissors often
+// end one pixel past it (0..512 with FBW 8 in its menus), and the Revelation
+// board draws a few sprites up to x = 513 with depth writes on. Growing the
+// surfaces for either made them alias the page after the buffer, where the
+// game uploads textures every frame: from then on each upload discarded the
+// depth buffer mid-frame, and later geometry (water, a sword on a back)
+// showed through the ground and bodies (issue 53). What lands past the width
+// is not drawn. FBW 0 names no width; its surfaces keep the scissor's.
+uint32_t surfaceWidthFor(const GSContext &context) {
+    return context.frame.fbw != 0u ? context.frame.fbw * 64u : static_cast<uint32_t>(context.scissor.x1) + 1u;
+}
 
 GsRegion primitiveBounds(const GSPrimitiveBatch &batch) {
     const GSContext &context = batch.state.context;
@@ -632,7 +647,20 @@ bool batchTraceEnabled() {
     return enabled;
 }
 
+// notePresentationFlip's note, for the frame the presenting thread shows next.
+struct FlipNote {
+    bool set = false;
+    std::chrono::steady_clock::time_point flipped{};
+    std::chrono::steady_clock::time_point taken{};
+};
+thread_local FlipNote t_flipNote;
+
 } // namespace
+
+void notePresentationFlip(std::chrono::steady_clock::time_point flipped,
+                          std::chrono::steady_clock::time_point taken) {
+    t_flipNote = FlipNote{true, flipped, taken};
+}
 
 
 void setStatsExtraLine(std::function<std::string()> provider) {
@@ -746,10 +774,46 @@ struct SdlGpuBackend::Impl {
         // primitive inside the box adds no page.
         bool boxPages = false;
         float offsetX = 0.0f, offsetY = 0.0f, depthScale = 0.0f;
+        // A vertex alpha past 0x80 would take this state's blend to the
+        // destination copy (vertexAlphaWeighs), decided once per state.
+        bool vertexAlphaWeighs = false;
     } last;
+
+    // Whether a source-alpha blend can weigh past one under this state, by
+    // vertex alpha above 0x80: where the texture brings no alpha, and where
+    // it is modulated, since a texel's alpha is scaled by the vertex's (the
+    // menus' text: a 0x30 grey glyph at alpha 0xFF, which only reads as white
+    // doubled; PCSX2 needs its full blending accuracy for the same text). Not
+    // for a native mesh: its one snapshot would serve all its triangles, and
+    // those that overlap would blend against the frame from before the mesh.
+    // DQ8_GFX_NO_TEXTURED_OVERONE=1 leaves textured primitives out.
+    static bool vertexAlphaWeighs(const GSDrawState &state, const GsAlphaState &alpha, bool native) {
+        static const bool textured = [] {
+            const char *value = std::getenv("DQ8_GFX_NO_TEXTURED_OVERONE");
+            return value == nullptr || value[0] == '\0' || std::strcmp(value, "0") == 0;
+        }();
+        if (alpha.c != kBlendAlphaSource)
+            return false;
+        const GSTex0Reg &tex0 = state.context.tex0;
+        if (!state.prim.tme || !tex0.tcc)
+            return true;
+        return textured && tex0.tfx == 0u && !native;
+    }
+
+    static bool vertexAlphaPastOne(const GSPrimitiveBatch &batch) {
+        for (uint8_t index = 0u; index < batch.vertexCount; ++index)
+            if (batch.vertices[index].a > 0x80u)
+                return true;
+        return false;
+    }
 
     // False sends the primitive down the full path.
     bool submitSameState(const GSPrimitiveBatch &batch) {
+        // The state does not hold a vertex's alpha: a primitive with the
+        // state of the one before can still need its blend done in the
+        // shader (each glyph's fill, after its black copies at 0x80).
+        if (last.vertexAlphaWeighs && vertexAlphaPastOne(batch))
+            return false;
         GsSurface *color = last.color;
         GsRegion written = primitiveBounds(batch);
         if (written.empty())
@@ -828,6 +892,7 @@ struct SdlGpuBackend::Impl {
         // full path's union of each primitive's, so a primitive inside the
         // box adds nothing; one that grows it marks the grown box once.
         DrawBatch &head = batches[open - span];
+        noteDepthUse(head, written, state.context);
         const bool inside = last.boxPages && head.written.contains(written);
         GsPageSet grownPages;
         GsRegion grown = head.written;
@@ -891,6 +956,10 @@ struct SdlGpuBackend::Impl {
     // DQ8_GFX_NO_GPU_PADDING: a feedback snapshot's padding rows come from
     // local memory, resolving the target that owns them, as before.
     const bool noGpuPadding = std::getenv("DQ8_GFX_NO_GPU_PADDING") != nullptr;
+    // DQ8_GFX_NO_EMPTY_SPRITES: a sprite of no width or no height goes
+    // through like any other draw, as before (see submitOne; Rogue Galaxy:
+    // added).
+    const bool noEmptySpriteDrop = std::getenv("DQ8_GFX_NO_EMPTY_SPRITES") != nullptr;
     // DQ8_GFX_CYCLE_SNAPSHOTS: the copies into a snapshot texture cycle it,
     // as before, and count against the pending budget (see recordSnapshot).
     const bool cycleSnapshots = std::getenv("DQ8_GFX_CYCLE_SNAPSHOTS") != nullptr;
@@ -1296,6 +1365,80 @@ struct SdlGpuBackend::Impl {
         }
     };
 
+    // The moments of one present to the window: when the game flipped the
+    // frame and when the presenting thread took it (notePresentationFlip;
+    // with no flip, taken is begin), when this backend began showing it
+    // (after the GS worker reached the frame), the time spent waiting for its
+    // drawing on the GPU (and the slot's previous display), the time the
+    // swapchain image took to come, and when the present went out.
+    struct PresentTimes {
+        std::chrono::steady_clock::time_point flipped{};
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point taken = begin;
+        std::chrono::steady_clock::duration fence{};
+        std::chrono::steady_clock::duration acquire{};
+        std::chrono::steady_clock::time_point submitted{};
+    };
+
+    // DQ8_GFX_PRESENT_LOG=FILE: a CSV line per present to the window, for
+    // frame pacing; the stats line's "longest frame" is taken when a frame is
+    // prepared, before this part of its way to the screen (Rogue Galaxy:
+    // added). tools/bench/present_log.py reads it.
+    struct PresentLog {
+        std::FILE *file = nullptr;
+        std::mutex mutex;
+        std::chrono::steady_clock::time_point origin = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point flushed = origin;
+        PresentLog() {
+            const char *path = std::getenv("DQ8_GFX_PRESENT_LOG");
+            if (path == nullptr || *path == '\0')
+                return;
+            file = std::fopen(path, "w");
+            if (!file) {
+                std::fprintf(stderr, "[gfx] present log: cannot write %s\n", path);
+                return;
+            }
+            std::fputs("flip_ms,taken_ms,kind,worker_ms,fence_ms,acquire_ms,submitted_ms\n", file);
+            std::fprintf(stderr, "[gfx] present log in %s\n", path);
+        }
+        ~PresentLog() {
+            if (file)
+                std::fclose(file);
+        }
+        PresentLog(const PresentLog &) = delete;
+        PresentLog &operator=(const PresentLog &) = delete;
+
+        // One line. Flushed about once a second, not at every present: the
+        // presenting thread writes it, and a call into the system there
+        // would move the times it measures. A game stopped by a signal keeps
+        // all but its last second. kind: flip (a frame the game flipped), vblank (shown at a vsync with
+        // no flip: loading, movies, RG_PRESENT=vblank), refresh (the last
+        // frame again, under a fresh overlay).
+        void write(const char *kind, const PresentTimes &times) {
+            if (!file)
+                return;
+            using Clock = std::chrono::steady_clock;
+            // -1 for a moment that did not happen: no flip, or nothing went
+            // to the window (hidden, minimised, no picture).
+            const auto since = [&](Clock::time_point at) {
+                return at == Clock::time_point{} ? -1.0
+                                                 : std::chrono::duration<double, std::milli>(at - origin).count();
+            };
+            const auto length = [](Clock::duration span) {
+                return std::chrono::duration<double, std::milli>(span).count();
+            };
+            std::lock_guard lock(mutex);
+            std::fprintf(file, "%.3f,%.3f,%s,%.3f,%.3f,%.3f,%.3f\n", since(times.flipped), since(times.taken), kind,
+                         length(times.begin - times.taken), length(times.fence), length(times.acquire),
+                         since(times.submitted));
+            if (times.begin - flushed >= std::chrono::seconds(1)) {
+                std::fflush(file);
+                flushed = times.begin;
+            }
+        }
+    };
+    PresentLog presentLog;
+
     bool setError(std::string message) {
         lastError = std::move(message);
         return false;
@@ -1354,6 +1497,114 @@ struct SdlGpuBackend::Impl {
         }
         return false;
     }
+
+    // Depth thrown away while it held something (Rogue Galaxy: added, issue
+    // 53; GsTargetCache::setDepthLossHook). Harmless when the next depth
+    // write covers it, as a frame's clear does; reported when a draw tests
+    // against it first. Draws still queued go after the transfer, so they
+    // meet the loss first, in their order.
+    void noteDepthLoss(GsSurface &surface) {
+        ++stats.depthLosses;
+        surface.depthLoss.frame = stats.presents;
+        // A growth happens inside the batch that needs it, already counted.
+        surface.depthLoss.batch = surface.depthLoss.grown && tracedBatch != 0u ? tracedBatch - 1u : tracedBatch;
+        for (const DrawBatch &queued : batches) {
+            if (queued.depth != &surface || !queued.pipeline.hasDepth)
+                continue;
+            if (depthLossUse(surface, queued.pipeline, queued.written, nullptr) || surface.depthLoss.lost.empty())
+                return;
+        }
+    }
+    // A draw just queued with its depth surface: it meets a loss there
+    // first, then what it writes is held until the next loss.
+    void noteDepthUse(const DrawBatch &draw, const GsRegion &written, const GSContext &context) {
+        GsSurface *depth = draw.depth;
+        if (!depth || !draw.pipeline.hasDepth)
+            return;
+        if (!depth->depthLoss.lost.empty())
+            depthLossUse(*depth, draw.pipeline, written, &context);
+        if (draw.pipeline.depthWrite && draw.pipeline.depthCompare != SDL_GPU_COMPAREOP_NEVER)
+            depth->depthLoss.held.merge(written);
+    }
+    // One draw meeting a lost depth surface, in GS order: an ALWAYS draw
+    // that writes depth refills what it covers; any other test reads it,
+    // reported where nothing refilled it first. True when reported.
+    bool depthLossUse(GsSurface &depth, const GsPipelineKey &pipeline, const GsRegion &written,
+                      const GSContext *context) {
+        GsSurface::DepthLoss &loss = depth.depthLoss;
+        const GsRegion hit{std::max(written.x0, loss.lost.x0), std::max(written.y0, loss.lost.y0),
+                           std::min(written.x1, loss.lost.x1), std::min(written.y1, loss.lost.y1)};
+        if (hit.empty())
+            return false;
+        if (pipeline.depthCompare == SDL_GPU_COMPAREOP_ALWAYS) {
+            if (pipeline.depthWrite) {
+                mergeExact(loss.rewritten, hit);
+                if (loss.rewritten.contains(loss.lost)) {
+                    loss.lost.clear();
+                    loss.rewritten.clear();
+                }
+            }
+            return false;
+        }
+        if (pipeline.depthCompare == SDL_GPU_COMPAREOP_NEVER || loss.rewritten.contains(hit))
+            return false;
+        reportDepthLoss(depth, context);
+        return true;
+    }
+    // Grows `into` by `region` only where the union is a rectangle too: one
+    // inside the other, or two sharing a whole edge, as a clear's strips do.
+    // Otherwise it keeps the larger, so a gap between two draws never counts
+    // as refilled (a refill missed this way only costs a line too many).
+    static void mergeExact(GsRegion &into, const GsRegion &region) {
+        if (into.empty() || region.contains(into)) {
+            into = region;
+            return;
+        }
+        if (into.contains(region))
+            return;
+        const bool sameRows = into.y0 == region.y0 && into.y1 == region.y1 && region.x0 <= into.x1 &&
+                              into.x0 <= region.x1;
+        const bool sameColumns = into.x0 == region.x0 && into.x1 == region.x1 && region.y0 <= into.y1 &&
+                                 into.y0 <= region.y1;
+        if (sameRows || sameColumns)
+            into.merge(region);
+        else if (uint64_t(region.width()) * region.height() > uint64_t(into.width()) * into.height())
+            into = region;
+    }
+    // A line for the first few, then only the stats line's count.
+    void reportDepthLoss(GsSurface &depth, const GSContext *context) {
+        ++stats.depthLossesTested;
+        GsSurface::DepthLoss &loss = depth.depthLoss;
+        static constexpr uint32_t kLines = 8u;
+        if (depthLossLines < kLines) {
+            ++depthLossLines;
+            char how[96];
+            if (loss.grown)
+                std::snprintf(how, sizeof(how), "growing from %ux%u to %ux%u", loss.lost.x1, loss.lost.y1,
+                              loss.grownWidth, loss.grownHeight);
+            else
+                std::snprintf(how, sizeof(how), "a transfer into its pages %03x-%03x", loss.firstPage,
+                              loss.lastPage);
+            // From inside a growth the surface still has its old size.
+            const uint32_t width = loss.grown ? loss.grownWidth : depth.width;
+            const uint32_t height = loss.grown ? loss.grownHeight : depth.height;
+            char by[96];
+            if (context)
+                std::snprintf(by, sizeof(by), "batch %u (fbp=%03x)", tracedBatch - 1u, context->frame.fbp);
+            else
+                std::snprintf(by, sizeof(by), "draws queued before it");
+            std::fprintf(stderr,
+                         "[gfx] depth lost, then tested: Z %03x (psm=%02x fbw=%u %ux%u) lost at batch %u "
+                         "of frame %llu by %s; tested in frame %llu by %s%s\n",
+                         depth.base >> 5u, depth.psm, depth.bufferWidth, width, height, loss.batch,
+                         static_cast<unsigned long long>(loss.frame), how,
+                         static_cast<unsigned long long>(stats.presents), by,
+                         depthLossLines == kLines ? " (later ones only counted)" : "");
+        }
+        loss.lost.clear();
+        loss.rewritten.clear();
+    }
+    uint32_t depthLossLines = 0u;
 
     // A local-to-local transfer between CT32 render targets, done on the GPU.
     // The CPU path reads both targets back -- a stall each, and at a scale
@@ -2361,6 +2612,19 @@ struct SdlGpuBackend::Impl {
             return;
         if (!gsIsColorFramePsm(context.frame.psm))
             return;
+        // A sprite of no width or no height covers no pixel at any scale (its
+        // edges are exclusive), so it draws nothing; dropped here, it also
+        // builds no texture, while primitiveBounds below rounds its edges out
+        // to a pixel. Rogue Galaxy draws such sprites, and in Zerard's plaza
+        // six a frame read the 512x448 buffer 0x2A00 as CT24, which the GPU
+        // path refused (no samples to fit), so the whole buffer was read back
+        // from the GPU twice a frame for textures nothing showed: a quarter of
+        // this thread's time (Rogue Galaxy: added).
+        if (!noEmptySpriteDrop && state.prim.type == GS_PRIM_SPRITE && batch.vertexCount >= 2u &&
+            (batch.vertices[0].x == batch.vertices[1].x || batch.vertices[0].y == batch.vertices[1].y)) {
+            ++stats.emptySprites;
+            return;
+        }
         if (last.valid && std::memcmp(&state, &last.state, sizeof(state)) == 0 && submitSameState(batch))
             return;
         last.valid = false;
@@ -2369,25 +2633,8 @@ struct SdlGpuBackend::Impl {
         if (written.empty())
             return;
 
-        uint32_t neededWidth = static_cast<uint32_t>(context.scissor.x1) + 1u;
+        const uint32_t neededWidth = surfaceWidthFor(context);
         const uint32_t neededHeight = static_cast<uint32_t>(context.scissor.y1) + 1u;
-        // Scissors often end one pixel past the buffer (0..512 with FBW 8 in
-        // Rogue Galaxy's menus). Growing the colour and depth surfaces for that
-        // makes them alias the page after the buffer, and every texture upload
-        // there then discarded the depth buffer mid-frame, so later geometry
-        // showed through walls. Only geometry reaching past the buffer widens
-        // them: a sprite or triangle edge at x == width covers no pixel there.
-        const uint32_t bufferPixels = context.frame.fbw * 64u;
-        if (neededWidth > bufferPixels && bufferPixels != 0u) {
-            const float offsetX = static_cast<float>(context.xyoffset.ofx) / 16.0f;
-            float maxX = -1.0f;
-            for (uint8_t i = 0u; i < batch.vertexCount; ++i)
-                maxX = std::max(maxX, batch.vertices[i].x - offsetX);
-            const bool thin = state.prim.type == GS_PRIM_POINT || state.prim.type == GS_PRIM_LINE ||
-                              state.prim.type == GS_PRIM_LINESTRIP;
-            if (std::isfinite(maxX) && maxX + (thin ? 1.0f : 0.0f) <= static_cast<float>(bufferPixels))
-                neededWidth = bufferPixels;
-        }
 
         std::string error;
         GsSurface *color = targets->acquire(context.frame.fbp << 5u, context.frame.fbw,
@@ -2489,11 +2736,10 @@ struct SdlGpuBackend::Impl {
         // Then the blends weighted past one, which a fixed-point attachment
         // clamps: FIX above 0x80, and vertex alpha above it where the texture
         // brings none (the town's additive sparkles and light shafts carry
-        // up to 0xB4).
+        // up to 0xB4), and where it is modulated (the menus' text).
         bool overOne = blend.enabled && alpha.c == kBlendAlphaFixed && alpha.fix > 0x80u;
-        if (blend.enabled && alpha.c == kBlendAlphaSource && (!state.prim.tme || !context.tex0.tcc))
-            for (uint8_t index = 0u; index < batch.vertexCount && !overOne; ++index)
-                overOne = batch.vertices[index].a > 0x80u;
+        if (blend.enabled && vertexAlphaWeighs(state, alpha, nativeMesh != nullptr) && vertexAlphaPastOne(batch))
+            overOne = true;
         const bool destinationRead = !framebufferFetch && device.destinationCopy() &&
             (test.destinationAlphaTestEnabled || (blend.enabled && alpha.c == kBlendAlphaDest) || overOne);
         if (!framebufferFetch && !destinationRead && blend.enabled && !blend.exact)
@@ -3006,11 +3252,10 @@ struct SdlGpuBackend::Impl {
                 ++stats.batches;
             }
         }
-        // What the next primitive may reuse (submitSameState). A scissor
-        // past the buffer decides per vertex whether the surface widens.
-        const bool widens = static_cast<uint32_t>(context.scissor.x1) + 1u > bufferPixels && bufferPixels != 0u;
+        noteDepthUse(draw, draw.written, context);
+        // What the next primitive may reuse (submitSameState).
         last.valid = !feedbackRecorded && !draw.feedback && !draw.destination && !draw.source && !clearsWhole &&
-                     !widens && !nativeMesh &&
+                     !nativeMesh &&
                      (!state.prim.tme || plainTexture);
         if (last.valid) {
             std::memcpy(&last.state, &state, sizeof(last.state));
@@ -3026,6 +3271,8 @@ struct SdlGpuBackend::Impl {
             last.boxPages = pushedNew;
             last.reach = plainBounded ? plainReach : GsRegion{};
             last.reachAll = state.prim.tme && plainTexture && !plainBounded;
+            last.vertexAlphaWeighs = device.destinationCopy() && !framebufferFetch && blend.enabled &&
+                                     vertexAlphaWeighs(state, gsDecodeAlpha(context.alpha), false);
         }
         if (draw.snapshot)
             feedbackWritten.clear();
@@ -3679,12 +3926,13 @@ struct SdlGpuBackend::Impl {
         const uint64_t submissions = device.submissions();
         static uint64_t previousSameState = 0u, previousSubmitted = 0u;
         static SdlGpuStats previousReasons{};
+        static uint64_t previousUploadMerges = 0u;
         const auto d = [](uint64_t now, uint64_t before) { return static_cast<unsigned long long>(now - before); };
         std::fprintf(stderr,
                      "[gfx] same-state primitives %llu of %llu submitted | flushes: settle=%llu transfer=%llu "
                      "snapshot=%llu alias=%llu texread=%llu feedback=%llu localcopy=%llu present=%llu "
                      "rewrite=%llu of %llu | covered-releases=%llu (%llu pages) | native strips=%llu (on the CPU %llu, "
-                     "draws %llu, off screen %llu)\n",
+                     "draws %llu, off screen %llu) | empty sprites=%llu | upload merges=%llu\n",
                      d(stats.sameStatePrimitives, previousSameState), d(stats.primitivesSubmitted, previousSubmitted),
                      d(stats.flushSettle, previousReasons.flushSettle),
                      d(stats.transferFlushes, previousReasons.transferFlushes),
@@ -3697,8 +3945,11 @@ struct SdlGpuBackend::Impl {
                      d(stats.nativeMeshes, previousReasons.nativeMeshes),
                      d(stats.nativeMeshesExpanded, previousReasons.nativeMeshesExpanded),
                      d(stats.nativeDraws, previousReasons.nativeDraws),
-                     d(stats.nativeMeshesCulled, previousReasons.nativeMeshesCulled));
+                     d(stats.nativeMeshesCulled, previousReasons.nativeMeshesCulled),
+                     d(stats.emptySprites, previousReasons.emptySprites),
+                     d(targetStats().uploadMerges, previousUploadMerges));
         previousReasons = stats;
+        previousUploadMerges = targetStats().uploadMerges;
         previousSameState = stats.sameStatePrimitives;
         previousSubmitted = stats.primitivesSubmitted;
         if (const auto &extra = statsExtraLine()) {
@@ -3856,6 +4107,16 @@ struct SdlGpuBackend::Impl {
             if (stats.roundTrips != previous.roundTrips) {
                 std::snprintf(buf, sizeof(buf), " | round trips %llu",
                               static_cast<unsigned long long>(stats.roundTrips - previous.roundTrips));
+                line += buf;
+            }
+            // Depth thrown away while it held something, and the losses a
+            // draw then tested against (Rogue Galaxy: added, issue 53).
+            if (stats.depthLosses != previous.depthLosses ||
+                stats.depthLossesTested != previous.depthLossesTested) {
+                std::snprintf(buf, sizeof(buf), " | depth lost %llu, tested after %llu",
+                              static_cast<unsigned long long>(stats.depthLosses - previous.depthLosses),
+                              static_cast<unsigned long long>(stats.depthLossesTested -
+                                                              previous.depthLossesTested));
                 line += buf;
             }
             std::snprintf(buf, sizeof(buf), " | longest frame %.1f ms", longestPresentGap * 1e3);
@@ -4295,7 +4556,7 @@ struct SdlGpuBackend::Impl {
     // Called with the backend lock released: acquiring a swapchain texture
     // waits for the display, and holding the lock across that wait blocks
     // every Submit and transfer the EE thread makes for the whole frame.
-    bool showInWindow(PresentationSlot *slot, std::string &error) {
+    bool showInWindow(PresentationSlot *slot, std::string &error, PresentTimes *times = nullptr) {
         if (!window || (slot && !slot->texture))
             return true;
         const auto fail = [&](const char *context) {
@@ -4303,10 +4564,13 @@ struct SdlGpuBackend::Impl {
             return false;
         };
         if (slot && slot->displayed) {
+            const auto waitStart = std::chrono::steady_clock::now();
             if (!SDL_WaitForGPUFences(device.handle(), true, &slot->displayed, 1))
                 return fail("SDL_WaitForGPUFences(previous display): ");
             SDL_ReleaseGPUFence(device.handle(), slot->displayed);
             slot->displayed = nullptr;
+            if (times)
+                times->fence += std::chrono::steady_clock::now() - waitStart;
         }
         applyPresentMode();
 
@@ -4319,6 +4583,7 @@ struct SdlGpuBackend::Impl {
         SDL_GPUTexture *swapchain = nullptr;
         uint32_t swapchainWidth = 0u;
         uint32_t swapchainHeight = 0u;
+        const auto acquireStart = std::chrono::steady_clock::now();
         if (!SDL_WaitAndAcquireGPUSwapchainTexture(commands, window, &swapchain,
                                                    &swapchainWidth, &swapchainHeight)) {
             SDL_CancelGPUCommandBuffer(commands);
@@ -4326,6 +4591,8 @@ struct SdlGpuBackend::Impl {
         }
         // Also when minimised, so an idle overlay does not retry every pump.
         lastShown = std::chrono::steady_clock::now();
+        if (times)
+            times->acquire = lastShown - acquireStart;
         if (!swapchain || swapchainWidth == 0u || swapchainHeight == 0u) {
             // Minimised or otherwise unavailable this frame; nothing to show.
             if (!submitAfterPending([&] { return SDL_SubmitGPUCommandBuffer(commands); }))
@@ -4381,6 +4648,8 @@ struct SdlGpuBackend::Impl {
             submitAfterPending([&] { return SDL_SubmitGPUCommandBufferAndAcquireFence(commands); });
         if (!displayed)
             return fail("SDL_SubmitGPUCommandBufferAndAcquireFence(present): ");
+        if (times)
+            times->submitted = std::chrono::steady_clock::now();
         if (slot)
             slot->displayed = displayed;
         else
@@ -4442,13 +4711,17 @@ struct SdlGpuBackend::Impl {
             }
         }
         // One prepared and not displayed yet: its drawing has to be done.
+        PresentTimes times;
         if (slot && !tookLease && slot->prepared &&
             !SDL_WaitForGPUFences(device.handle(), true, &slot->prepared, 1)) {
             std::fprintf(stderr, "[gfx] window refresh: SDL_WaitForGPUFences(prepared): %s\n", SDL_GetError());
             return;
         }
+        times.fence = std::chrono::steady_clock::now() - times.begin;
         std::string error;
-        const bool shown = showInWindow(slot, error);
+        const bool shown = showInWindow(slot, error, presentLog.file ? &times : nullptr);
+        if (shown)
+            presentLog.write("refresh", times);
         if (slot && tookLease) {
             std::lock_guard lock(presentationPool->mutex);
             slot->leased = false;
@@ -5086,6 +5359,7 @@ void SdlGpuBackend::Initialize(uint8_t *vram, uint32_t vramSize) {
     });
     if (!m_impl->targets)
         m_impl->targets = std::make_unique<GsTargetCache>(m_impl->device, m_impl->vram);
+    m_impl->targets->setDepthLossHook([impl = m_impl.get()](GsSurface &surface) { impl->noteDepthLoss(surface); });
     if (!m_impl->textures) {
         m_impl->textures = std::make_unique<GsTextureCache>(m_impl->device, m_impl->vram,
                                                             *m_impl->targets);
@@ -5349,8 +5623,30 @@ PresentationFrame SdlGpuBackend::Present(const GSPresentationRequest &request) {
 }
 
 GSPresentationTicket SdlGpuBackend::PreparePresentation(const GSPresentationRequest &request) {
+    return prepare(&request);
+}
+
+PresentationFrame SdlGpuBackend::presentNativeFrame() {
+    return DisplayPreparedPresentation(prepare(nullptr));
+}
+
+void SdlGpuBackend::serveNativeReads() {
+    if (!native::colorReadsWaiting() && !m_impl->nativeRenderer.dumpPending())
+        return;
+    std::lock_guard lock(m_impl->mutex);
+    if (!native::enabled() || !m_impl->device.valid())
+        return;
+    // What is pending goes to the GPU first.
+    std::string error;
+    if (!m_impl->device.submitPending(error))
+        std::fprintf(stderr, "[native-pipeline] before colour reads: %s\n", error.c_str());
+    m_impl->nativeRenderer.serveColorReads(m_impl->device.handle());
+}
+
+// Null `request`: the native pipeline's present, not the GS's.
+GSPresentationTicket SdlGpuBackend::prepare(const GSPresentationRequest *request) {
     auto prepared = m_impl->leasePresentation();
-    prepared->sourceVsyncTick = request.vsyncTick;
+    prepared->sourceVsyncTick = request ? request->vsyncTick : 0u;
     auto &slot = prepared->pool->slots[prepared->slot];
     Impl::PresentStage stage;
     {
@@ -5368,7 +5664,13 @@ GSPresentationTicket SdlGpuBackend::PreparePresentation(const GSPresentationRequ
         m_impl->reportStats();
         m_impl->lastError.clear();
         m_impl->applyRequestedScale();
-        m_impl->acquirePresentation(request, stage);
+        if (request) {
+            m_impl->acquirePresentation(*request, stage);
+        } else if (m_impl->window != nullptr) {
+            ++m_impl->stats.presents;
+            stage.gsActive = true;
+            m_impl->presentNative(stage);
+        }
         m_impl->finishPresentation(stage);
         if (!m_impl->lastError.empty())
             throw std::runtime_error(m_impl->lastError);
@@ -5395,12 +5697,21 @@ PresentationFrame SdlGpuBackend::DisplayPreparedPresentation(const GSPresentatio
             throw std::runtime_error("SDL GPU presentation cancelled");
     }
     auto &slot = prepared->pool->slots[prepared->slot];
+    // Taken for this frame alone, shown or not.
+    const FlipNote note = std::exchange(t_flipNote, FlipNote{});
     if (prepared->haveFrame && m_impl->window != nullptr) {
+        Impl::PresentTimes times;
+        if (note.set) {
+            times.flipped = note.flipped;
+            times.taken = note.taken;
+        }
         if (slot.prepared && !SDL_WaitForGPUFences(m_impl->device.handle(), true, &slot.prepared, 1))
             throw std::runtime_error(std::string("SDL_WaitForGPUFences(snapshot): ") + SDL_GetError());
+        times.fence = std::chrono::steady_clock::now() - times.begin;
         std::string error;
-        if (!m_impl->showInWindow(&slot, error))
+        if (!m_impl->showInWindow(&slot, error, m_impl->presentLog.file ? &times : nullptr))
             throw std::runtime_error(error);
+        m_impl->presentLog.write(note.set ? "flip" : "vblank", times);
         m_impl->lastDisplayedSlot = prepared->slot;
         m_impl->lastGameFrame = m_impl->lastShown;
         m_impl->updatePerformanceTitle(prepared->gsActive);
@@ -5433,16 +5744,10 @@ bool SdlGpuBackend::ClearFramebuffer(const GSContext &context, uint32_t rgba) {
     if (!m_impl->flushDraws())
         return false;
 
-    // A clear covers the buffer and never the page after it: a scissor ending
-    // past FBW pages must not widen the surface (see neededWidth in submit).
-    const uint32_t bufferPixels = context.frame.fbw * 64u;
-    uint32_t width = static_cast<uint32_t>(context.scissor.x1) + 1u;
-    if (bufferPixels != 0u && width > bufferPixels)
-        width = bufferPixels;
     std::string error;
     GsSurface *surface = m_impl->targets->acquire(
         context.frame.fbp << 5u, context.frame.fbw, context.frame.psm, false,
-        width, static_cast<uint32_t>(context.scissor.y1) + 1u, error);
+        surfaceWidthFor(context), static_cast<uint32_t>(context.scissor.y1) + 1u, error);
     Impl::ResolveReasonScope scope(*m_impl->targets, GsResolveReason::View);
     if (!surface || !m_impl->targets->prepareColorView(*surface, error)) {
         m_impl->setError(std::move(error));

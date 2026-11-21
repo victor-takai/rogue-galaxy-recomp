@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 
@@ -31,5 +32,20 @@ void installFlipHook(PS2Runtime &runtime);
 // Flips the game has done so far, the frames it finished drawing: the menu's
 // frame-rate counter. From any thread.
 uint64_t guestFlips();
+
+// When the game's last flip returned (any thread): the native pipeline's
+// note for DQ8_GFX_PRESENT_LOG.
+std::chrono::steady_clock::time_point lastFlipTime();
+
+// The presenter thread, on each pass of its loop (graphics.cpp's host present
+// hook, so only with the game's own window, not RG_GS_NO_WINDOW). A flip
+// returns from its vsync wait at the same tick the presenter sees, and often
+// lands a moment after the presenter has looked: it then waited for the next
+// tick, so at 30 fps frames reached the screen 1 and 3 ticks apart in turn
+// instead of 2, and at 60 fps the next flip replaced it there, unseen.
+// Between ticks this shows such a flip at once, through the GS frontend's
+// latch, as the native pipeline does (RG_NATIVE_PRESENT_TICK). True when it
+// showed one. RG_PRESENT_TICK=1 keeps the flips to the ticks.
+bool showLateFlip(bool newTick);
 
 } // namespace rg::graphics

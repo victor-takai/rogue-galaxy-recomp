@@ -17,14 +17,14 @@ image; nothing of the game is distributed.
 - In-game menu (F1)
 - [New game settings](docs/OPTIONS.md)
 - Japanese voices and movies (undub)
-- The Japanese Director's Cut's battle balance, enemy behavior and party
-  AI, as options
+- [The Japanese Director's Cut's](docs/DIRECTORS-CUT.md) battle balance,
+  enemy behavior and party AI, as options
 - Text in French, German, Spanish or Italian (experimental)
 - [Texture packs](docs/TEXTURE_PACKS.md), PCSX2's included
 
 ## What to expect
 
-This is an early pre-release (0.2.0). The whole game plays, but:
+This is an early pre-release (0.3.0). The whole game plays, but:
 
 - **It has not been played from start to finish.** Most testing covers the
   early game; later chapters, the Factory and Insectron are unchecked.
@@ -35,9 +35,11 @@ This is an early pre-release (0.2.0). The whole game plays, but:
 Known issues are in the [CHANGELOG](CHANGELOG.md); what is being worked on
 is in [docs/STATUS.md](docs/STATUS.md).
 
-**Found a problem?** Open an [issue](../../issues), say what you were doing
-and attach `build\last-run.log` (`install.log` for the install). The log of
-the run before is `build\last-run.prev.log`.
+**Found a problem?** Open an [issue](../../issues/new/choose): its form asks
+what you were doing, the version (F1 > Rogue Galaxy > About) and
+`build\last-run.log` (`install.log` for the install). The log of the run
+before is `build\last-run.prev.log`. Rules for issues and pull requests:
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Install (Windows)
 
@@ -47,7 +49,7 @@ connection and your own uncompressed `.iso` of Rogue Galaxy USA
 
 1. Download `RogueGalaxy-<version>.zip` from the [releases](../../releases)
    page (not "Source code").
-2. Extract it to a short path, such as `C:\`.
+2. Extract it to a folder on this PC, outside OneDrive, such as `C:\`.
 3. Double-click `Install.bat` and choose your disc image.
 4. Wait about 20 minutes on a fast PC, up to an hour on a slower one.
 5. Play with `Rogue Galaxy.exe`.
@@ -56,6 +58,30 @@ To update later, double-click `Update.bat`.
 
 The full guide, with the undub, the European texts, updating, saves from
 PCSX2 and uninstalling, is in [docs/INSTALL.md](docs/INSTALL.md).
+
+## Install (Linux and Steam Deck)
+
+Experimental. You need about 20 GB free, an internet connection, your own
+disc image (as above) and, for a plain Linux PC, a GPU with Vulkan. The
+Steam Deck needs nothing else: SteamOS has no compiler, so the installer
+builds in a container (distrobox) it sets up itself.
+
+1. Get the source (`git clone --recurse-submodules <this repo>`, or the
+   source archive of a release) into a folder of your home.
+2. Run `./install.sh` and give it your disc image (`--iso FILE`). It takes
+   10 to 30 minutes.
+3. Play with `./rogue-galaxy.sh`, or from the application menu.
+
+Started without a terminal (a launcher's Play button, such as
+QuiverLauncher's, or a file manager), `install.sh` opens one to build in,
+asks for the disc image in a window, then starts the game; once the game is
+built, it just starts it.
+
+On a Steam Deck, play in game mode: in desktop mode add
+`rogue-galaxy.sh` to Steam as a non-Steam game (Games > Add a Non-Steam
+Game), then switch to game mode. Back + Start opens the game's menu (F1).
+The log is `build/last-run.log`. More in
+[`docs/BUILDING.md`](docs/BUILDING.md#linux-and-steam-deck).
 
 ## Controls
 
@@ -78,13 +104,14 @@ F11 or Alt+Enter toggles fullscreen. F12 takes a screenshot.
 
 ### The F1 menu
 
-**F1** (or the Guide button, or Back+Start) opens the menu: display, sound,
-controls, the game options, Language (the text's language, the undub) and
-Textures. Most game options are also on the game's own Settings screen
+**F1** opens the menu's top bar, and its Settings window (the Guide button
+or Back + Start opens it at once) has the pages: display, sound, controls,
+the game options, Language (the text's language, the undub), Textures and
+Interface. Most game options are also on the game's own Settings screen
 (System > Settings). Every option and where it is:
 [docs/OPTIONS.md](docs/OPTIONS.md).
 
-With a controller: ✕ opens a page, ○ goes back, △ reaches the menu bar,
+With a controller: ✕ opens a page, ○ goes back, △ reaches the top bar,
 L1 and R1 turn the pages.
 
 <p align="center"><img src="docs/images/menu-game.jpg" width="70%" alt="The F1 menu's Game page"></p>
@@ -118,6 +145,9 @@ committed.
   the SDL3 GPU GS backend and the in-game menu in `thirdparty/dq8-gfx`.
 - [Dear ImGui](https://github.com/ocornut/imgui) by Omar Cornut (MIT), which
   the menu is drawn with, and its Roboto Medium font (Apache 2.0).
+- [Lucide](https://lucide.dev) (ISC; its check from Feather, MIT), whose
+  gamepad-2, keyboard, rotate-ccw and check icons the menu's controller,
+  keyboard, undo and check follow (`thirdparty/dq8-gfx/LICENSE-lucide.txt`).
 - [RGDecomp](https://github.com/Dorgengoa/RGDecomp) (CC0), the function maps
   and names for this build (`config/SCUS_974.90/functions_*.csv` derive from
   it).

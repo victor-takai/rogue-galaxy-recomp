@@ -61,6 +61,8 @@ PS2Runtime::RecompiledFunction g_gsPktSetXyzPixel = nullptr;
 std::atomic<bool> g_enabled{false};
 // The picture's width over its height, from the presenting thread.
 std::atomic<float> g_aspect{16.0f / 9.0f};
+// Wider than 4:3, past the rounding of a window's shape (shownWide).
+constexpr float kShownWide = 4.0f / 3.0f + 0.01f;
 
 // What the game's views take for the shape: its height over its width.
 float projection()
@@ -186,6 +188,11 @@ bool wide()
 {
     return g_enabled.load(std::memory_order_relaxed) && !rg::loading::active() &&
            std::strcmp(rg::overlay::residentName(), "title") != 0;
+}
+
+bool shownWide()
+{
+    return g_aspect.load(std::memory_order_relaxed) > kShownWide;
 }
 
 void setEnabled(bool enable)

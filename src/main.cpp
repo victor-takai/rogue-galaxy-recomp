@@ -20,6 +20,7 @@
 #include "debug/input_script.h"
 #include "debug/pos_trace.h"
 #include "debug/encounter.h"
+#include "debug/force_return.h"
 #include "debug/jump_trace.h"
 #include "debug/sampler.h"
 #include "debug/selftest.h"
@@ -53,6 +54,7 @@
 #include "shop_prices.h"
 #include "step_fixes.h"
 #include "native_capture.h"
+#include "native_effects.h"
 #include "vif1_thread.h"
 #include "vu0_flags.h"
 #include "vu0_native.h"
@@ -195,6 +197,11 @@ int run(int argc, char **argv)
         std::fprintf(stderr, "[rg] native renderer on\n");
     // The native pipeline's game hooks, with it on (RG_NATIVE_PIPELINE=1).
     rg::nativecapture::install(runtime);
+    rg::nativefx::install(runtime);
+    // After the game's hooks, so a forced function another one replaced runs
+    // through it, and before RG_TRACE, so a traced call that returns at once
+    // shows the forced answer (an unwound one gets it later, at its resume).
+    rg::debug::installForceReturn(runtime);
     rg::debug::installCallTrace(runtime);
     rg::debug::installHardwareWatch(runtime);
     rg::debug::installPosTrace(runtime);

@@ -34,6 +34,8 @@ struct DrawUniforms
     float viewport[16];
     float target[4];
     float fog[4];
+    float depthRow[4];   // reversed depth (w - z) / 2 straight from the position
+    float depthLimit[4]; // x: the program's depthMax as this depth (times w); y: 1 when it applies
 };
 
 struct MaterialUniforms
@@ -48,14 +50,44 @@ struct MaterialUniforms
     uint32_t wrap[4];   // u, v: 0 repeat, 1 clamp, 2 region clamp, 3 region repeat
 };
 
-void multiply(const float a[16], const float b[16], float out[16])
+// a x b x c in double, rounded once: the clip matrix of a model under a
+// camera, and the reversed-depth row taken from it before rounding.
+// (w - z) / 2 computed in the shader from a float matrix loses most of its
+// bits to cancellation (w and z are nearly equal over most of the scene),
+// and two meshes on one surface (a wall and the light laid on it, terrain
+// layers) then got different depths and fought.
+//
+// The program's depthScale S multiplies the window depth Z = V22 z/w + V32
+// (V the camera's viewport). With d = (1 - z/w) / 2 that is
+// d' = S d + (1 - S)(1 + V32 / V22) / 2, the constant times w folded into
+// the row. Without it a decal (S = 1.01) tied the surface it lies on and
+// lost about half its pixels each frame where the GS has it hundreds of
+// units in front.
+void clipAndDepth(const float a[16], const float b[16], const float c[16], float clip[16], float depthRow[4],
+                  double depthScale, double depthConstant)
 {
-    float r[16];
+    double ab[16], abc[16];
     for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 4; ++j)
-            r[i * 4 + j] = a[i * 4 + 0] * b[0 * 4 + j] + a[i * 4 + 1] * b[1 * 4 + j] + a[i * 4 + 2] * b[2 * 4 + j] +
-                           a[i * 4 + 3] * b[3 * 4 + j];
-    std::memcpy(out, r, sizeof(r));
+        {
+            double sum = 0.0;
+            for (int k = 0; k < 4; ++k)
+                sum += double(a[i * 4 + k]) * double(b[k * 4 + j]);
+            ab[i * 4 + j] = sum;
+        }
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+        {
+            double sum = 0.0;
+            for (int k = 0; k < 4; ++k)
+                sum += ab[i * 4 + k] * double(c[k * 4 + j]);
+            abc[i * 4 + j] = sum;
+        }
+    for (int i = 0; i < 16; ++i)
+        clip[i] = float(abc[i]);
+    // Row vectors: clip_j = sum_i p_i M[i][j]; w is column 3, z column 2.
+    for (int i = 0; i < 4; ++i)
+        depthRow[i] = float(depthScale * 0.5 * (abc[i * 4 + 3] - abc[i * 4 + 2]) + depthConstant * abc[i * 4 + 3]);
 }
 
 // The pipeline's state as one key: depth compare (3 bits), depth write (1),
@@ -506,9 +538,18 @@ void Renderer::drawMeshes(SDL_GPUDevice *device, SDL_GPUCommandBuffer *commands,
         DrawUniforms du{};
         if (d.hasModel)
         {
-            float modelView[16];
-            multiply(d.model, camera->view, modelView);
-            multiply(modelView, camera->projection, du.clip);
+            // The program's depthScale and depthMax (see clipAndDepth). The
+            // cap is per vertex, before interpolation, as the program's.
+            const double v22 = camera->viewport[10], v32 = camera->viewport[14];
+            const bool scaled = d.depthScale != 1.0f && v22 != 0.0;
+            const double s = scaled ? double(d.depthScale) : 1.0;
+            clipAndDepth(d.model, camera->view, camera->projection, du.clip, du.depthRow, s,
+                         scaled ? (1.0 - s) * (1.0 + v32 / v22) * 0.5 : 0.0);
+            if (v22 != 0.0 && d.depthMax < 3.0e38f)
+            {
+                du.depthLimit[0] = float((1.0 - (double(d.depthMax) - v32) / v22) * 0.5);
+                du.depthLimit[1] = 1.0f;
+            }
             std::memcpy(du.viewport, camera->viewport, sizeof(du.viewport));
         }
         else
@@ -525,7 +566,13 @@ void Renderer::drawMeshes(SDL_GPUDevice *device, SDL_GPUCommandBuffer *commands,
             {
                 du.clip[10] = 1.0f / camera->viewport[10];
                 du.clip[14] = -camera->viewport[14] / camera->viewport[10];
+                // (w - z) / 2 with w = 1 and z = (Zgs - V32) / V22, in double.
+                const double v22 = camera->viewport[10], v32 = camera->viewport[14];
+                du.depthRow[2] = float(-0.5 / v22);
+                du.depthRow[3] = float(0.5 * (1.0 + v32 / v22));
             }
+            else
+                du.depthRow[3] = 0.5f; // (1 - 0) / 2, as before
             ++m_meshCounts.window;
         }
         du.target[0] = targetW;

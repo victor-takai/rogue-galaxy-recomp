@@ -1137,6 +1137,56 @@ def build_font(us_pack: bytes, pal_pack: bytes) -> bytes:
     return pac_write(out)
 
 
+CHAIN_PACK = "chn\\common.pac"
+
+
+def build_chain_pack(us_pack: bytes, pal_pack: bytes, code: str) -> bytes | None:
+    """The Attack Chain's pack ("PUSH!!", "Hits", "Damage") with the language's picture.
+    The US executable asks for one pack and its common.img in every language; the PAL
+    pack holds common_EN.img to common_DE.img side by side. None when either is missing
+    (the text then keeps the English pictures)."""
+    pal = {e.name.lower(): e for e in pac_read(pal_pack)}
+    picture = pal.get(f"common_{code.lower()}.img")
+    if picture is None:
+        return None
+    out, swapped = [], False
+    for e in pac_read(us_pack):
+        if e.name.lower() == "common.img":
+            out.append(PacEntry(e.name, keep_picture_names(e.data, picture.data), e.raw_header))
+            swapped = True
+        else:
+            out.append(e)
+    return pac_write(out) if swapped else None
+
+
+MINIMAP_PACK = "map\\m01\\m01_test03\\m01.pac"  # one of the ten map packs with a minimap
+MINIMAP_ENTRY = "m01_minimap.img"
+MINIMAP_PICTURE = b"minimap_icon"
+MINIMAP_ICON = "rg\\minimap_icon.tm2"  # a name the game never asks for
+
+
+def minimap_icon(us: Disc, pal: Disc) -> bytes | None:
+    """The minimap's icons as the PAL map packs have them: the US picture with the
+    other languages' shop letters beside its "S" (B, T, M to its right, G above the
+    M), the same in every map pack. src/text_language.cpp puts it in each minimap the game loads, in place of
+    the US one, and cuts the language's letter. None when either disc lacks it or
+    the two are alike."""
+    def picture(disc: Disc) -> bytes | None:
+        if MINIMAP_PACK not in disc:
+            return None
+        for e in pac_read(disc.read(MINIMAP_PACK)):
+            if e.name.lower() == MINIMAP_ENTRY:
+                tim2 = im3_pictures(e.data).get(MINIMAP_PICTURE)
+                if tim2 and tim2[:4] == b"TIM2" and len(tim2) >= 0x40:
+                    return tim2[:0x10 + struct.unpack_from("<I", tim2, 0x10)[0]]
+        return None
+
+    us_icon, pal_icon = picture(us), picture(pal)
+    if not us_icon or not pal_icon or len(us_icon) != len(pal_icon) or us_icon == pal_icon:
+        return None
+    return pal_icon
+
+
 def build_language(us: Disc, pal: Disc, code: str, report: Report,
                    widths: dict[int, int] | None = None) -> Iterator[tuple[str, bytes]]:
     """Every file the US executable asks for in the language that the PAL disc has words for;
@@ -1144,6 +1194,11 @@ def build_language(us: Disc, pal: Disc, code: str, report: Report,
     us_names = us.names()
     pal_names = pal.names()
     words = word_textures(us, pal, code)
+    icon = minimap_icon(us, pal)
+    if icon is not None:
+        yield MINIMAP_ICON, icon
+    else:
+        report.kept_us.append(f"{MINIMAP_PACK}:{MINIMAP_ENTRY}")
     for name in sorted(us_names):
         if name.startswith("event\\") and name.endswith(".pac"):
             if name not in pal_names:
@@ -1152,6 +1207,15 @@ def build_language(us: Disc, pal: Disc, code: str, report: Report,
             if not any(e.name.lower().endswith("_en.txt") for e in pac_read(us_pack)):
                 continue
             yield name, build_scene(us_pack, pal.read(name), code, report, widths)
+            continue
+        if name == CHAIN_PACK:
+            # No language token in its name: src/text_language.cpp serves it all the same
+            # (any name in the index) and moves the count for the longer words.
+            chain = build_chain_pack(us.read(name), pal.read(name), code) if name in pal_names else None
+            if chain is not None:
+                yield name, chain
+            else:
+                report.kept_us.append(f"{name}:common.img")
             continue
         target = to_language(name, code)
         if target == name:

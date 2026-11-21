@@ -52,7 +52,10 @@ import zlib
 from datetime import date
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+# Not resolve(): Install.bat may run this through a short name for a long
+# folder (a junction, tools/install/short-name.ps1), which resolve() would
+# turn back into the long path the build tools cannot use.
+ROOT = Path(os.path.abspath(__file__)).parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 from disc.iso9660 import SECTOR, Entry, IsoImage  # noqa: E402
@@ -586,11 +589,11 @@ def cmd_recompile(args: argparse.Namespace) -> int:
     spec = load_toml(config_dir(args.version) / "funcmap.toml")
     logs = ROOT / "build" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
-    generated = (ROOT / "build" / "generated").resolve()
+    generated = Path(os.path.abspath(ROOT / "build" / "generated"))
     failed = 0
     for image, ispec in spec["image"].items():
         cfg_path = config_dir(args.version) / "recomp" / f"{image}.toml"
-        out = (ROOT / load_toml(cfg_path)["general"]["output"]).resolve()
+        out = Path(os.path.abspath(ROOT / load_toml(cfg_path)["general"]["output"]))
         if generated not in out.parents:
             sys.exit(f"{cfg_path.name}: output {out} is not under {generated}; refusing to clear it")
         # ps2_recomp writes into a staging folder; only files whose bytes
@@ -817,7 +820,14 @@ def sync_tree(src: Path, dst: Path) -> tuple[int, int]:
 
 TOOLS_BUILD = ROOT / "build" / "tools"
 GAME_BUILD = ROOT / "build" / "game"
-COMPILERS = ["-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++"]
+COMPILERS = [f"-DCMAKE_C_COMPILER={os.environ.get('CC') or 'clang'}",
+             f"-DCMAKE_CXX_COMPILER={os.environ.get('CXX') or 'clang++'}"]
+GAME_EXE = "roguegalaxy.exe" if os.name == "nt" else "roguegalaxy"
+# On Windows FindPython3 looks in the registry before PATH; the game's build
+# needs Python (make_resources.py, src/CMakeLists.txt), and the one on PATH
+# is the one Install.bat gives the build, not another version installed in
+# Windows. Nothing is pinned, so a Python removed later is looked for again.
+GAME_PYTHON = ["-DPython3_FIND_REGISTRY=LAST"] if os.name == "nt" else []
 
 
 def run_step(what: str, command: list[str]) -> None:
@@ -885,9 +895,11 @@ def cmd_build(args: argparse.Namespace) -> int:
     reset_future_times()
     if not configured(GAME_BUILD):
         run_step("configure build/game", [
-            "cmake", "-S", str(ROOT), "-B", str(GAME_BUILD), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", *COMPILERS])
+            "cmake", "-S", str(ROOT), "-B", str(GAME_BUILD), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", *COMPILERS,
+            *GAME_PYTHON])
     run_step("build the game", ["cmake", "--build", str(GAME_BUILD)])
-    print(f"built {GAME_BUILD / 'src' / 'roguegalaxy.exe'}; start it with \"Rogue Galaxy.exe\"")
+    launcher = "Rogue Galaxy.exe" if os.name == "nt" else "rogue-galaxy.sh"
+    print(f"built {GAME_BUILD / 'src' / GAME_EXE}; start it with \"{launcher}\"")
     return 0
 
 

@@ -1,11 +1,13 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 struct GSNativeMesh;
 struct GSDrawState;
+struct GSNativeEffect;
 
 // The game side of the native pipeline (docs/NATIVE-PIPELINE.md): what turns
 // the game's GS-shaped data into the renderer's records. The renderer sees
@@ -70,6 +72,23 @@ uint32_t targetAt(uint32_t base);
 // was made: the mesh is then not sent to the GS (step 4c).
 bool mesh(const GSNativeMesh &mesh, const GSDrawState *state, const uint8_t *vu1Data, uint32_t source);
 
+// Step 5a's survey (counts only): an effect on its way to be drawn (by
+// command; a sprite effect's ops by what they draw into and from).
+void noteEffect(const GSNativeEffect &effect);
+
+// Step 5b: a 2D piece (src/native_2d.h: primitives the converter made a
+// mesh in the GS's window coordinates) under its draw state, as the
+// renderer's window-space mesh draw. `texels`: its UVs are texels (FST),
+// not normalised. True when made; false leaves it to the GS (counted by
+// why).
+bool piece(const GSNativeMesh &mesh, const GSDrawState *state, bool texels);
+
+// Step 5b: an effect's sprites (src/native_effects.h) as the renderer's
+// window-space mesh draws, and step 5c's object layer commands. True when
+// made: the GS does not draw it then. False leaves it to the GS (counted by
+// why): the effect's packets go on as they are.
+bool effect(const GSNativeEffect &effect);
+
 // Step 3b's counts (the VIF1 thread, which withholds named uploads the
 // producer sent from the GS): one withheld (palette or texture), one sent on
 // and why, an A+D block whose other registers went on without the
@@ -104,6 +123,8 @@ void noteLocalCopy(uint32_t sbp, uint32_t sbw, uint32_t spsm, uint32_t sx, uint3
 // the format they are read in.
 void replaceUpload(bool palette, uint32_t dbp, uint32_t dpsm, uint32_t width, uint32_t height, const uint8_t *data,
                    uint32_t bytes);
+// The hash takeProduced's `hash` is of, for bytes the VIF1 thread saw sent.
+uint64_t uploadHash(const uint8_t *data, size_t size);
 void noteWithheld(bool palette, uint32_t imageBytes);
 void notePassed(Passed why);
 void noteSplit();

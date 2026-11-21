@@ -8,6 +8,8 @@
 #include "ui/ui_multiplier.h"
 #include "ui/ui_settings.h"
 
+#include <SDL3/SDL_scancode.h>
+
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -91,6 +93,15 @@ struct HostServices {
     std::function<void(const std::string &key, bool on)> setGameOption;
     std::function<void(const std::string &key, int value)> setGameNumber;
     std::function<bool(const std::string &key)> gameOptionState;
+    // Why a game option does nothing now, as the one line that says what
+    // would make it work (text that outlives the call), or null when it
+    // works: the menu shows the option greyed out with that line under it
+    // (Rogue Galaxy: added).
+    std::function<const char *(const std::string &key)> gameOptionBlocked;
+    // A value of a game option's buttons (GameOption::choices) that would do
+    // nothing, such as a language whose files are missing: that button is
+    // greyed out (Rogue Galaxy: added).
+    std::function<bool(const std::string &key, int value)> gameChoiceBlocked;
     // A newer release than this build, its version and page, empty while
     // none is known: the About window says so (Rogue Galaxy: added).
     std::function<std::pair<std::string, std::string>()> newerRelease;
@@ -98,6 +109,15 @@ struct HostServices {
     // only way to the menu there, so it cannot be turned off, and the menu
     // names the Deck's buttons (Rogue Galaxy: added).
     bool steamDeck = false;
+    // The game's own keys and what each does (Rogue Galaxy: added): never
+    // bound in Controls, named in the binding prompt, and, `listed`, shown in
+    // the Shortcuts window after F4 (the diagnostics keys are not).
+    struct Shortcut {
+        SDL_Scancode key = SDL_SCANCODE_UNKNOWN;
+        std::string what;
+        bool listed = true;
+    };
+    std::vector<Shortcut> gameShortcuts;
 };
 
 // Game: Rogue Galaxy's own switches (added).
@@ -126,13 +146,17 @@ public:
     bool capturesInput() const override;
 
     const Settings &settings() const { return m_settings; }
+    // The internal resolution as Display shows it: the one asked for until
+    // it applies (a paused game applies it when it resumes), then the one
+    // in use (Rogue Galaxy: added).
+    uint32_t shownResolutionScale() const {
+        return m_pendingScale != 0u ? m_pendingScale : m_backend.activeResolutionScale();
+    }
     // A game option changed elsewhere, such as the game's own settings
     // screen (Rogue Galaxy: added): passed to the host and kept as the
     // menu's own changes are.
     void setGameOptionValue(const std::string &key, bool on);
     void setGameNumberValue(const std::string &key, int value);
-    // Display > Borders, changed there too (Rogue Galaxy: added).
-    void setSides(gfx::SdlGpuSides sides);
     void setMenuOpen(bool open);
     void openSettings(SettingsPage page);
     // Opens one of the menu bar's menus at the next frame, by its label.
@@ -229,16 +253,19 @@ private:
     void drawTexturesPage();
     // The host's switches whose page is `page`, in its sections.
     void drawGameOptions(const std::string &page, const char *emptyText, const char *firstTitle);
+    // One option's switch, slider or choices.
+    void drawGameControl(const GameOption &option);
     void drawInterfacePage();
     void drawCapturePrompt();
     void drawAbout();
     void drawShortcuts();
     void drawStats();
-    void pictureBounds(ImVec2 &min, ImVec2 &max) const;
+    void windowBounds(ImVec2 &min, ImVec2 &max) const;
     void drawFps();
     void drawSpeedBadge();
     void drawPauseBanner();
     void drawToasts();
+    void drawIconSheet();
     void updateCursor();
     void sampleFrameRate();
     void collectSavedScreenshots();
@@ -278,6 +305,11 @@ private:
     std::map<std::string, int> m_startNumbers;
     bool m_startCaptured = false;
     SDL_Window *m_window = nullptr;
+    // The size render() last drew into, the window's in pixels: beside
+    // the backend's displayRect, whether the picture leaves bars (Rogue
+    // Galaxy: added).
+    uint32_t m_targetWidth = 0u;
+    uint32_t m_targetHeight = 0u;
     ImGuiContext *m_context = nullptr;
     bool m_platformReady = false;
     bool m_rendererReady = false;
@@ -290,6 +322,8 @@ private:
     bool m_aboutOpen = false;
     bool m_shortcutsOpen = false;
     bool m_statsOpen = false;
+    // RG_UI_SCRIPT's "icons": every icon on screen, for a screenshot.
+    bool m_iconSheet = false;
     std::string m_showMenu;
     bool m_windowFocused = true;
     bool m_userPaused = false;
