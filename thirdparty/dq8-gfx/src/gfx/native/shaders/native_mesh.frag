@@ -19,8 +19,9 @@ layout(set = 3, binding = 0) uniform Material {
     // x, y: the size the uvs are normalized to (the game's 2^TW, 2^TH);
     // z, w: the texture's own, which an upload may leave smaller
     vec4 size;
-    // x: a channel shuffle (1: alpha's bits 2-7 from green's), z: clamp u,
-    // w: clamp v (y unused)
+    // x: a channel shuffle (1: alpha's bits 2-7 from green's), y: filtered
+    // (bilinear: by hand for what is fetched below; a texture then reads
+    // where the GS samples), z: clamp u, w: clamp v
     vec4 blend;
     vec4 fogColor; // 0-1
     // x: the texel's alpha replaced by this (0-255) when not negative (a
@@ -45,6 +46,23 @@ int wrapAxis(int a, int size, uint mode, uint lo, uint hi, bool clampOld) {
     return clamp(a, 0, size - 1);
 }
 
+// One texel as the GS addresses it: an index goes through the palette here,
+// and TEXA's alpha (CT24, AEM) is the texel's, before any filtering.
+vec4 fetchTexel(ivec2 at, ivec2 size) {
+    at.x = wrapAxis(at.x, size.x, material.wrap.x, material.region.x, material.region.y, material.blend.z != 0.0);
+    at.y = wrapAxis(at.y, size.y, material.wrap.y, material.region.z, material.region.w, material.blend.w != 0.0);
+    vec4 t;
+    if (material.mode.x == 2u) {
+        int index = int(texelFetch(image, at, 0).r * 255.0 + 0.5);
+        t = texelFetch(palette, ivec2(min(index, int(material.mode.w) - 1), 0), 0);
+    } else {
+        t = texelFetch(image, at, 0);
+    }
+    if (material.texa.x >= 0.0)
+        t.a = (material.texa.y != 0.0 && floor(t.rgb * 255.0 + 0.5) == vec3(0.0)) ? 0.0 : material.texa.x / 255.0;
+    return t;
+}
+
 layout(location = 0) in vec2 inUv;
 layout(location = 1) in vec4 inColor;
 layout(location = 2) in float inFog;
@@ -64,6 +82,16 @@ bool passes(uint compare, float a, float ref) {
 }
 
 void main() {
+    vec2 texel = inUv * material.size.xy; // in the game's texels
+    // Where the GS samples this pixel: the host samples a pixel at n + 0.5,
+    // the GS at its integer coordinates, half a host pixel up and left (the
+    // GS backend's kSampleOffset). A filtered texture reads there, so a
+    // filtered sheet (icons, fonts) is not mixed with its neighbours. A
+    // target does not: it was drawn on the host's grid, and reading it there
+    // moved every copy half a host pixel more (the side panel of the menus,
+    // when the whole draw was moved instead). Taken before any discard,
+    // where the derivatives are defined.
+    vec2 gsTexel = texel - 0.5 * (dFdx(texel) + dFdy(texel));
     if (material.texa.z > 0.0) {
         // Stored as A / 0x80: bit 7 set is 1.0.
         bool high = texelFetch(palette, ivec2(gl_FragCoord.xy), 0).a >= 0.999;
@@ -75,27 +103,29 @@ void main() {
     vec4 c = f;
     if (material.mode.x != 0u) {
         vec4 t;
-        vec2 texel = inUv * material.size.xy; // in the game's texels
         // A region (a tile of a sheet) is fetched as the GS addresses it.
         bool region = material.mode.x != 3u && (material.wrap.x >= 2u || material.wrap.y >= 2u);
-        if (material.mode.x == 2u || region) {
-            // Fetched, not filtered: an index is not a color.
+        bool fetched = material.mode.x == 2u || region;
+        if (fetched) {
+            // Fetched by hand: an index is not a color, so filtering comes
+            // after the palette, as on the GS.
             ivec2 size = ivec2(material.size.zw);
-            ivec2 at = ivec2(floor(texel));
-            at.x = wrapAxis(at.x, size.x, material.wrap.x, material.region.x, material.region.y, material.blend.z != 0.0);
-            at.y = wrapAxis(at.y, size.y, material.wrap.y, material.region.z, material.region.w, material.blend.w != 0.0);
-            if (material.mode.x == 2u) {
-                int index = int(texelFetch(image, at, 0).r * 255.0 + 0.5);
-                t = texelFetch(palette, ivec2(min(index, int(material.mode.w) - 1), 0), 0);
+            if (material.blend.y != 0.0) {
+                vec2 p = gsTexel - 0.5;
+                ivec2 a = ivec2(floor(p));
+                vec2 w = p - floor(p);
+                t = mix(mix(fetchTexel(a, size), fetchTexel(a + ivec2(1, 0), size), w.x),
+                        mix(fetchTexel(a + ivec2(0, 1), size), fetchTexel(a + ivec2(1, 1), size), w.x), w.y);
             } else {
-                t = texelFetch(image, at, 0);
+                t = fetchTexel(ivec2(floor(texel)), size);
             }
         } else {
-            t = texture(image, texel / material.size.zw);
+            bool filteredTexture = material.mode.x == 1u && material.blend.y != 0.0;
+            t = texture(image, (filteredTexture ? gsTexel : texel) / material.size.zw);
         }
         bool target = material.mode.x == 3u;
         t = vec4(floor(t.rgb * 255.0 + 0.5), floor(t.a * (target ? 128.0 : 255.0) + 0.5));
-        if (material.texa.x >= 0.0)
+        if (material.texa.x >= 0.0 && !fetched)
             t.a = (material.texa.y != 0.0 && t.rgb == vec3(0.0)) ? 0.0 : material.texa.x;
         if (material.blend.x == 1.0)
             t.a = float((uint(t.g) & 0xFCu) | (uint(t.a) & 3u));
