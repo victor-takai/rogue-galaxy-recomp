@@ -28,7 +28,9 @@ A and ✕ are the same button, B and ○, X and ▢, Y and △):
 Settings has seven pages, written here as F1 > Settings > Game and so on:
 
 - **Display**: window or fullscreen, vertical sync, internal resolution
-  (2x by default), aspect ratio, scaling filter, **Borders**, what fills
+  (2x by default), aspect ratio, scaling filter (Sharp by default; **FSR
+  1**, AMD's upscaler, acts only when the picture is enlarged on both sides,
+  and has its own sharpness, 70% by default), **Borders**, what fills
   the sides of a 4:3 picture (black, the picture blurred, or your own image
   from the `borders` folder), integer scaling, and **Sharper picture**,
   which drops the PS2's line blending (it only blurs on a monitor).
@@ -50,7 +52,8 @@ out, with a line under it saying what would make it work: Mouse
 sensitivity and Invert mouse up and down until Mouse camera is on, the
 undub until `Install-Undub.bat`
 has read your Japanese disc, Borders while the picture fills the window,
-a language of Text whose files are missing.
+FSR sharpness while FSR 1 cannot act, a language of Text whose files are
+missing.
 
 | Key | |
 |---|---|

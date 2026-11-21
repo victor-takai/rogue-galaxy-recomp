@@ -145,6 +145,9 @@ committed.
   the SDL3 GPU GS backend and the in-game menu in `thirdparty/dq8-gfx`.
 - [Dear ImGui](https://github.com/ocornut/imgui) by Omar Cornut (MIT), which
   the menu is drawn with, and its Roboto Medium font (Apache 2.0).
+- [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR)
+  (MIT), whose EASU and RCAS passes the FSR 1 scaling filter ports
+  (`present_fsr.frag` in `thirdparty/dq8-gfx`).
 - [Lucide](https://lucide.dev) (ISC; its check from Feather, MIT), whose
   gamepad-2, keyboard, rotate-ccw and check icons the menu's controller,
   keyboard, undo and check follow (`thirdparty/dq8-gfx/LICENSE-lucide.txt`).

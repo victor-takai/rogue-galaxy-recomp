@@ -411,16 +411,43 @@ void Overlay::drawDisplayPage() {
             markDirty();
         }
 
+        // FSR 1 (Rogue Galaxy: added): when it is chosen but cannot act, the
+        // sharpness is greyed out like the menu's other idle options, with
+        // the reason under it.
+        const bool fsrChosen = m_settings.display.filter == gfx::SdlGpuFilter::Fsr;
+        const gfx::SdlGpuFsrState fsrState = m_backend.fsrState();
+        const char *fsrIdle = nullptr;
+        if (fsrState == gfx::SdlGpuFsrState::NotEnlarged)
+            fsrIdle = "FSR 1 is not acting, Smooth draws instead: the picture isn't enlarged in this window. Lower "
+                      "Internal resolution for this.";
+        else if (fsrState == gfx::SdlGpuFsrState::Unsupported)
+            fsrIdle = "FSR 1 is not acting, Smooth draws instead: it isn't available with Metal.";
+        else if (fsrState == gfx::SdlGpuFsrState::Failed)
+            fsrIdle = "FSR 1 failed, Smooth draws instead (the log says why). Pick another filter and FSR 1 again "
+                      "to retry.";
         static constexpr const char *kFilterHelp[] = {"Crisp pixels with no uneven columns, at any size.",
                                                       "Soft, smooth scaling.",
-                                                      "Raw pixels; uneven unless the size is a whole multiple."};
+                                                      "Raw pixels; uneven unless the size is a whole multiple.",
+                                                      "AMD FSR 1: edge-aware upscaling with sharpening, when the "
+                                                      "picture is enlarged. Best with a lower internal resolution."};
         settingRow("Scaling filter", kFilterHelp[static_cast<int>(m_settings.display.filter)]);
-        static constexpr const char *kFilters[] = {"Sharp", "Smooth", "Nearest"};
+        static constexpr const char *kFilters[] = {"Sharp", "Smooth", "Nearest", "FSR 1"};
         int filter = static_cast<int>(m_settings.display.filter);
-        if (segmented("filter", &filter, kFilters, 3)) {
+        if (segmented("filter", &filter, kFilters, 4)) {
             m_settings.display.filter = static_cast<gfx::SdlGpuFilter>(filter);
             m_backend.setDisplayOptions(m_settings.display);
             markDirty();
+        }
+
+        // Rogue Galaxy: added (`fsr_sharpness` in the file).
+        if (fsrChosen) {
+            const Blocked blocked(fsrIdle);
+            settingRow("FSR sharpness", "How much FSR 1 sharpens the enlarged picture; 0% none.");
+            if (ImGui::SliderInt("##fsrsharpness", &m_settings.display.fsrSharpness, 0, 100, "%d%%",
+                                 ImGuiSliderFlags_AlwaysClamp)) {
+                m_backend.setDisplayOptions(m_settings.display);
+                markDirty();
+            }
         }
 
         // Rogue Galaxy: added (`sides` in the file).

@@ -8,6 +8,8 @@
   Linux from your disc image, and `rogue-galaxy.sh` starts it. In a
   launcher such as QuiverLauncher, Play builds the game the first time, in
   a terminal window of its own.
+- An FSR 1 scaling filter (AMD's upscaler) in F1 > Settings > Display,
+  with a sharpness slider.
 
 ### Changed
 
