@@ -91,6 +91,7 @@ F1 > Settings > Game, in these sections:
 | Option | |
 |---|---|
 | Buttons in the game's text | The buttons in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, RB, LT and RT, or on the keyboard and mouse the keys (a letter or digit, TAB, ESC and the like, the space bar) and mouse buttons, as bound in Controls. On by default. |
+| Typeface letters | Above 1x, the game's Latin letters drawn sharp from Andika, a free typeface made to look like them, in their own places and widths, instead of enlarged as blocks: the dialogue's, the menus' and the names' (the menus' grey letters with a dark edge stay the game's). With the English text only, for now. Off by default. |
 | Skip the opening | Straight to the title screen. |
 | Quick loading recap | The story so far appears whole, and you can go on as soon as it has loaded. |
 | Instant text | Dialogue a page at a time instead of letter by letter. |
@@ -150,7 +151,7 @@ Most of the same options are on the game's Settings screen (System >
 Settings in the main menu): L1 and R1 turn the page, and a number's - and
 + buttons lower and raise it. With the text in French, German, Spanish or
 Italian, the options are named in that language there too. Widescreen,
-Buttons in the game's text, the mouse camera's three options, Check for new
+Buttons in the game's text, Typeface letters, the mouse camera's three options, Check for new
 versions, the three Director's Cut options, Native renderer, the text's
 language, the undub, the texture packs and Display > Borders are in F1
 alone.

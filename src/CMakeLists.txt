@@ -103,6 +103,7 @@ add_executable(roguegalaxy
     step_fixes.cpp
     stick_response.cpp
     texture_pack.cpp
+    typeface_letters.cpp
     vif1_thread.cpp
     vu1_native.cpp
     draw_state_mirror.cpp
@@ -130,6 +131,15 @@ add_executable(roguegalaxy
     debug/selftest.cpp
     debug/vu1_replay.cpp
 )
+# The typeface the Latin letters are redrawn from above 1x (typeface_letters.cpp),
+# inside the executable: SIL Open Font License, thirdparty/fonts/andika/OFL.txt.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/embed_file.cmake")
+rg_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/fonts/andika/Andika-Regular.ttf"
+    "${CMAKE_CURRENT_BINARY_DIR}/typeface_andika_regular.cpp" rg_typeface_andika_regular)
+rg_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/fonts/andika/Andika-Bold.ttf"
+    "${CMAKE_CURRENT_BINARY_DIR}/typeface_andika_bold.cpp" rg_typeface_andika_bold)
+target_sources(roguegalaxy PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/typeface_andika_regular.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/typeface_andika_bold.cpp")
 target_include_directories(roguegalaxy PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # GNU ld reads each archive once, in order: the function table defined in

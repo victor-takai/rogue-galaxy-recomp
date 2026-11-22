@@ -41,7 +41,9 @@ rectangle a sprite draws from a texture (a window piece, an icon, a label),
 named by its content: `TEXELS_CLUT_WxH.png`, the texels' hash, the palette's
 hash (both 16 hex digits) and the size in texels. The font's glyphs are
 regions too, one a glyph. The PNG's alpha is doubled (the console's 0x80 is
-opaque, written as 255).
+opaque, written as 255). With the menu's Typeface letters on, the Latin
+glyphs of the three fonts it covers are drawn from the typeface, over a
+pack's pictures of them.
 
 ## A pack's files
 

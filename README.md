@@ -151,6 +151,9 @@ committed.
 - [Lucide](https://lucide.dev) (ISC; its check from Feather, MIT), whose
   gamepad-2, keyboard, rotate-ccw and check icons the menu's controller,
   keyboard, undo and check follow (`thirdparty/dq8-gfx/LICENSE-lucide.txt`).
+- [Andika](https://software.sil.org/andika/) by SIL International (SIL Open
+  Font License 1.1), the typeface the Typeface letters option draws the
+  game's letters from, inside the executable (`thirdparty/fonts/andika`).
 - [RGDecomp](https://github.com/Dorgengoa/RGDecomp) (CC0), the function maps
   and names for this build (`config/SCUS_974.90/functions_*.csv` derive from
   it).

@@ -39,6 +39,7 @@
 #include "settings_pages.h"
 #include "shop_prices.h"
 #include "texture_pack.h"
+#include "typeface_letters.h"
 #include "vif1_thread.h"
 #include "hud_size.h"
 #include "inventory.h"
@@ -410,6 +411,8 @@ void applyGameOption(const std::string &key, bool on)
         rg::loading::setInstantRecap(on);
     else if (key == "instant_text")
         rg::instanttext::setEnabled(on);
+    else if (key == "typeface_letters")
+        rg::typeface::setEnabled(on);
     else if (key.rfind("texture_pack_", 0) == 0)
         rg::texturePack::setPackEnabled(key.substr(13), on);
     else if (key == "japanese_voices")
@@ -1067,6 +1070,12 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "RB, LT and RT, or the keys and mouse buttons, as each button is bound in Controls. Off, or with a "
          "PlayStation or Nintendo controller, the game's PlayStation buttons.",
          true},
+        {"typeface_letters", "Typeface letters",
+         "Above 1x, the game's Latin letters are drawn from a typeface made to look like them (Andika, SIL Open "
+         "Font License) at the internal resolution, in their own places and widths, instead of enlarged as blocks: "
+         "the dialogue's, the menus' and the names'. For now with the English text only, and the menus' grey "
+         "letters with a dark edge stay the game's. Each new letter shows in a frame or two.",
+         false},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},
         {"instant_loading_recap", "Quick loading recap",
@@ -1210,6 +1219,10 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         const uint32_t scale = g_menu ? g_menu->shownResolutionScale() : backend.activeResolutionScale();
         if (flatPacks.count(key) != 0u && scale <= 1u)
             return "Its 2D art shows above 1\xC3\x97: raise Display > Internal resolution for this.";
+        if (key == "typeface_letters" && rg::textlanguage::language() != 0)
+            return "Not yet with the text in French, German, Spanish or Italian: the letters stay the game's.";
+        if (key == "typeface_letters" && scale <= 1u)
+            return "It shows above 1\xC3\x97: raise Display > Internal resolution for this.";
         return gameOptionBlocked(key, backend.displayOptions().aspect);
     };
     host.gameChoiceBlocked = &gameChoiceBlocked;
@@ -1325,6 +1338,7 @@ Setup::Setup(PS2Runtime &runtime)
         // Aspect ratio Auto follows the Widescreen option.
         sdl->setGameWidescreenQuery([] { return rg::widescreen::wide() ? 1 : 0; });
         rg::texturePack::install(*sdl);
+        rg::typeface::installRenderer(*sdl);
         sdl->setSideImageLoader(&loadBorderImage);
         if (noWindow)
         {
