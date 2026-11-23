@@ -26,6 +26,7 @@
 #include "return_hook.h"
 #include "runtime/ps2_memory.h"
 #include "scene_timing.h"
+#include "text_language.h"
 #include "texture_pack.h"
 
 // imgui's copy of stb_truetype, compiled here on its own (imgui keeps its
@@ -64,6 +65,12 @@ struct TypefaceGlyph
     float shift;
     // Cell pixels below the baseline (a sign set where the console's is).
     float lift;
+    // Cell pixels opened between a sign's two parts (the clock's colon:
+    // the console's dots are farther apart than the typeface's).
+    float gap = 0.0f;
+    // A symbol's code in the game's width table (character 0 there: the
+    // plus-minus, the times sign...); 0 for a character.
+    uint8_t code = 0u;
 };
 struct TypefaceFont
 {
@@ -80,9 +87,75 @@ struct TypefaceFont
     // scaled render, which the cell then narrowed).
     int grow;
     float penX, penY;
+    // The lean of a slanted set (the money's digits): cell pixels across per
+    // cell pixel up from the baseline.
+    float slant;
     const TypefaceGlyph *glyphs;
     size_t count;
 };
+// A digit of the menus' pictures, or a letter of the menus' own font
+// (tools/typeface/pieces.py): the game draws a menu's numbers a digit at a
+// time, each from its cell of a row of digits in a picture, and the menus'
+// font a letter at a time, its width wide. Known by the hash of its texels
+// as the renderer hands them over (hashRgba), at the size the draw samples;
+// its set (kPieceFonts), its row in the set's glyphs, the console glyph's
+// ink in the sprite drawn as Ink has it, and the row of the cell the sprite
+// starts at (a sign drawn from a sprite inside its cell: the small slash).
+struct Piece
+{
+    uint64_t hash;
+    uint8_t set, glyph, width, height, inkLeft, inkRight, inkBottom;
+    uint8_t top = 0u;
+};
+// A word of the menus' pictures (tools/typeface/pieces.py WORDS), drawn
+// whole: known by its picture's palette and the hash of its box's texels;
+// the box's place and size in the picture, the console word's ink in the
+// box (as Ink has it), the shift of the drawn word's ink centre from the
+// console's, its fit (a TypefaceFont whose cell is the box), and its glyphs,
+// each at its pen position (cell pixels from the word's start).
+struct WordGlyph
+{
+    uint16_t glyph;
+    float pen;
+};
+struct PieceWord
+{
+    uint64_t palette, hash;
+    uint16_t x, y;
+    uint8_t width, height, inkLeft, inkRight, inkBottom;
+    float shift;
+    const TypefaceFont *style;
+    const WordGlyph *glyphs;
+    size_t count;
+    // A soft dark shadow under the word instead of an edge (the battle's
+    // end: Exp, Skills): the core blurred (sigma, cell pixels), moved
+    // (cell pixels across and down) and faded; no shadow at strength 0.
+    uint8_t shadowX = 0u, shadowY = 0u;
+    float shadowSigma = 0.0f, shadowStrength = 0.0f;
+    // Printed on a button's fill (the framed Player): the box's texels are
+    // the word's and the fill's; the fill is put back under the new word,
+    // each row from its colour left of the box to its colour right of it.
+    bool onButton = false;
+};
+
+// A texel of a word on a button (buttonWord): the word's grey core, its dark
+// edge, or the button's blue fill. tools/typeface/pieces.py button_kind is
+// the same.
+enum class ButtonTexel
+{
+    Core,
+    Edge,
+    Fill
+};
+ButtonTexel buttonTexel(const uint8_t *t)
+{
+    const float light = (3.0f * t[0] + 6.0f * t[1] + float(t[2])) / 10.0f;
+    if (light < 45.0f)
+    {
+        return ButtonTexel::Edge;
+    }
+    return int(t[2]) - int(t[0]) < 0x38 && light > 90.0f ? ButtonTexel::Core : ButtonTexel::Fill;
+}
 
 #include "typeface_table.inc"
 
@@ -148,6 +221,9 @@ struct Cell
     // Its row in the font's table; -1 when two glyphs of the pages look alike.
     int16_t glyph;
     Ink ink;
+    // The rows a draw takes when fewer than the cell's: the names over heads
+    // (monsters', other people's) take the name font's cells a row short.
+    uint8_t rows = 0u;
 };
 
 // RG_TYPEFACE_SHEET=DIR: as each page is read, every glyph the table redraws,
@@ -209,6 +285,50 @@ uint64_t hashAlpha(const uint8_t *rgba, uint32_t texels)
     return hash;
 }
 
+// Every byte of the texels: a piece's identity (tools/typeface/pieces.py's
+// hash_rgba).
+uint64_t hashRgba(const uint8_t *rgba, uint32_t texels)
+{
+    uint64_t hash = 0xcbf29ce484222325ull;
+    for (uint32_t i = 0; i < texels * 4u; ++i)
+    {
+        hash ^= rgba[i];
+        hash *= 0x100000001b3ull;
+    }
+    return hash;
+}
+
+bool piecePalette(uint64_t clut)
+{
+    return std::find(std::begin(kPiecePalettes), std::end(kPiecePalettes), clut) != std::end(kPiecePalettes);
+}
+
+// The menus' pictures are redrawn with the English text only, as the fonts
+// are (afterFindEntry): with the European text the option says the letters
+// stay the game's, and a European picture sharing a palette and texels with
+// the English one would otherwise come out half redrawn.
+bool englishPieces()
+{
+    return rg::textlanguage::language() == 0;
+}
+
+// Palettes our own code changed (notePaletteAlias): changed, original.
+std::mutex g_aliasesMutex;
+std::vector<std::pair<uint64_t, uint64_t>> g_aliases;
+
+uint64_t unaliased(uint64_t clut)
+{
+    std::lock_guard<std::mutex> lock(g_aliasesMutex);
+    for (const auto &[changed, original] : g_aliases)
+    {
+        if (changed == clut)
+        {
+            return original;
+        }
+    }
+    return clut;
+}
+
 uint32_t read32(const uint8_t *p)
 {
     uint32_t value = 0;
@@ -266,11 +386,13 @@ bool readPage(const uint8_t *rdram, const TypefaceFont &font, uint8_t fontIndex,
         {
             break;
         }
+        // A character by itself, a symbol (named 0) by its code.
         const char character = static_cast<char>(entry[0]);
         int16_t glyph = -1;
         for (size_t i = 0; i < font.count; ++i)
         {
-            if (font.glyphs[i].character == character && character != 0)
+            if (character != 0 ? font.glyphs[i].character == character
+                               : font.glyphs[i].character == 0 && font.glyphs[i].code == code)
             {
                 glyph = static_cast<int16_t>(i);
             }
@@ -309,6 +431,19 @@ bool readPage(const uint8_t *rdram, const TypefaceFont &font, uint8_t fontIndex,
         if (!inserted && (it->second.font != cell.font || it->second.glyph != cell.glyph))
         {
             it->second.glyph = -1;
+        }
+        // The cell a row short too, when its last row is clear (the console's
+        // glyphs leave it so): the names over heads are drawn that way.
+        if (inkBottom < int(ch))
+        {
+            Cell shorter = cell;
+            shorter.rows = static_cast<uint8_t>(ch - 1u);
+            const auto [at, fresh] = g_cells.emplace(hashAlpha(rgba.data(), cw * (ch - 1u)), shorter);
+            if (!fresh && (at->second.font != shorter.font || at->second.glyph != shorter.glyph ||
+                           at->second.rows != shorter.rows))
+            {
+                at->second.glyph = -1;
+            }
         }
         added += inserted ? 1u : 0u;
         if (inserted && !g_sheetDirectory.empty())
@@ -481,16 +616,44 @@ enum class Version : uint8_t
     Shadow,
 };
 
+// A piece's colours, from its own texels (pieceColours): its edge's, how
+// opaque the edge is, and its core's row by row (a digit is often shaded
+// from top to bottom).
+constexpr uint32_t kPieceRows = 32u;
+struct PieceColours
+{
+    uint8_t edge[3] = {};
+    uint8_t edgeAlpha = 0u; // 0x80 opaque
+    uint8_t rows[kPieceRows][3] = {};
+};
+
 struct Job
 {
     uint64_t key;
-    uint8_t font;
+    const TypefaceFont *font;
     int16_t glyph;
     Ink ink;
     uint32_t scale;
     bool bold;
     Version version;
     uint8_t colour[3];
+    // A piece of a menu picture: the size its draw samples, and its colours.
+    bool piece = false;
+    uint8_t regionWidth = 0u, regionHeight = 0u;
+    PieceColours colours{};
+    // With RG_TYPEFACE_SHEET, the piece's console texels (writePieceSheet).
+    std::vector<uint8_t> console;
+    // A word: drawn over its whole piece (regionWidth x regionHeight), the
+    // console word's box at this place in it (ink holds the console word's
+    // ink in the piece).
+    const PieceWord *word = nullptr;
+    uint8_t offsetX = 0u, offsetY = 0u;
+    // A piece drawn from a sprite starting this many rows into its cell
+    // (Piece::top): the baseline, a cell's row, is that much higher in it.
+    uint8_t spriteTop = 0u;
+    // The piece holds other art away from the word (console holds the
+    // piece): kept as the game draws it, under the word.
+    bool keep = false;
 };
 struct Picture
 {
@@ -596,6 +759,37 @@ void spread(std::vector<uint8_t> &image, int width, int height, bool alongY, int
             start[size_t(i) * step] = line[size_t(window.front())];
         }
     }
+}
+
+// The width of a glyph's strokes across, in render pixels: the median of its
+// rows' runs of ink at least half covered; alongY, their height down: the
+// median of its columns' runs in the rows from `from` on.
+int strokeWidth(const std::vector<uint8_t> &image, int width, int height, bool alongY = false, int from = 0)
+{
+    std::vector<int> runs;
+    const int lines = alongY ? width : height, length = alongY ? height : width;
+    for (int n = 0; n < lines; ++n)
+    {
+        int run = 0;
+        for (int i = alongY ? std::max(0, from) : 0; i <= length; ++i)
+        {
+            if (i < length && image[alongY ? size_t(i) * width + n : size_t(n) * width + i] >= 128u)
+            {
+                ++run;
+            }
+            else if (run > 0)
+            {
+                runs.push_back(run);
+                run = 0;
+            }
+        }
+    }
+    if (runs.empty())
+    {
+        return 0;
+    }
+    std::nth_element(runs.begin(), runs.begin() + runs.size() / 2u, runs.end());
+    return runs[runs.size() / 2u];
 }
 
 // A box filter from `from` texels down to `to`: each output texel's first
@@ -740,14 +934,81 @@ void sweep(std::vector<uint8_t> &image, int width, int height, int length)
     }
 }
 
+// A shadowed word's shadow at the picture's scale: its core (coverage
+// 0-255, ow x oh) blurred by a Gaussian, moved down and right and faded,
+// 0-255, as tools/typeface/pieces.py's shadow_core fitted it.
+std::vector<float> softShadow(const std::vector<float> &cover, int ow, int oh, const PieceWord &word,
+                              uint32_t scale)
+{
+    const float sigma = std::max(0.3f, word.shadowSigma * float(scale));
+    const int radius = int(std::ceil(sigma * 3.0f));
+    std::vector<float> kernel(size_t(2 * radius + 1));
+    float total = 0.0f;
+    for (int k = -radius; k <= radius; ++k)
+    {
+        kernel[size_t(k + radius)] = std::exp(-0.5f * float(k * k) / (sigma * sigma));
+        total += kernel[size_t(k + radius)];
+    }
+    for (float &k : kernel)
+    {
+        k /= total;
+    }
+    std::vector<float> across(cover.size(), 0.0f), down(cover.size(), 0.0f);
+    for (int y = 0; y < oh; ++y)
+    {
+        for (int x = 0; x < ow; ++x)
+        {
+            float sum = 0.0f;
+            for (int k = -radius; k <= radius; ++k)
+            {
+                if (x + k >= 0 && x + k < ow)
+                {
+                    sum += kernel[size_t(k + radius)] * cover[size_t(y) * ow + x + k];
+                }
+            }
+            across[size_t(y) * ow + x] = sum;
+        }
+    }
+    for (int y = 0; y < oh; ++y)
+    {
+        for (int x = 0; x < ow; ++x)
+        {
+            float sum = 0.0f;
+            for (int k = -radius; k <= radius; ++k)
+            {
+                if (y + k >= 0 && y + k < oh)
+                {
+                    sum += kernel[size_t(k + radius)] * across[size_t(y + k) * ow + x];
+                }
+            }
+            down[size_t(y) * ow + x] = sum;
+        }
+    }
+    const int dx = int(word.shadowX) * int(scale), dy = int(word.shadowY) * int(scale);
+    std::vector<float> out(cover.size(), 0.0f);
+    for (int y = dy; y < oh; ++y)
+    {
+        for (int x = dx; x < ow; ++x)
+        {
+            out[size_t(y) * ow + x] = std::min(255.0f, down[size_t(y - dy) * ow + x - dx] * word.shadowStrength);
+        }
+    }
+    return out;
+}
+
 // The glyph at `scale` host pixels a cell pixel, as the fit placed it: drawn
 // at kRender pixels a cell pixel, grown, and averaged down (or its border or
-// shadow, with their margin).
+// shadow, with their margin; or a word, its glyphs drawn together, its box
+// as the cell).
 Picture draw(const Job &job)
 {
     Picture picture;
-    const TypefaceFont &font = *kFonts[job.font];
-    const TypefaceGlyph &glyph = font.glyphs[job.glyph];
+    const TypefaceFont &font = *job.font;
+    // A word is drawn over its whole piece (its edge may reach past the
+    // console word's box into the clear around it): its baseline, a row of
+    // its box, moved down to the box's place.
+    const TypefaceGlyph wordGlyph{' ', 0u, job.word ? job.word->shift : 0.0f, float(job.offsetY)};
+    const TypefaceGlyph &glyph = job.word ? wordGlyph : font.glyphs[job.glyph];
     Typeface *face = typefaceFor(font.file);
     if (!face)
     {
@@ -761,15 +1022,134 @@ Picture draw(const Job &job)
     const int growY = int(std::lround(steps * font.penY * r / 8.0f));
     const float scaleX = stbtt_ScaleForMappingEmToPixels(&face->info, font.emX * float(r));
     const float scaleY = stbtt_ScaleForMappingEmToPixels(&face->info, font.emY * float(r));
-    int bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
-    stbtt_GetGlyphBitmapBox(&face->info, glyph.glyph, scaleX, scaleY, &bx0, &by0, &bx1, &by1);
-    const int gw = bx1 - bx0, gh = by1 - by0;
-    if (gw <= 0 || gh <= 0)
+    // The glyphs drawn, each at its pen position (cell pixels; one at 0 for
+    // a letter), on one baseline: the bitmap spans them all, its top row
+    // `by0` render pixels from the baseline.
+    std::vector<std::pair<int, int>> drawn; // glyph, render pixels across
+    if (job.word)
+    {
+        for (size_t i = 0; i < job.word->count; ++i)
+        {
+            drawn.emplace_back(job.word->glyphs[i].glyph, int(std::lround(job.word->glyphs[i].pen * float(r))));
+        }
+    }
+    else
+    {
+        drawn.emplace_back(glyph.glyph, 0);
+    }
+    int minX = INT32_MAX, minY = INT32_MAX, maxX = INT32_MIN, maxY = INT32_MIN;
+    for (const auto &[index, at] : drawn)
+    {
+        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        stbtt_GetGlyphBitmapBox(&face->info, index, scaleX, scaleY, &x0, &y0, &x1, &y1);
+        if (x1 > x0 && y1 > y0)
+        {
+            minX = std::min(minX, at + x0), maxX = std::max(maxX, at + x1);
+            minY = std::min(minY, y0), maxY = std::max(maxY, y1);
+        }
+    }
+    if (maxX <= minX || maxY <= minY)
     {
         return picture;
     }
+    int gw = maxX - minX, gh = maxY - minY, by0 = minY;
     std::vector<uint8_t> bitmap(size_t(gw) * gh, 0u);
-    stbtt_MakeGlyphBitmap(&face->info, bitmap.data(), gw, gh, gw, scaleX, scaleY, glyph.glyph);
+    std::vector<uint8_t> one;
+    for (const auto &[index, at] : drawn)
+    {
+        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        stbtt_GetGlyphBitmapBox(&face->info, index, scaleX, scaleY, &x0, &y0, &x1, &y1);
+        const int w = x1 - x0, h = y1 - y0;
+        if (w <= 0 || h <= 0)
+        {
+            continue;
+        }
+        one.assign(size_t(w) * h, 0u);
+        stbtt_MakeGlyphBitmap(&face->info, one.data(), w, h, w, scaleX, scaleY, index);
+        for (int y = 0; y < h; ++y)
+        {
+            uint8_t *to = bitmap.data() + size_t(y + y0 - minY) * gw + (at + x0 - minX);
+            for (int x = 0; x < w; ++x)
+            {
+                to[x] = std::max(to[x], one[size_t(y) * w + x]);
+            }
+        }
+    }
+    if (glyph.gap > 0.0f)
+    {
+        // The rows below the middle of the widest clear band between the
+        // sign's parts moved down by the gap, those above it up by half, so
+        // its centre stays.
+        std::vector<bool> inked(static_cast<size_t>(gh), false);
+        for (int y = 0; y < gh; ++y)
+        {
+            for (int x = 0; x < gw && !inked[size_t(y)]; ++x)
+            {
+                inked[size_t(y)] = bitmap[size_t(y) * gw + x] != 0u;
+            }
+        }
+        int split = -1, widest = 0;
+        for (int y = 0; y < gh;)
+        {
+            if (inked[size_t(y)])
+            {
+                ++y;
+                continue;
+            }
+            int end = y;
+            while (end < gh && !inked[size_t(end)])
+            {
+                ++end;
+            }
+            if (y > 0 && end < gh && end - y > widest)
+            {
+                widest = end - y, split = (y + end) / 2;
+            }
+            y = end;
+        }
+        const int add = int(std::lround(glyph.gap * float(r)));
+        if (split > 0 && add > 0)
+        {
+            std::vector<uint8_t> opened(size_t(gw) * (gh + add), 0u);
+            std::copy(bitmap.begin(), bitmap.begin() + size_t(split) * gw, opened.begin());
+            std::copy(bitmap.begin() + size_t(split) * gw, bitmap.end(), opened.begin() + size_t(split + add) * gw);
+            bitmap = std::move(opened);
+            gh += add;
+            by0 -= add / 2;
+        }
+    }
+    if (font.slant != 0.0f)
+    {
+        // Leant: each row moved across by the slant times its height above
+        // the baseline (row -by0), split between the two pixels it falls on.
+        const int base = -by0;
+        const int extra = int(std::ceil(std::abs(font.slant) * float(std::max(base, gh - base)))) + 1;
+        const int wide = gw + 2 * extra;
+        std::vector<float> leant(size_t(wide) * gh, 0.0f);
+        for (int y = 0; y < gh; ++y)
+        {
+            const float shift = font.slant * float(base - y) + float(extra);
+            const int whole = int(std::floor(shift));
+            const float part = shift - float(whole);
+            for (int x = 0; x < gw; ++x)
+            {
+                const float value = bitmap[size_t(y) * gw + x];
+                const int to = x + whole;
+                if (value == 0.0f || to < 0 || to + 1 >= wide)
+                {
+                    continue;
+                }
+                leant[size_t(y) * wide + to] += value * (1.0f - part);
+                leant[size_t(y) * wide + to + 1] += value * part;
+            }
+        }
+        bitmap.assign(size_t(wide) * gh, 0u);
+        for (size_t i = 0; i < bitmap.size(); ++i)
+        {
+            bitmap[i] = static_cast<uint8_t>(std::min(255.0f, leant[i] + 0.5f));
+        }
+        gw = wide;
+    }
     int inkLeft = gw, inkRight = -1, inkTop = gh, inkEnd = 0;
     for (int y = 0; y < gh; ++y)
     {
@@ -793,52 +1173,183 @@ Picture draw(const Job &job)
     const int marginX = std::abs(growX), marginY = std::abs(growY);
     const int pad = job.version == Version::Glyph ? 0 : int(dq8::gfx::kRegionBorderMargin) * r;
     const int offX = marginX + pad, offY = marginY + pad;
-    const int cw = int(font.cellWidth) * r, ch = int(font.cellHeight) * r;
+    // The picture's texels: the font's cell (a row short for the names over
+    // heads), or the size a piece's draw samples (its cell, up to two texels
+    // narrower or one wider, a row less or more; a word's whole piece).
+    const uint32_t outW = job.regionWidth ? job.regionWidth : font.cellWidth;
+    const uint32_t outH = job.regionHeight ? job.regionHeight : font.cellHeight;
+    const int cw = int(std::max(font.cellWidth, outW)) * r, ch = int(std::max(font.cellHeight, outH)) * r;
     const int width = cw + 2 * offX, height = ch + 2 * offY;
     std::vector<uint8_t> canvas(size_t(width) * height, 0u);
     // The ink centre on the console glyph's (and the table's shift), the
     // baseline on the table's row (and the sign's lift).
-    const int left =
+    int left =
         int(std::lround((job.ink.centre() + glyph.shift) * float(r) - (inkLeft + inkRight + 1) * 0.5f)) + offX;
-    const int top = int(std::lround((font.baseline + glyph.lift) * float(r))) + by0 + offY;
+    int top = int(std::lround((font.baseline + glyph.lift - float(job.spriteTop)) * float(r))) + by0 + offY;
     // What reaches past the console glyph is brought in, so nothing is cut
     // flat at the cell's edge and nothing runs into the next letter (in
     // bitmap rows and columns; canvas = bitmap + left or top):
     // - a descender longer than the console's (the typeface's g, j, p, q, y)
     //   ends where the console's does, the rows below the baseline squeezed,
     //   as the console's short descenders are;
-    // - a glyph wider than the console's by more than half a pixel a side, or
-    //   past the cell's last shown column (the W), is narrowed about its
-    //   centre;
+    // - a glyph past the console's ink by more than half a pixel a side, or
+    //   past the cell's last shown column, is moved back inside when it is
+    //   no wider than that room; one wider (the W) is centred in the room
+    //   and narrowed to it, its strokes keeping their width (narrowed where
+    //   the fit's shift put it, the W came out a pixel off, a gap after it);
     // - one past the cell's top (the tall signs: / [ ] { }) has the rows
     //   above the baseline squeezed down to it.
     // Half a pixel past the console's ink is let be (a round letter's
     // overshoot); the console's ascenders are lower than the typeface's, and
     // those are let be too.
     const int baseRow = -by0;
-    const int endRow = int(job.ink.bottom) * r + offY - top;
-    if (baseRow >= 0 && inkEnd > endRow + r / 2 && endRow > baseRow + 1)
+    // A glyph's last row is never shown, as its last column (below): drawn a
+    // row short (the names over heads), the console's descenders reach it,
+    // and the typeface's end a row above, with no overshoot let be. The name
+    // font is drawn so over heads while its edge's copies take whole cells:
+    // its descenders end there in every draw, so the glyph, its edge and its
+    // shadow agree (an edge ringing a longer g left a black band below it).
+    const uint32_t shownEnd = job.piece                ? 0u
+                              : &font == &kNameFont    ? font.cellHeight - 2u
+                              : job.ink.bottom >= outH ? outH - 1u
+                                                       : 0u;
+    const bool lastRow = shownEnd != 0u && job.ink.bottom > shownEnd;
+    const int endRow = int(lastRow ? shownEnd : job.ink.bottom) * r + offY - top;
+    if (baseRow >= 0 && inkEnd > endRow + (lastRow ? 0 : r / 2) && endRow > baseRow + 1)
     {
-        squeeze(bitmap, gw, gh, true, baseRow, double(endRow - baseRow) / double(inkEnd - baseRow), baseRow, gh);
+        // The whole glyph squeezed from its top, as the console's pixel fonts
+        // draw a descender letter's bowl shorter than the others' (the names'
+        // g ends its bowl two rows above the a's): the top stays on the
+        // letters', and the bowl, the gap and the tail keep their proportions
+        // (squeezed below the baseline alone, the names' tail touched the
+        // bowl). Its strokes across are then widened back by what the
+        // squeeze took, as the narrowed W's: squeezed a little further first,
+        // so it still ends at endRow. A word (a whole word is one glyph here)
+        // has only its rows below the baseline squeezed, its letters' tops
+        // and bottoms staying on the console word's.
+        const int from = job.word ? baseRow : inkTop;
+        const double room = endRow - from, depth = inkEnd - from;
+        const double stroke = std::min(double(strokeWidth(bitmap, gw, gh, true, from)), room / 2.0);
+        const double factor = (room - stroke / 2.0) / (depth - stroke / 2.0);
+        squeeze(bitmap, gw, gh, true, from, factor, from, gh);
+        // Widened from the squeezed rows only: a word's letters above its
+        // baseline would otherwise reach down past it.
+        std::vector<uint8_t> thick = bitmap;
+        std::fill(thick.begin(), thick.begin() + size_t(from) * gw, uint8_t(0));
+        spread(thick, gw, gh, true, int(std::lround(stroke * (1.0 - factor) / 2.0)), false);
+        std::copy(thick.begin() + size_t(from) * gw, thick.end(), bitmap.begin() + size_t(from) * gw);
     }
     const double centre = (inkLeft + inkRight + 1) * 0.5;
     const double half = (inkRight + 1 - inkLeft) * 0.5;
-    const double canvasCentre = left + centre;
     // The cell's last column is never shown (a glyph's sprite spans a texel
     // past its pixels, and the backend clears that one in the picture): the
-    // right edge is the column before it, the stroke's growth inside it.
-    const double leftLimit = std::max(0.0, job.ink.left - 0.5) * r + offX;
+    // right edge is the column before it, the stroke's growth inside it. A
+    // word's piece is clear around the word: its edges are the console
+    // word's ink, the growth inside them too.
+    const double leftLimit = std::max(0.0, job.ink.left - 0.5) * r + (job.word ? std::max(0, growX) : 0) + offX;
     const double rightLimit =
-        std::min((double(font.cellWidth) - 1.0) * r - std::max(0, growX), (job.ink.right + 0.5) * r) + offX;
-    const double narrow = std::min({1.0, (canvasCentre - leftLimit) / half, (rightLimit - canvasCentre) / half});
-    if (narrow < 1.0 - 0.5 / half && narrow > 0.0)
+        (job.word ? (job.ink.right + 0.5) * r - std::max(0, growX)
+                  : std::min((double(std::min(font.cellWidth, outW)) - 1.0) * r - std::max(0, growX),
+                             (job.ink.right + 0.5) * r)) +
+        offX;
+    const double room = rightLimit - leftLimit;
+    const double canvasCentre = left + centre;
+    if (room > 0.0 && (canvasCentre - half < leftLimit - 0.5 || canvasCentre + half > rightLimit + 0.5))
     {
-        squeeze(bitmap, gw, gh, false, centre, narrow, 0, gw);
+        const double wanted = 2.0 * half <= room ? std::clamp(canvasCentre, leftLimit + half, rightLimit - half)
+                                                 : (leftLimit + rightLimit) * 0.5;
+        left += int(std::lround(wanted - canvasCentre));
+        if (2.0 * half > room + 1.0)
+        {
+            // Narrowed to the room, its strokes would come out thinner than
+            // the other letters' (the menus' W): narrowed a little further,
+            // its strokes then widened back across by what that took, so they
+            // keep their width and the glyph its room.
+            const double stroke = std::min(double(strokeWidth(bitmap, gw, gh)), room / 2.0);
+            const double factor = (room - stroke) / (2.0 * half - stroke);
+            squeeze(bitmap, gw, gh, false, centre, factor, 0, gw);
+            spread(bitmap, gw, gh, false, int(std::lround(stroke * (1.0 - factor) / 2.0)), false);
+        }
     }
     const int topRow = offY - top;
     if (baseRow > topRow && inkTop < topRow - r / 4)
     {
         squeeze(bitmap, gw, gh, true, baseRow, double(baseRow - topRow) / double(baseRow - inkTop), 0, baseRow);
+    }
+    // A piece's edge rings the glyph inside the piece: the glyph and its
+    // growth stay a cell pixel inside the piece's top and bottom, or the edge
+    // is cut flat there (Slot 1's bottom, the battle's slash). Moved into the
+    // room the other side has, and squeezed down its rows if that is short.
+    if (job.piece && !(job.word && job.word->shadowStrength > 0.0f))
+    {
+        int first = gh, end = 0;
+        for (int y = 0; y < gh; ++y)
+        {
+            for (int x = 0; x < gw; ++x)
+            {
+                if (bitmap[size_t(y) * gw + x] >= 128u)
+                {
+                    first = std::min(first, y);
+                    end = y + 1;
+                    break;
+                }
+            }
+        }
+        const int lowest = offY + r + std::max(0, growY), highest = offY + int(outH) * r - r - std::max(0, growY);
+        if (end > first && highest > lowest)
+        {
+            const int over = top + end - highest, under = lowest - (top + first);
+            if (over > 0 && under < 0)
+            {
+                top -= std::min(over, -under);
+            }
+            else if (under > 0 && over < 0)
+            {
+                top += std::min(under, -over);
+            }
+            const int from = lowest - top, to = highest - top;
+            if (first < from || end > to)
+            {
+                if (job.word)
+                {
+                    const double factor = double(to - from) / double(end - first);
+                    squeeze(bitmap, gw, gh, true, (from - first * factor) / (1.0 - factor), factor, 0, gh);
+                }
+                else
+                {
+                    // A single glyph (the attributes' slash) squeezed whole,
+                    // across as well about its ink's centre, so it keeps its
+                    // slope (squeezed down only, the slash lay flatter than
+                    // the console's); its strokes then widened back by what
+                    // the squeeze took, as the narrowed W's, so a little more
+                    // squeezed first to end within the room.
+                    int left0 = gw, right0 = 0;
+                    for (int y = 0; y < gh; ++y)
+                    {
+                        for (int x = 0; x < gw; ++x)
+                        {
+                            if (bitmap[size_t(y) * gw + x] >= 128u)
+                            {
+                                left0 = std::min(left0, x);
+                                right0 = std::max(right0, x + 1);
+                            }
+                        }
+                    }
+                    const double room = to - from, depth = end - first;
+                    const double stroke = std::min(double(strokeWidth(bitmap, gw, gh)), room / 2.0);
+                    const double factor = (room - stroke) / (depth - stroke);
+                    squeeze(bitmap, gw, gh, true, (from + stroke * (1.0 - factor) / 2.0 - first * factor) / (1.0 - factor),
+                            factor, 0, gh);
+                    if (right0 > left0)
+                    {
+                        squeeze(bitmap, gw, gh, false, (left0 + right0) * 0.5, factor, 0, gw);
+                    }
+                    const int back = int(std::lround(stroke * (1.0 - factor) / 2.0));
+                    spread(bitmap, gw, gh, false, back, false);
+                    spread(bitmap, gw, gh, true, back, false);
+                }
+            }
+        }
     }
     for (int y = 0; y < gh; ++y)
     {
@@ -858,7 +1369,16 @@ Picture draw(const Job &job)
     }
     spread(canvas, width, height, false, marginX, growX < 0);
     spread(canvas, width, height, true, marginY, growY < 0);
-    if (job.version == Version::Border)
+    // A piece's dark edge: the glyph ringed by a round pen a cell pixel wide,
+    // under the glyph (the console's digits have the same).
+    std::vector<uint8_t> edge;
+    const bool shadowed = job.word && job.word->shadowStrength > 0.0f;
+    if (job.piece && !shadowed)
+    {
+        edge = canvas;
+        ring(edge, width, height, float(r));
+    }
+    else if (job.version == Version::Border)
     {
         ring(canvas, width, height, float(r));
     }
@@ -867,45 +1387,92 @@ Picture draw(const Job &job)
         sweep(canvas, width, height, r);
     }
     // Averaged down to the scale, across then down, each host pixel the mean
-    // of the render pixels it covers: the cell, and the margin a version has.
+    // of the render pixels it covers: the texels drawn, and the margin a
+    // version has.
     const uint32_t margin = job.version == Version::Glyph ? 0u : 2u * dq8::gfx::kRegionBorderMargin;
-    picture.width = (font.cellWidth + margin) * job.scale;
-    picture.height = (font.cellHeight + margin) * job.scale;
+    picture.width = (outW + margin) * job.scale;
+    picture.height = (outH + margin) * job.scale;
     const int ow = int(picture.width), oh = int(picture.height);
-    const int sw = cw + 2 * pad, sh = ch + 2 * pad; // the render pixels averaged, from (marginX, marginY)
+    // The render pixels averaged, from (marginX, marginY).
+    const int sw = int(outW) * r + 2 * pad, sh = int(outH) * r + 2 * pad;
     const std::vector<Taps> across = boxTaps(sw, ow), down = boxTaps(sh, oh);
-    std::vector<float> rows(size_t(ow) * sh);
-    for (int y = 0; y < sh; ++y)
-    {
-        const uint8_t *line = canvas.data() + size_t(y + marginY) * width + marginX;
-        for (int x = 0; x < ow; ++x)
+    auto average = [&](const std::vector<uint8_t> &image) {
+        std::vector<float> rows(size_t(ow) * sh), out(size_t(ow) * oh);
+        for (int y = 0; y < sh; ++y)
         {
-            const Taps &t = across[size_t(x)];
-            float sum = 0.0f;
-            for (size_t i = 0; i < t.weights.size(); ++i)
+            const uint8_t *line = image.data() + size_t(y + marginY) * width + marginX;
+            for (int x = 0; x < ow; ++x)
             {
-                sum += t.weights[i] * line[t.first + int(i)];
+                const Taps &t = across[size_t(x)];
+                float sum = 0.0f;
+                for (size_t i = 0; i < t.weights.size(); ++i)
+                {
+                    sum += t.weights[i] * line[t.first + int(i)];
+                }
+                rows[size_t(y) * ow + x] = sum;
             }
-            rows[size_t(y) * ow + x] = sum;
         }
-    }
-    picture.rgba.assign(size_t(ow) * oh * 4u, 0u);
-    for (int y = 0; y < oh; ++y)
-    {
-        const Taps &t = down[size_t(y)];
-        for (int x = 0; x < ow; ++x)
+        for (int y = 0; y < oh; ++y)
         {
-            float sum = 0.0f;
-            for (size_t i = 0; i < t.weights.size(); ++i)
+            const Taps &t = down[size_t(y)];
+            for (int x = 0; x < ow; ++x)
             {
-                sum += t.weights[i] * rows[size_t(t.first + int(i)) * ow + x];
+                float sum = 0.0f;
+                for (size_t i = 0; i < t.weights.size(); ++i)
+                {
+                    sum += t.weights[i] * rows[size_t(t.first + int(i)) * ow + x];
+                }
+                out[size_t(y) * ow + x] = sum;
             }
-            uint8_t *out = &picture.rgba[(size_t(y) * ow + x) * 4u];
+        }
+        return out;
+    };
+    const std::vector<float> cover = average(canvas);
+    picture.rgba.assign(size_t(ow) * oh * 4u, 0u);
+    if (!job.piece)
+    {
+        for (size_t i = 0; i < cover.size(); ++i)
+        {
+            uint8_t *out = &picture.rgba[i * 4u];
             out[0] = job.colour[0];
             out[1] = job.colour[1];
             out[2] = job.colour[2];
             // Coverage 0-255 to the GS's alpha, 0x80 opaque.
-            out[3] = static_cast<uint8_t>(std::min(128.0f, sum * 128.0f / 255.0f + 0.5f));
+            out[3] = static_cast<uint8_t>(std::min(128.0f, cover[i] * 128.0f / 255.0f + 0.5f));
+        }
+        return picture;
+    }
+    // A piece: the core in its row's colour over the edge (or over a
+    // shadowed word's shadow: the core blurred, moved and faded).
+    const std::vector<float> edgeCover = shadowed ? softShadow(cover, ow, oh, *job.word, job.scale) : average(edge);
+    const float strength = shadowed ? 1.0f : job.colours.edgeAlpha / 128.0f;
+    for (int y = 0; y < oh; ++y)
+    {
+        const float at = std::clamp((float(y) + 0.5f) / float(job.scale) - 0.5f, 0.0f, float(outH - 1u));
+        const int row = std::min(int(at), int(outH) - 1), next = std::min(row + 1, int(outH) - 1);
+        const float part = at - float(row);
+        float core[3];
+        for (int c = 0; c < 3; ++c)
+        {
+            core[c] = job.colours.rows[row][c] * (1.0f - part) + job.colours.rows[next][c] * part;
+        }
+        for (int x = 0; x < ow; ++x)
+        {
+            const size_t i = size_t(y) * ow + x;
+            const float c = std::min(1.0f, cover[i] / 255.0f);
+            const float e = std::min(1.0f, edgeCover[i] / 255.0f) * strength * (1.0f - c);
+            const float a = c + e;
+            if (a <= 0.0f)
+            {
+                continue;
+            }
+            uint8_t *out = &picture.rgba[i * 4u];
+            for (int k = 0; k < 3; ++k)
+            {
+                out[k] = static_cast<uint8_t>(
+                    std::min(255.0f, (core[k] * c + float(job.colours.edge[k]) * e) / a + 0.5f));
+            }
+            out[3] = static_cast<uint8_t>(std::min(128.0f, a * 128.0f + 0.5f));
         }
     }
     return picture;
@@ -951,7 +1518,7 @@ void writeSheet(uint8_t fontIndex, std::vector<SheetGlyph> glyphs)
         for (int bold = 0; bold < 2; ++bold)
         {
             Picture picture =
-                draw(Job{0u, fontIndex, g.glyph, g.ink, s, bold != 0, Version::Glyph, {255u, 255u, 255u}});
+                draw(Job{0u, &font, g.glyph, g.ink, s, bold != 0, Version::Glyph, {255u, 255u, 255u}});
             paint(x0 + (1u + uint32_t(bold)) * (cw + kGap), y0 + m, [&](uint32_t x, uint32_t y) {
                 return picture.rgba.empty() ? 0.0f : float(picture.rgba[(size_t(y) * picture.width + x) * 4u + 3u]);
             });
@@ -991,9 +1558,9 @@ void writeSheet(uint8_t fontIndex, std::vector<SheetGlyph> glyphs)
             }
         };
         const Picture border =
-            draw(Job{0u, fontIndex, g.glyph, g.ink, s, false, Version::Border, {255u, 255u, 255u}});
+            draw(Job{0u, &font, g.glyph, g.ink, s, false, Version::Border, {255u, 255u, 255u}});
         const Picture shadow =
-            draw(Job{0u, fontIndex, g.glyph, g.ink, s, false, Version::Shadow, {255u, 255u, 255u}});
+            draw(Job{0u, &font, g.glyph, g.ink, s, false, Version::Shadow, {255u, 255u, 255u}});
         const uint32_t bx = x0 + 3u * (cw + kGap) + kGap;
         layered(bx, {{&border, 0, 0.0f}});
         layered(bx + vw + kGap, {{&shadow, int(s), 128.0f}, {&shadow, 2 * int(s), 0.0f}});
@@ -1004,6 +1571,62 @@ void writeSheet(uint8_t fontIndex, std::vector<SheetGlyph> glyphs)
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     std::fprintf(stderr, "[typeface] sheet of %s at %ux: %s%s (%zu glyphs, four pictures each, in %lld ms)\n", font.name,
                  s, path.c_str(), written ? "" : " (not written)", glyphs.size(), ms);
+}
+
+// RG_TYPEFACE_SHEET, for the menus' pieces (they are known as they are
+// drawn, not from pages read): each piece as it is first made, the
+// console's enlarged beside the picture made, over the menus' blue, into
+// DIR/piece_<set>_<character code>_<size>_<scale>x.png. From the game's
+// pictures: it stays on the machine.
+void writePieceSheet(const Job &job, const Picture &picture)
+{
+    const uint32_t w = job.regionWidth, h = job.regionHeight, s = job.scale;
+    if (picture.rgba.empty() || job.console.size() != size_t(w) * h * 4u || picture.width != w * s ||
+        picture.height != h * s)
+    {
+        return;
+    }
+    constexpr uint32_t kGap = 4u;
+    const uint32_t width = 2u * w * s + 3u * kGap, height = h * s + 2u * kGap;
+    std::vector<uint8_t> image(size_t(width) * height * 3u);
+    for (size_t i = 0; i < image.size(); i += 3u)
+    {
+        image[i] = 63u, image[i + 1u] = 104u, image[i + 2u] = 160u;
+    }
+    auto put = [&](uint32_t x0, auto texel) {
+        for (uint32_t y = 0; y < h * s; ++y)
+        {
+            for (uint32_t x = 0; x < w * s; ++x)
+            {
+                const uint8_t *t = texel(x, y);
+                const float a = std::min(1.0f, t[3] / 128.0f);
+                uint8_t *p = &image[(size_t(kGap + y) * width + x0 + x) * 3u];
+                for (int c = 0; c < 3; ++c)
+                {
+                    p[c] = static_cast<uint8_t>(p[c] + (float(t[c]) - p[c]) * a);
+                }
+            }
+        }
+    };
+    put(kGap, [&](uint32_t x, uint32_t y) { return &job.console[(size_t(y / s) * w + x / s) * 4u]; });
+    put(2u * kGap + w * s, [&](uint32_t x, uint32_t y) { return &picture.rgba[(size_t(y) * picture.width + x) * 4u]; });
+    char name[128];
+    if (job.word)
+    {
+        std::string text = job.font->name;
+        std::replace_if(text.begin(), text.end(), [](char c) { return !std::isalnum(static_cast<unsigned char>(c)); },
+                        '-');
+        // Named by its place in its picture too: a picture may hold a word
+        // twice (main_menu_top's AP and Lv).
+        std::snprintf(name, sizeof(name), "/piece_word_%s_%u-%u_%ux%u_%ux.png", text.c_str(), unsigned(job.word->x),
+                      unsigned(job.word->y), w, h, s);
+    }
+    else
+    {
+        std::snprintf(name, sizeof(name), "/piece_%s_%02X_%ux%u_%ux.png", job.font->name,
+                      static_cast<unsigned char>(job.font->glyphs[job.glyph].character), w, h, s);
+    }
+    stbi_write_png((g_sheetDirectory + name).c_str(), int(width), int(height), 3, image.data(), int(width * 3u));
 }
 
 void drawer()
@@ -1018,11 +1641,59 @@ void drawer()
             g_queue.pop_front();
         }
         Picture picture = draw(job);
+        if (job.keep && job.word && !picture.rgba.empty() &&
+            job.console.size() == size_t(job.regionWidth) * job.regionHeight * 4u)
+        {
+            // The piece's other art, enlarged as the game shows it (each
+            // texel a block), under the word: the word's box cleared of the
+            // game's word (on a button, its fill put back there).
+            const uint32_t s = job.scale;
+            for (uint32_t y = 0; y < picture.height; ++y)
+            {
+                for (uint32_t x = 0; x < picture.width; ++x)
+                {
+                    const uint32_t tx = x / s, ty = y / s;
+                    if (!job.word->onButton && tx >= job.offsetX && tx < uint32_t(job.offsetX) + job.word->width &&
+                        ty >= job.offsetY && ty < uint32_t(job.offsetY) + job.word->height)
+                    {
+                        continue;
+                    }
+                    const uint8_t *under = &job.console[(size_t(ty) * job.regionWidth + tx) * 4u];
+                    uint8_t *over = &picture.rgba[(size_t(y) * picture.width + x) * 4u];
+                    const float a = over[3] / 128.0f, b = under[3] / 128.0f * (1.0f - a), sum = a + b;
+                    if (sum <= 0.0f)
+                    {
+                        continue;
+                    }
+                    for (int c = 0; c < 3; ++c)
+                    {
+                        over[c] = static_cast<uint8_t>((over[c] * a + under[c] * b) / sum + 0.5f);
+                    }
+                    over[3] = static_cast<uint8_t>(std::min(128.0f, sum * 128.0f + 0.5f));
+                }
+            }
+        }
+        if (job.piece && !job.console.empty() && !g_sheetDirectory.empty())
+        {
+            writePieceSheet(job, picture);
+        }
         if (g_trace)
         {
-            const TypefaceFont &font = *kFonts[job.font];
-            std::fprintf(stderr, "[typeface] made %s '%c' at %ux%s%s%s\n", font.name,
-                         font.glyphs[job.glyph].character, job.scale, job.bold ? ", bold" : "",
+            const TypefaceFont &font = *job.font;
+            // A symbol (character 0) by its code; a word's style has no glyphs.
+            std::string shown = " ";
+            if (!job.word)
+            {
+                const TypefaceGlyph &made = font.glyphs[job.glyph];
+                shown = made.character != 0 ? std::string(1, made.character) : "#" + std::to_string(made.code);
+            }
+            if (!job.piece && job.regionHeight)
+            {
+                // A font's glyph drawn short (the names over heads).
+                shown += " " + std::to_string(job.regionWidth) + "x" + std::to_string(job.regionHeight);
+            }
+            std::fprintf(stderr, "[typeface] made %s '%s' at %ux%s%s%s\n", font.name, shown.c_str(), job.scale,
+                         job.bold ? ", bold" : "",
                          job.version == Version::Border   ? ", border"
                          : job.version == Version::Shadow ? ", shadow"
                                                           : "",
@@ -1048,12 +1719,514 @@ bool wantedPalette(uint64_t clut)
     {
         return false;
     }
-    if (g_learning.load(std::memory_order_relaxed))
+    if (g_learning.load(std::memory_order_relaxed) || (englishPieces() && piecePalette(unaliased(clut))))
     {
         return true;
     }
     std::lock_guard<std::mutex> lock(g_cellsMutex);
     return std::find(g_palettes.begin(), g_palettes.end(), clut) != g_palettes.end();
+}
+
+// The picture made for a job, once the drawer has it (it is then handed
+// over and forgotten here), or the job queued once.
+int answer(const Job &job, uint32_t &width, uint32_t &height, std::vector<uint8_t> &rgba)
+{
+    std::lock_guard<std::mutex> lock(g_jobsMutex);
+    if (const auto ready = g_ready.find(job.key); ready != g_ready.end())
+    {
+        Picture picture = std::move(ready->second);
+        g_readyBytes -= picture.rgba.size();
+        g_ready.erase(ready);
+        // Asked again if the GPU's copy is ever let go.
+        g_asked.erase(job.key);
+        if (picture.rgba.empty())
+        {
+            return dq8::gfx::kRegionNone;
+        }
+        width = picture.width;
+        height = picture.height;
+        rgba = std::move(picture.rgba);
+        return dq8::gfx::kRegionReady;
+    }
+    if (g_asked.insert(job.key).second)
+    {
+        g_queue.push_back(job);
+        g_wake.notify_one();
+    }
+    return dq8::gfx::kRegionPending;
+}
+
+// A piece's colours from its texels (the GS's alpha): the edge's, the mean
+// of the texels with ink next to a clear one (a shadowed word's shadow's,
+// of its dark texels, black without any); the core's per row, the mean of
+// the opaque texels at least two thirds of the way from the edge's
+// lightness to the row's lightest. Rows without core (and a bevel's darker
+// first or last row) take the nearest row's. False when it has no edge or no
+// core.
+bool pieceColours(const uint8_t *rgba, uint32_t width, uint32_t height, PieceColours &out, bool shadowed = false)
+{
+    auto at = [&](uint32_t x, uint32_t y) { return rgba + (size_t(y) * width + x) * 4u; };
+    auto light = [](const uint8_t *t) { return (3.0f * t[0] + 6.0f * t[1] + float(t[2])) / 10.0f; };
+    float edge[3] = {};
+    uint32_t edges = 0u;
+    uint8_t edgeAlpha = 0u;
+    float top = 0.0f;
+    for (uint32_t i = 0; i < width * height && shadowed; ++i)
+    {
+        if (rgba[i * 4u + 3u] != 0u)
+        {
+            top = std::max(top, light(rgba + i * 4u));
+        }
+    }
+    for (uint32_t y = 0; y < height; ++y)
+    {
+        for (uint32_t x = 0; x < width; ++x)
+        {
+            const uint8_t *t = at(x, y);
+            // A shadowed word's shadow: its dark texels, however clear. An
+            // edged one's edge: the texels with ink next to a clear one.
+            const bool counted =
+                shadowed ? t[3] != 0u && light(t) < 0.35f * top
+                         : t[3] >= 0x40u && (x == 0 || y == 0 || x + 1 == width || y + 1 == height ||
+                                             at(x - 1, y)[3] < 0x20u || at(x + 1, y)[3] < 0x20u ||
+                                             at(x, y - 1)[3] < 0x20u || at(x, y + 1)[3] < 0x20u);
+            if (counted)
+            {
+                for (int c = 0; c < 3; ++c)
+                {
+                    edge[c] += t[c];
+                }
+                ++edges;
+                edgeAlpha = std::max(edgeAlpha, t[3]);
+            }
+        }
+    }
+    if (edges == 0u && !shadowed)
+    {
+        return false;
+    }
+    edges = std::max(edges, 1u);
+    for (int c = 0; c < 3; ++c)
+    {
+        out.edge[c] = static_cast<uint8_t>(edge[c] / float(edges) + 0.5f);
+    }
+    out.edgeAlpha = std::min<uint8_t>(edgeAlpha, 0x80u);
+    const float dark = light(out.edge);
+    const uint32_t rows = std::min(height, kPieceRows);
+    float rise[kPieceRows] = {};
+    int first = -1, last = -1;
+    for (uint32_t y = 0; y < rows; ++y)
+    {
+        for (uint32_t x = 0; x < width; ++x)
+        {
+            if (at(x, y)[3] >= 0x70u)
+            {
+                rise[y] = std::max(rise[y], light(at(x, y)) - dark);
+            }
+        }
+        if (rise[y] >= 24.0f)
+        {
+            first = first < 0 ? int(y) : first;
+            last = int(y);
+        }
+    }
+    // A bevel: the core's first or last row much darker than the next row
+    // in (the menus' words' tops and bottoms). The typeface's letters, taller
+    // or lower than the console's, would carry it over more rows (a shade
+    // on Allies' l): those rows take the colour inside. A gradient (Press,
+    // Story) darkens row by row and stays.
+    auto inner = [&](int y, int step) {
+        for (int i = y + step; i >= first && i <= last; i += step)
+        {
+            if (rise[i] >= 24.0f)
+            {
+                return i;
+            }
+        }
+        return -1;
+    };
+    if (const int next = first >= 0 ? inner(first, 1) : -1; next >= 0 && rise[first] < 0.6f * rise[next])
+    {
+        rise[first] = 0.0f;
+    }
+    if (const int next = last >= 0 ? inner(last, -1) : -1; next >= 0 && rise[last] < 0.6f * rise[next])
+    {
+        rise[last] = 0.0f;
+    }
+    bool has[kPieceRows] = {};
+    bool any = false;
+    for (uint32_t y = 0; y < rows; ++y)
+    {
+        if (rise[y] < 24.0f)
+        {
+            continue;
+        }
+        const float lightest = dark + rise[y];
+        float sum[3] = {};
+        uint32_t count = 0u;
+        for (uint32_t x = 0; x < width; ++x)
+        {
+            const uint8_t *t = at(x, y);
+            if (t[3] >= 0x70u && light(t) >= dark + (lightest - dark) * 0.65f)
+            {
+                for (int c = 0; c < 3; ++c)
+                {
+                    sum[c] += t[c];
+                }
+                ++count;
+            }
+        }
+        for (int c = 0; c < 3; ++c)
+        {
+            out.rows[y][c] = static_cast<uint8_t>(sum[c] / float(count) + 0.5f);
+        }
+        has[y] = any = true;
+    }
+    if (!any)
+    {
+        return false;
+    }
+    for (uint32_t y = 0; y < rows; ++y)
+    {
+        if (has[y])
+        {
+            continue;
+        }
+        int nearest = -1;
+        for (uint32_t d = 1; d < rows && nearest < 0; ++d)
+        {
+            if (y >= d && has[y - d])
+            {
+                nearest = int(y - d);
+            }
+            else if (y + d < rows && has[y + d])
+            {
+                nearest = int(y + d);
+            }
+        }
+        std::memcpy(out.rows[y], out.rows[nearest], 3u);
+    }
+    return true;
+}
+
+// A word of the menus' pictures in the piece drawn: its box inside the
+// piece and its texels the table's. Redrawn when the piece holds the word on
+// a clear background, other art two texels or more away kept; a word the
+// table marks as printed on a button (the framed Player) with the button's
+// fill put back under it; any other word printed on art stays the game's.
+// kNoWord when no word of the table is there.
+constexpr int kNoWord = -1;
+int lookupWord(const dq8::gfx::RegionRequest &request, uint64_t clut, uint32_t &width, uint32_t &height,
+               std::vector<uint8_t> &rgba)
+{
+    if (request.width > 255u)
+    {
+        return kNoWord;
+    }
+    for (const PieceWord &word : kWords)
+    {
+        if (!word.style || word.palette != clut || word.x < request.x || word.y < request.y ||
+            word.x + word.width > request.x + request.width || word.y + word.height > request.y + request.height)
+        {
+            continue;
+        }
+        const uint32_t ox = word.x - request.x, oy = word.y - request.y;
+        std::vector<uint8_t> box(size_t(word.width) * word.height * 4u);
+        for (uint32_t y = 0; y < word.height; ++y)
+        {
+            std::memcpy(&box[size_t(y) * word.width * 4u], request.full + (size_t(oy + y) * request.width + ox) * 4u,
+                        size_t(word.width) * 4u);
+        }
+        if (hashRgba(box.data(), uint32_t(word.width) * word.height) != word.hash)
+        {
+            continue;
+        }
+        // The piece holds the word alone (clear around its box), or other art
+        // too, kWordRoom texels or more from the box (the story screen's
+        // "Press" and its button): that art is kept as the game draws it.
+        constexpr uint32_t kWordRoom = 2u;
+        bool alone = true, roomy = true;
+        for (uint32_t y = 0; y < request.height && roomy; ++y)
+        {
+            for (uint32_t x = 0; x < request.width && roomy; ++x)
+            {
+                const bool inside = x >= ox && x < ox + word.width && y >= oy && y < oy + word.height;
+                const bool near = x + kWordRoom >= ox && x < ox + word.width + kWordRoom && y + kWordRoom >= oy &&
+                                  y < oy + word.height + kWordRoom;
+                if (!inside && request.full[(size_t(y) * request.width + x) * 4u + 3u] != 0u)
+                {
+                    alone = false;
+                    roomy = !near;
+                }
+            }
+        }
+        // A word on a button: the button around it is kept, its fill put
+        // back under the word from the texels left and right of the box.
+        const bool onButton = word.onButton && ox >= 1u && ox + word.width < request.width;
+        if (word.onButton && !onButton)
+        {
+            // No fill beside the box to put back under it: left the game's
+            // (redrawn plainly, the fill would be read as its colours and the
+            // button left with a hole).
+            return dq8::gfx::kRegionNone;
+        }
+        if (onButton)
+        {
+            alone = false;
+            roomy = true;
+        }
+        // The colours from the word alone, its rows the piece's (on a button,
+        // the fill's texels left out).
+        std::vector<uint8_t> only(size_t(request.width) * request.height * 4u, 0u);
+        for (uint32_t y = 0; y < word.height; ++y)
+        {
+            std::memcpy(&only[(size_t(oy + y) * request.width + ox) * 4u], &box[size_t(y) * word.width * 4u],
+                        size_t(word.width) * 4u);
+            for (uint32_t x = 0; x < word.width && onButton; ++x)
+            {
+                uint8_t *t = &only[(size_t(oy + y) * request.width + ox + x) * 4u];
+                if (buttonTexel(t) == ButtonTexel::Fill)
+                {
+                    std::memset(t, 0, 4u);
+                }
+            }
+        }
+        PieceColours colours;
+        const bool coloured = roomy && pieceColours(only.data(), request.width, request.height, colours,
+                                                    word.shadowStrength > 0.0f);
+        if (coloured && onButton)
+        {
+            // On a button the core meets the fill here and there, and the
+            // texels next to the cleared fill are not all edge: the edge's
+            // colour is its dark texels'.
+            float sum[3] = {};
+            uint32_t count = 0u;
+            for (size_t i = 0; i < box.size(); i += 4u)
+            {
+                if (buttonTexel(&box[i]) == ButtonTexel::Edge)
+                {
+                    for (int c = 0; c < 3; ++c)
+                    {
+                        sum[c] += box[i + size_t(c)];
+                    }
+                    ++count;
+                }
+            }
+            for (int c = 0; c < 3 && count; ++c)
+            {
+                colours.edge[c] = static_cast<uint8_t>(sum[c] / float(count) + 0.5f);
+            }
+        }
+        if (g_trace)
+        {
+            static std::mutex loggedMutex;
+            static std::unordered_set<uint64_t> logged;
+            std::lock_guard<std::mutex> lock(loggedMutex);
+            if (logged.insert(word.hash ^ (uint64_t(request.width) << 48u | uint64_t(request.height) << 40u |
+                                           (request.bold ? 1u : 0u)))
+                    .second)
+            {
+                std::fprintf(stderr, "[typeface] word '%s' (%ux%u at %u,%u%s)%s\n", word.style->name, request.width,
+                             request.height, request.x, request.y, request.bold ? ", bold" : "",
+                             !roomy     ? ": art next to it in its piece, left as it is"
+                             : !coloured ? ": no colours read"
+                             : !alone    ? ", the rest of its piece kept"
+                                         : "");
+            }
+        }
+        if (!coloured)
+        {
+            return dq8::gfx::kRegionNone;
+        }
+        // The picture is the word's, and with other art in the piece that
+        // art's too (the button beside "Press" changes with the controller).
+        uint64_t key = word.hash;
+        for (const uint64_t value :
+             {uint64_t(request.scale) << 3u | 0x200u,
+              uint64_t(ox) << 48u | uint64_t(oy) << 32u | uint64_t(request.width) << 16u | request.height,
+              alone ? 0u : hashRgba(request.full, request.width * request.height)})
+        {
+            key ^= value;
+            key *= 0x100000001b3ull;
+        }
+        // The console word's ink in the piece.
+        const Ink ink{static_cast<uint8_t>(word.inkLeft + ox), static_cast<uint8_t>(word.inkRight + ox),
+                      static_cast<uint8_t>(word.inkBottom + oy)};
+        Job job{key, word.style, 0, ink, request.scale, false, Version::Glyph, {0u, 0u, 0u}};
+        job.piece = true;
+        job.word = &word;
+        job.regionWidth = static_cast<uint8_t>(request.width);
+        job.regionHeight = static_cast<uint8_t>(request.height);
+        job.offsetX = static_cast<uint8_t>(ox);
+        job.offsetY = static_cast<uint8_t>(oy);
+        job.colours = colours;
+        job.keep = !alone;
+        if (job.keep || !g_sheetDirectory.empty())
+        {
+            job.console.assign(request.full, request.full + size_t(request.width) * request.height * 4u);
+        }
+        if (onButton)
+        {
+            // The kept art's box: each row the fill from the nearest fill
+            // texel left of the box to the nearest right of it (the fill
+            // shades across; a texel of the word's edge just outside the box
+            // is passed over), within three texels, or the one next to it.
+            auto fillAt = [&](uint32_t y, uint32_t from, int step) {
+                for (int n = 0; n < 3; ++n)
+                {
+                    const int x = int(from) + n * step;
+                    if (x < 0 || x >= int(request.width))
+                    {
+                        break;
+                    }
+                    const uint8_t *t = &request.full[(size_t(y) * request.width + uint32_t(x)) * 4u];
+                    if (buttonTexel(t) == ButtonTexel::Fill)
+                    {
+                        return t;
+                    }
+                }
+                return &request.full[(size_t(y) * request.width + from) * 4u];
+            };
+            for (uint32_t y = oy; y < oy + word.height; ++y)
+            {
+                const uint8_t *left = fillAt(y, ox - 1u, -1);
+                const uint8_t *right = fillAt(y, ox + word.width, 1);
+                for (uint32_t x = 0; x < word.width; ++x)
+                {
+                    const float t = float(x + 1u) / float(word.width + 1u);
+                    uint8_t *to = &job.console[(size_t(y) * request.width + ox + x) * 4u];
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        to[c] = static_cast<uint8_t>(float(left[c]) + (float(right[c]) - float(left[c])) * t + 0.5f);
+                    }
+                }
+            }
+        }
+        return answer(job, width, height, rgba);
+    }
+    return kNoWord;
+}
+
+void traceUnknown(const dq8::gfx::RegionRequest &request);
+
+// A region drawn with a palette of the menus' digit pictures or font: a
+// digit or letter the table knows, redrawn in its own colours, or else a
+// word of the table (lookupWord).
+int lookupPiece(const dq8::gfx::RegionRequest &request, uint64_t clut, uint32_t &width, uint32_t &height,
+                std::vector<uint8_t> &rgba)
+{
+    if (request.border || request.shadow || request.height > kPieceRows)
+    {
+        if (g_tracePalettes && request.height > kPieceRows)
+        {
+            // Taller than a piece: logged too when looking for text the
+            // letters miss (a word drawn with the art around it).
+            traceUnknown(request);
+        }
+        return dq8::gfx::kRegionNone;
+    }
+    const uint64_t hash = hashRgba(request.full, request.width * request.height);
+    const Piece *piece = std::lower_bound(std::begin(kPieces), std::end(kPieces), hash,
+                                          [](const Piece &p, uint64_t value) { return p.hash < value; });
+    const bool known = piece != std::end(kPieces) && piece->hash == hash && piece->width == request.width &&
+                       piece->height == request.height;
+    if (!known)
+    {
+        if (const int answered = lookupWord(request, clut, width, height, rgba); answered != kNoWord)
+        {
+            return answered;
+        }
+    }
+    PieceColours colours;
+    const bool coloured = known && pieceColours(request.full, request.width, request.height, colours);
+    if (g_trace)
+    {
+        static std::mutex loggedMutex;
+        static std::unordered_set<uint64_t> logged;
+        std::lock_guard<std::mutex> lock(loggedMutex);
+        if (logged.insert(hash ^ (request.bold ? 1u : 0u)).second)
+        {
+            if (coloured)
+            {
+                const TypefaceFont &font = *kPieceFonts[piece->set];
+                std::fprintf(stderr, "[typeface] %s piece '%c' (%ux%u at %u,%u%s)\n", font.name,
+                             font.glyphs[piece->glyph].character, request.width, request.height, request.x,
+                             request.y, request.bold ? ", bold" : "");
+            }
+            else
+            {
+                std::fprintf(stderr, "[typeface] piece %ux%u at %u,%u of palette %016llX: %s\n", request.width,
+                             request.height, request.x, request.y, static_cast<unsigned long long>(request.clut),
+                             known ? "no colours read" : "not one the table knows");
+            }
+        }
+    }
+    if (!coloured)
+    {
+        return dq8::gfx::kRegionNone;
+    }
+    uint64_t key = hash;
+    key ^= uint64_t(request.scale) << 3u | 0x100u;
+    key *= 0x100000001b3ull;
+    Job job{key, kPieceFonts[piece->set], piece->glyph, Ink{piece->inkLeft, piece->inkRight, piece->inkBottom},
+            request.scale, false, Version::Glyph, {0u, 0u, 0u}};
+    job.piece = true;
+    job.regionWidth = static_cast<uint8_t>(request.width);
+    job.regionHeight = static_cast<uint8_t>(request.height);
+    job.spriteTop = piece->top;
+    job.colours = colours;
+    if (!g_sheetDirectory.empty())
+    {
+        job.console.assign(request.full, request.full + size_t(request.width) * request.height * 4u);
+    }
+    return answer(job, width, height, rgba);
+}
+
+// With the palettes trace (for finding text the letters miss): a region of
+// a text's height that is no glyph of the pages read, or of a piece picture
+// taller than a piece, its palette and alpha levels logged, and with
+// RG_TYPEFACE_SHEET its texels written as
+// DIR/nocell_<palette>_<x>-<y>_<size>.png. The first 400.
+void traceUnknown(const dq8::gfx::RegionRequest &request)
+{
+    static std::mutex loggedMutex;
+    static std::unordered_set<uint64_t> logged;
+    std::lock_guard<std::mutex> lock(loggedMutex);
+    if (logged.size() >= 400u ||
+        !logged.insert(request.clut ^ (uint64_t(request.width) << 56u | uint64_t(request.height) << 48u |
+                                       uint64_t(request.x) << 16u | request.y))
+             .second)
+    {
+        return;
+    }
+    const uint32_t texels = request.width * request.height;
+    if (!g_sheetDirectory.empty())
+    {
+        char file[160];
+        std::snprintf(file, sizeof(file), "/nocell_%016llX_%u-%u_%ux%u.png",
+                      static_cast<unsigned long long>(request.clut), request.x, request.y, request.width,
+                      request.height);
+        std::vector<uint8_t> shown(request.full, request.full + size_t(texels) * 4u);
+        for (uint32_t i = 0; i < texels; ++i)
+        {
+            shown[i * 4u + 3u] = static_cast<uint8_t>(std::min(255, shown[i * 4u + 3u] * 2));
+        }
+        stbi_write_png((g_sheetDirectory + file).c_str(), int(request.width), int(request.height), 4, shown.data(),
+                       int(request.width * 4u));
+    }
+    bool seen[256] = {};
+    std::string levels;
+    for (uint32_t i = 0; i < texels; ++i)
+    {
+        const uint8_t a = request.full[i * 4u + 3u];
+        if (!seen[a])
+        {
+            seen[a] = true;
+            levels += " " + std::to_string(a);
+        }
+    }
+    std::fprintf(stderr, "[typeface] %ux%u at %u,%u of palette %016llX: no glyph (alpha%s)\n", request.width,
+                 request.height, request.x, request.y, static_cast<unsigned long long>(request.clut), levels.c_str());
 }
 
 int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &height, std::vector<uint8_t> &rgba)
@@ -1063,18 +2236,28 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
     {
         return dq8::gfx::kRegionNone;
     }
+    if (const uint64_t clut = unaliased(request.clut); piecePalette(clut))
+    {
+        return englishPieces() ? lookupPiece(request, clut, width, height, rgba) : dq8::gfx::kRegionNone;
+    }
     // The border's version for the first of a glyph's marked border copies,
     // the shadow's for a marked shadow copy (drawGlyphOutline).
     const Version version = request.border   ? Version::Border
                             : request.shadow ? Version::Shadow
                                              : Version::Glyph;
+    // A font's cell, or its cell a row short (the names over heads).
     bool sized = false;
     for (const TypefaceFont *font : kFonts)
     {
-        sized = sized || (request.width == font->cellWidth && request.height == font->cellHeight);
+        sized = sized || (request.width == font->cellWidth &&
+                          (request.height == font->cellHeight || request.height + 1u == font->cellHeight));
     }
     if (!sized)
     {
+        if (g_tracePalettes && request.height >= 8u && request.height <= 32u)
+        {
+            traceUnknown(request);
+        }
         return dq8::gfx::kRegionNone;
     }
     const uint32_t texels = request.width * request.height;
@@ -1104,8 +2287,12 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
         const auto found = g_cells.find(alpha);
         if (found == g_cells.end() || found->second.glyph < 0 ||
             kFonts[found->second.font]->cellWidth != request.width ||
-            kFonts[found->second.font]->cellHeight != request.height)
+            (found->second.rows ? found->second.rows : kFonts[found->second.font]->cellHeight) != request.height)
         {
+            if (g_tracePalettes && found == g_cells.end())
+            {
+                traceUnknown(request);
+            }
             return dq8::gfx::kRegionNone;
         }
         cell = found->second;
@@ -1171,30 +2358,15 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
         key ^= value;
         key *= 0x100000001b3ull;
     }
-    std::lock_guard<std::mutex> lock(g_jobsMutex);
-    if (const auto ready = g_ready.find(key); ready != g_ready.end())
+    Job job{key, kFonts[cell.font], cell.glyph, cell.ink, request.scale, request.bold, version,
+            {colour[0], colour[1], colour[2]}};
+    if (cell.rows)
     {
-        Picture picture = std::move(ready->second);
-        g_readyBytes -= picture.rgba.size();
-        g_ready.erase(ready);
-        // Asked again if the GPU's copy is ever let go.
-        g_asked.erase(key);
-        if (picture.rgba.empty())
-        {
-            return dq8::gfx::kRegionNone;
-        }
-        width = picture.width;
-        height = picture.height;
-        rgba = std::move(picture.rgba);
-        return dq8::gfx::kRegionReady;
+        // Drawn a row short, as the draw takes it.
+        job.regionWidth = static_cast<uint8_t>(request.width);
+        job.regionHeight = cell.rows;
     }
-    if (g_asked.insert(key).second)
-    {
-        g_queue.push_back(Job{key, cell.font, cell.glyph, cell.ink, request.scale, request.bold, version,
-                              {colour[0], colour[1], colour[2]}});
-        g_wake.notify_one();
-    }
-    return dq8::gfx::kRegionPending;
+    return answer(job, width, height, rgba);
 }
 
 } // namespace
@@ -1236,6 +2408,49 @@ void installRenderer(dq8::gfx::SdlGpuBackend &)
 {
     std::thread(drawer).detach();
     rg::texturePack::setFirstSource(&lookup, &wantedPalette);
+}
+
+uint64_t paletteHash256(const uint8_t *clut)
+{
+    // GsTextureCache::hashClutWindow: the palette's format and storage (CT32,
+    // CSM1: 0, 0), then each colour in index order, eight bytes each.
+    uint64_t hash = 1469598103934665603ull;
+    const auto step = [&](uint64_t value) {
+        for (int byte = 0; byte < 8; ++byte)
+        {
+            hash ^= (value >> (byte * 8)) & 0xffull;
+            hash *= 1099511628211ull;
+        }
+    };
+    step(0u);
+    step(0u);
+    for (uint32_t index = 0; index < 256u; ++index)
+    {
+        // CSM1 keeps entries 8-15 and 16-23 of every 32 swapped.
+        const uint32_t stored = (index & ~0x18u) | ((index & 0x08u) << 1u) | ((index & 0x10u) >> 1u);
+        uint32_t colour = 0;
+        std::memcpy(&colour, clut + stored * 4u, sizeof(colour));
+        step(colour);
+    }
+    return hash;
+}
+
+void notePaletteAlias(uint64_t changed, uint64_t original)
+{
+    if (changed == original)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_aliasesMutex);
+    for (auto &alias : g_aliases)
+    {
+        if (alias.first == changed)
+        {
+            alias.second = original;
+            return;
+        }
+    }
+    g_aliases.emplace_back(changed, original);
 }
 
 void setEnabled(bool on)

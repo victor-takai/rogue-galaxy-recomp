@@ -1073,8 +1073,9 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         {"typeface_letters", "Typeface letters",
          "Above 1x, the game's Latin letters are drawn from a typeface made to look like them (Andika, SIL Open "
          "Font License) at the internal resolution, in their own places and widths, instead of enlarged as blocks: "
-         "the dialogue's, the menus' and the names'. For now with the English text only, and the menus' grey "
-         "letters with a dark edge stay the game's. Each new letter shows in a frame or two.",
+         "the dialogue's, the menus' and the names', and the menus' grey letters with a dark edge, their numbers "
+         "and the words of their pictures. For now with the English text only. Each new letter shows in a frame "
+         "or two.",
          false},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},

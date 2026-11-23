@@ -20,6 +20,12 @@ sys.path.insert(0, str(ROOT / "tools" / "disc"))
 import european  # noqa: E402
 
 FONT_PACK = "meswin\\fontset_main_en.pak"
+# The game's symbols (the width table names them 0) by their code, as the
+# characters a typeface draws them by: plus-minus, times, middle dot and
+# reference mark. Its stars, circles, squares and triangles stay out (Andika
+# has none), and its arrows (Andika's are hairlines beside the console's bold
+# ones).
+SYMBOLS = {93: "±", 94: "×", 98: "·", 105: "※"}
 # game font -> (its first page, cell width, cell height, its column of widths)
 FONTS = {
     "name": ("FontTex_name_EN_0.tm2", 16, 18, 0),
@@ -31,7 +37,7 @@ FONTS = {
 @dataclass
 class Glyph:
     code: int
-    char: str | None  # None for the game's symbols (the table names them 0)
+    char: str | None  # a symbol's from SYMBOLS; None for the others (the table names them 0)
     width: int  # the advance the game lays text out with
     cell: Image.Image  # "L", the alpha doubled (the game's 0x80 opaque is 256, clamped to 255)
     ink: tuple | None  # (x0, y0, x1, y1) inclusive, or None when empty
@@ -90,6 +96,6 @@ def load_fonts(disc_folder: Path = ROOT / "disc"):
             cell = sheet.crop((x, y, x + cw, y + ch))
             box = cell.getbbox()
             ink = (box[0], box[1], box[2] - 1, box[3] - 1) if box else None
-            glyphs.append(Glyph(code, char, widths[column], cell, ink))
+            glyphs.append(Glyph(code, char or SYMBOLS.get(code), widths[column], cell, ink))
         fonts[font] = glyphs
     return fonts

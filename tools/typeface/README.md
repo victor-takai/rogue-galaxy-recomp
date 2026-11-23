@@ -10,19 +10,37 @@ typeface to the console's glyphs:
 python -I tools/typeface/make_table.py \
     normal=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
     system=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
-    name=thirdparty/fonts/andika/Andika-Regular.ttf+alt
+    name=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
+    menu=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    clock=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    status=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    statussmall=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    level=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    file=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    money=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    battle=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    battlesmall=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    damage=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    result=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    resultgold=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    words=thirdparty/fonts/andika/Andika-Bold.ttf+alt
 ```
 
 It needs the disc extracted (`disc/`), Pillow and fontTools
-(`pip install pillow fonttools`), and takes about two minutes. The console's
-glyphs are read from the disc into memory; the table holds only numbers and
-glyph indices.
+(`pip install pillow fonttools`), and takes about five minutes. The console's
+glyphs are read from the disc into memory; the table holds only numbers,
+hashes and glyph indices.
 
 - **The fonts.** `normal` (dialogue and messages, 18x22 cells), `system`
   (menus, the same design narrowed, 16x20) and `name` (names over heads,
-  16x18): the pages `FontTex_<font>_EN_0.tm2` of
-  `meswin\fontset_main_EN.pak`, glyph code n in cell n, and the characters
-  and widths of the executable's table at 0x44E850 (`pages.py`).
+  16x18; the game draws them a row short): the pages
+  `FontTex_<font>_EN_0.tm2` of `meswin\fontset_main_EN.pak`, glyph code n
+  in cell n, and the characters and widths of the executable's table at
+  0x44E850 (`pages.py`). The table names the game's symbols 0; plus-minus,
+  times, middle dot and reference mark (`pages.SYMBOLS`) are drawn too,
+  found by their code, and placed without weighing in the font's fit (the
+  times sign may take the typeface's x, raised: the console's is a large
+  x); the arrows stay the game's (Andika's are hairlines).
 - **The fit** (`fit.py`). Each candidate glyph is drawn at 8 times the
   game's size, box-filtered into the game's cell and quantized to its 16
   alpha levels; the score is its difference with the console's glyph over
@@ -34,6 +52,49 @@ glyph indices.
   OpenType alternates (cvNN, ssNN, salt, aalt) where it is closer. Andika's
   give the console's straight-legged 9, tailed l, baseless 1 and straight
   y. The curly apostrophe and quotes are candidates too.
+- **The menus' digits** (`pieces.py`). The menus' words and numbers are
+  pictures, not a font: the game draws a number a digit at a time, each
+  from its cell of a row of digits in one of the menus' pictures (`clock`,
+  the clock and play time; `status` and `statussmall`, the members' levels
+  and attributes; `level`, the transporter's levels and the
+  items' counts; `file`, the files' numbers; `money`; in battle `battle`
+  and `battlesmall`, the members' HP and AP, and `damage`; after a battle
+  `result` and `resultgold`). The menus' own font (`menu`: item commands,
+  Allies, shops) is drawn the same way, a letter at a time from
+  `menu_font_EN.img`, each its width (from `menu_font_setting_EN.txt`)
+  wide. Each set is fitted as a font, on the
+  digits' light core (typeface_letters.cpp draws the dark edge around the
+  typeface's glyph, in the colours read from the piece), with a slant for
+  the slanted ones. The table also gets each
+  digit's hash as the renderer hands it over (`hash_rgba`, at the cell's
+  size, up to two texels narrower or one wider, and a row less or more) and
+  the hash of each picture's palette as dq8-gfx makes it, so the game knows
+  the digits when they are drawn (two characters with the same texels stop
+  the tool); the
+  colours come from the digit itself in the game. A sign among the digits
+  (the clock's colon) is centred on the console's; a small capital among
+  them (the clock row's P) may take the typeface's small capital.
+- **The menus' words** (`pieces.WORDS`, `words=`): the words of the
+  pictures (Items, Save, FILE, Equipment, the Battle Recorder's...), listed
+  by hand as a window around each in its picture (places and words only).
+  Each is fitted whole (size, width, baseline, growth) on its core, drawn
+  with the menu font's glyph choices, a letter taking another drawing (an
+  alternate, or the default one) where the word comes closer, and the table
+  gets its box, the hash
+  of the box's texels and each glyph's pen position. A word's style may
+  be slanted, in small capitals (the members' names), with a letter's
+  drawing named (their J with its bar; the story title's y with its tail,
+  where the menu font takes the straight one), or shadowed: a soft dark shadow
+  instead of an edge (Exp, Skills), whose offset, blur and
+  strength the tool fits on the console word. Its stroke growth may be held
+  where the fit alone draws it bolder than the words beside it (Acquired
+  Items). The game redraws a word
+  when the piece it draws holds that word on a clear background, other art
+  two texels or more away being kept as the game draws it (the story
+  screen's "Press" and its button). A word printed on a button's fill (the
+  framed Player, marked "button" in the list) is redrawn with the fill put
+  back under it, each row from the fill left of the word to the fill right
+  of it; any other word printed on art stays the game's.
 
 The choice of Andika, and the search over Google Fonts' sans-serif families
 it came from, are in the research notes of the work (`build/research/font`,

@@ -15,11 +15,15 @@ class SdlGpuBackend;
 // borders stay. The glyphs are told apart by their pixels, which the font
 // pages hold when the game opens them (ArchiveFindEntryByName); which glyph
 // of the typeface, its size and its place come from typeface_table.inc,
-// which tools/typeface/make_table.py writes. Glyphs the table leaves out
-// (kana, kanji, the game's symbols, the menus' grey font) stay the
-// console's. RG_TYPEFACE_LETTERS=0/1 over the menu; RG_TYPEFACE_TRACE=1
-// logs the pages read and the glyphs made; RG_TYPEFACE_SHEET=DIR writes
-// every glyph beside the console's (docs/DEVELOPMENT.md).
+// which tools/typeface/make_table.py writes. The menus' own font and the
+// digits and words of their pictures are redrawn the same way, known by
+// the hashes of their texels the table holds; of the game's symbols, the
+// plus-minus, times, middle dot and reference mark, found by their code.
+// Glyphs the table leaves out (kana, kanji, the arrows and the other
+// symbols) stay the console's, and so does everything with the European text.
+// RG_TYPEFACE_LETTERS=0/1 over the menu; RG_TYPEFACE_TRACE=1 logs the pages
+// read and the glyphs made; RG_TYPEFACE_SHEET=DIR writes every glyph beside
+// the console's (docs/DEVELOPMENT.md).
 namespace rg::typeface
 {
 
@@ -31,5 +35,14 @@ void install(PS2Runtime &runtime);
 void installRenderer(dq8::gfx::SdlGpuBackend &backend);
 
 void setEnabled(bool on);
+
+// dq8-gfx's hash of a 256-colour CT32 palette kept in the GS's CSM1 order
+// (as a TIM2 and the game's memory hold it).
+uint64_t paletteHash256(const uint8_t *clut);
+
+// A picture's palette changed by our own code (button_glyphs redraws the
+// loading screen's button in colours of its own): its pieces drawn with
+// `changed` are known as those of `original`, the palette the table has.
+void notePaletteAlias(uint64_t changed, uint64_t original);
 
 } // namespace rg::typeface
