@@ -155,11 +155,20 @@ struct PieceWord
     // (cell pixels across and down) and faded; no shadow at strength 0.
     uint8_t shadowX = 0u, shadowY = 0u;
     float shadowSigma = 0.0f, shadowStrength = 0.0f;
-    // Printed on a button's fill (the framed Player): the box's texels are
-    // the word's and the fill's; the fill is put back under the new word,
-    // each row from its colour left of the box to its colour right of it.
-    bool onButton = false;
+    // Printed on a button's fill (the framed Player, kOnButton): the box's
+    // texels are the word's and the fill's; the fill is put back under the
+    // new word, each row from its colour left of the box to its colour right
+    // of it. Printed on a band of colour across the box (the items' MAX,
+    // kOnBar): a row of the box opaque at both ends is the band's, its
+    // texels but the word's core the band; the band is put back, each such
+    // row from its colour at one end to its colour at the other. Printed on
+    // art (the Revelation Flow's title on the frame's wood, kOnArt): the box
+    // is the word's texels', told from the art's by colour; the art is put
+    // back, each run of the word's texels in a row from the art left of it
+    // to the art right of it.
+    uint8_t backing = 0u;
 };
+constexpr uint8_t kOnButton = 1u, kOnBar = 2u, kOnArt = 3u;
 
 // A texel of a word on a button (buttonWord): the word's grey core, its dark
 // edge, or the button's blue fill. tools/typeface/pieces.py button_kind is
@@ -178,6 +187,57 @@ ButtonTexel buttonTexel(const uint8_t *t)
         return ButtonTexel::Edge;
     }
     return int(t[2]) - int(t[0]) < 0x38 && light > 90.0f ? ButtonTexel::Core : ButtonTexel::Fill;
+}
+
+// A texel of a word on a band (the items' MAX): its pale blue core, its dark
+// blue edge (and the band's), or the band's saturated blue.
+// tools/typeface/pieces.py bar_kind is the same.
+ButtonTexel barTexel(const uint8_t *t)
+{
+    const float light = (3.0f * t[0] + 6.0f * t[1] + float(t[2])) / 10.0f;
+    if (light < 70.0f)
+    {
+        return ButtonTexel::Edge;
+    }
+    return int(t[2]) - int(t[0]) > 110 && light < 115.0f ? ButtonTexel::Fill : ButtonTexel::Core;
+}
+
+// A texel of a word printed on art (the Revelation Flow's title): the
+// word's (its lavender core, grey bevel, black edge: blue as much as red or
+// more), or the art's (the wood and the frame, red well above blue).
+// tools/typeface/pieces.py art_kind is the same.
+bool artWord(const uint8_t *t)
+{
+    return t[3] >= 0x40u && int(t[2]) + 4 >= int(t[0]);
+}
+
+// A row of a word's box (its texels, `width` of them) that is a band's:
+// opaque at both ends.
+bool bandRow(const uint8_t *row, uint32_t width)
+{
+    return width != 0u && row[3] >= 0x40u && row[(width - 1u) * 4u + 3u] >= 0x40u;
+}
+
+// Whether a texel of a word's box, in `row` of it, is its button's or band's
+// (left out of the word's colours, put back under the new word).
+bool backingAt(uint8_t backing, const uint8_t *row, uint32_t width, uint32_t x)
+{
+    const uint8_t *t = row + size_t(x) * 4u;
+    return backing == kOnBar   ? bandRow(row, width) && barTexel(t) != ButtonTexel::Core
+           : backing == kOnArt ? !artWord(t)
+                               : buttonTexel(t) == ButtonTexel::Fill;
+}
+
+// The kind of a texel of a word on a button, a band or art (on art, a dark
+// texel of the word is its edge).
+ButtonTexel backingKind(uint8_t backing, const uint8_t *t)
+{
+    if (backing == kOnArt)
+    {
+        const float light = (3.0f * t[0] + 6.0f * t[1] + float(t[2])) / 10.0f;
+        return !artWord(t) ? ButtonTexel::Fill : light < 45.0f ? ButtonTexel::Edge : ButtonTexel::Core;
+    }
+    return backing == kOnBar ? barTexel(t) : buttonTexel(t);
 }
 
 #include "typeface_table.inc"
@@ -231,6 +291,15 @@ std::atomic<bool> g_trace{false};
 // RG_TYPEFACE_TRACE=palettes: every palette a glyph is drawn with is logged,
 // and all stay asked about (finding the palettes of coloured text).
 std::atomic<bool> g_tracePalettes{false};
+// RG_TYPEFACE_TRACE=timing: how long a glyph takes from the renderer's first
+// asking to its picture handed over, a line every two seconds with work.
+std::atomic<bool> g_traceTiming{false};
+// How much narrower than the console's ink each glyph is drawn, in tenths of
+// a console pixel, before its font's stroke growth (draw): half a pixel,
+// picked by the user from the game's screens against one and one and a half
+// (2026-11-24). RG_TYPEFACE_GAP=N, 0 to 40, for comparing.
+constexpr int kGapOpening = 5;
+std::atomic<int> g_gapOpening{kGapOpening};
 PS2Runtime::RecompiledFunction g_originalFindEntry = nullptr;
 
 // Where a console glyph has ink in its cell, in cell pixels from the cell's
@@ -651,8 +720,11 @@ enum class Version : uint8_t
 
 // A piece's colours, from its own texels (pieceColours): its edge's, how
 // opaque the edge is, and its core's row by row (a digit is often shaded
-// from top to bottom).
-constexpr uint32_t kPieceRows = 32u;
+// from top to bottom). The tallest piece: the Revelation Flow's title is
+// drawn with its frame's wood, 46 rows.
+constexpr uint32_t kPieceRows = 64u;
+// A word is redrawn in a piece up to this tall, but on art (the title's).
+constexpr uint32_t kWordRows = 32u;
 struct PieceColours
 {
     uint8_t edge[3] = {};
@@ -687,34 +759,156 @@ struct Job
     // The piece holds other art away from the word (console holds the
     // piece): kept as the game draws it, under the word.
     bool keep = false;
+    // With the timing trace: when it was queued.
+    std::chrono::steady_clock::time_point asked{};
+    // g_generation when it was queued: made after the pictures were
+    // forgotten, it is dropped.
+    uint64_t generation = 0u;
+    // With RG_TYPEFACE_SHEET, the piece's texels as the game has them, where
+    // console has a word's backing put back (writePieceSheet).
+    std::vector<uint8_t> sheetConsole;
 };
 struct Picture
 {
     uint32_t width = 0u, height = 0u;
+    // RGBA, or for a font's glyph its coverage alone (the GS's alpha, a byte
+    // a texel), its colour given when it is handed over.
     std::vector<uint8_t> rgba;
+    bool coverage = false;
+    // When it was last handed over or made (g_readyClock).
+    uint64_t used = 0u;
+    // Handed over at least once (drawn ahead, it may never be).
+    bool handed = false;
 };
 
+// The timing trace's sums since its last line (under g_jobsMutex): the jobs
+// drawn, their time in the queue and drawing, the pictures handed over and
+// their time from asking to handover, the longest queue.
+struct Timing
+{
+    std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
+    unsigned drawn = 0u, ahead = 0u, handed = 0u;
+    double queuedMs = 0.0, queuedMaxMs = 0.0, drawMs = 0.0, drawMaxMs = 0.0, handedMs = 0.0, handedMaxMs = 0.0;
+    size_t queueMax = 0u;
+};
+Timing g_timing;
+
+double millisecondsSince(std::chrono::steady_clock::time_point from, std::chrono::steady_clock::time_point to)
+{
+    return std::chrono::duration<double, std::milli>(to - from).count();
+}
+
+// Under g_jobsMutex: the line, every two seconds with work, then the sums
+// started again.
+void reportTiming(std::chrono::steady_clock::time_point now)
+{
+    if (!g_traceTiming || now - g_timing.since < std::chrono::seconds(2))
+    {
+        return;
+    }
+    if (g_timing.drawn != 0u || g_timing.handed != 0u)
+    {
+        std::fprintf(stderr,
+                     "[typeface] timing %.1f s: %u drawn, %u of them ahead (the others queued %.1f ms mean, %.1f "
+                     "most; drawing %.2f ms mean, %.2f most), %u handed over %.1f ms mean after the asking, %.1f "
+                     "most; queue up to %zu\n",
+                     millisecondsSince(g_timing.since, now) / 1000.0, g_timing.drawn, g_timing.ahead,
+                     g_timing.drawn > g_timing.ahead ? g_timing.queuedMs / (g_timing.drawn - g_timing.ahead) : 0.0,
+                     g_timing.queuedMaxMs,
+                     g_timing.drawn ? g_timing.drawMs / g_timing.drawn : 0.0, g_timing.drawMaxMs, g_timing.handed,
+                     g_timing.handed ? g_timing.handedMs / g_timing.handed : 0.0, g_timing.handedMaxMs,
+                     g_timing.queueMax);
+    }
+    g_timing = Timing{};
+    g_timing.since = now;
+}
+
+// The jobs, drawn by a few threads (drawer): the renderer's first, then the
+// glyphs drawn ahead (drawAhead). Until a picture is made the renderer draws
+// the console's glyph, so a new screen's letters changed a moment after it
+// showed: with one thread, a third of a second on average and up to 0.6 s
+// (93 glyphs at 4x, 7 to 11 ms each, RG_TYPEFACE_TRACE=timing, 2026-11-24).
 std::mutex g_jobsMutex;
 std::condition_variable g_wake;
-std::deque<Job> g_queue;
-std::unordered_set<uint64_t> g_asked;
-// Made and not yet taken. A picture the renderer never asks for again (the
-// scale changed while it was queued, text gone before it was made) would
-// stay: they go when the letters are switched and past kKeptBytes (about 650
-// glyphs at 8x; the renderer asks each target's scale, so pictures of
-// another scale are not dropped sooner).
+std::deque<Job> g_queue, g_ahead;
+// Queued or being drawn; and of them, those still in g_ahead.
+std::unordered_set<uint64_t> g_asked, g_aheadKeys;
+// Made, and kept once handed over: the renderer asks again when its copy is
+// let go (its budget, a switch of the letters), and the same shape in another
+// colour is the same picture. Up to kKeptBytes (some 1,800 glyphs with their
+// border's margin at 8x), the least recently used going first.
 std::unordered_map<uint64_t, Picture> g_ready;
 size_t g_readyBytes = 0u;
+uint64_t g_readyClock = 0u;
 constexpr size_t kKeptBytes = size_t(64u) << 20u;
+// The fonts' styles drawn ahead (drawAhead's style: the font, scale,
+// version, bold draw and rows).
+std::unordered_set<uint64_t> g_aheadStyles;
+// Pictures drawn ahead and let go by the budget before they were ever handed
+// over: made again only when asked, or past the budget each eviction would
+// have every style asked draw its unused glyphs again, evicting others'.
+std::unordered_set<uint64_t> g_notAhead;
+// Counts forgetPicturesLocked: a job queued before it is dropped when made.
+uint64_t g_generation = 0u;
+// With the timing trace: when each picture not ready was first and last
+// asked for (the renderer asks again at each draw while it waits).
+struct Waiting
+{
+    std::chrono::steady_clock::time_point first, last;
+};
+std::unordered_map<uint64_t, Waiting> g_waiting;
+// RG_TYPEFACE_AHEAD=0 (for the timing trace's comparisons): no glyphs drawn
+// ahead.
+std::atomic<bool> g_drawAhead{true};
 
 // Every picture made or asked for is forgotten: what is asked again is made
 // again (under g_jobsMutex).
 void forgetPicturesLocked()
 {
     g_queue.clear();
+    g_ahead.clear();
     g_asked.clear();
+    g_aheadKeys.clear();
     g_ready.clear();
     g_readyBytes = 0u;
+    g_aheadStyles.clear();
+    g_notAhead.clear();
+    g_waiting.clear();
+    ++g_generation;
+}
+
+// Room for `adding` bytes more within kKeptBytes: the least recently used
+// pictures dropped, down to three quarters of it (under g_jobsMutex).
+void keepWithinBudget(size_t adding)
+{
+    if (g_readyBytes + adding <= kKeptBytes)
+    {
+        return;
+    }
+    std::vector<std::pair<uint64_t, uint64_t>> byUse; // when used, key
+    byUse.reserve(g_ready.size());
+    for (const auto &[key, picture] : g_ready)
+    {
+        byUse.emplace_back(picture.used, key);
+    }
+    std::sort(byUse.begin(), byUse.end());
+    for (const auto &[used, key] : byUse)
+    {
+        if (g_readyBytes + adding <= kKeptBytes / 4u * 3u)
+        {
+            break;
+        }
+        const auto found = g_ready.find(key);
+        g_readyBytes -= found->second.rgba.size();
+        if (!found->second.handed)
+        {
+            g_notAhead.insert(key);
+        }
+        g_ready.erase(found);
+    }
+    // Some styles lost pictures: drawn ahead again when next asked
+    // (drawAhead passes over the pictures still kept, and those never shown).
+    g_aheadStyles.clear();
 }
 
 void forgetPictures()
@@ -1272,6 +1466,63 @@ Picture draw(const Job &job)
         spread(thick, gw, gh, true, int(std::lround(stroke * (1.0 - factor) / 2.0)), false);
         std::copy(thick.begin() + size_t(from) * gw, thick.end(), bitmap.begin() + size_t(from) * gw);
     }
+    if (!job.word)
+    {
+        // Every glyph as wide as the console's ink less kGapOpening, so the
+        // gaps between letters are the console's, all opened by it: placed
+        // on the console's ink centres with the typeface's own widths, the
+        // gaps came out uneven (the menus' digits, narrower than the
+        // console's, stood apart). Stretched or squeezed about its ink
+        // centre, a little further first and its strokes then thinned or
+        // widened back across, so they keep their width. The width is the
+        // ink's before the font's stroke growth (below), which widens every
+        // glyph of the font alike. Its ink centre is the console's: the
+        // table's shift was fitted at the typeface's own width.
+        left -= int(std::lround(glyph.shift * float(r)));
+        const double inkWidth = inkRight + 1 - inkLeft;
+        const double consoleWidth = double(job.ink.right - job.ink.left) * r;
+        const double wanted = consoleWidth - g_gapOpening.load(std::memory_order_relaxed) / 10.0 * r;
+        const double rawStroke = strokeWidth(bitmap, gw, gh);
+        const double stroke = std::min(rawStroke, inkWidth / 2.0);
+        // A lone stem or dot (l, i, 1, the colon's dots) keeps its width:
+        // stretched, it would stand bolder than the other letters' stems.
+        const bool stem = rawStroke >= inkWidth * 0.75;
+        if (!stem && std::abs(wanted - inkWidth) > r / 4.0 && inkWidth > stroke && wanted > stroke)
+        {
+            // Room each side for the ink stretched by the factor, before its
+            // strokes are thinned back.
+            const double factor = (wanted - stroke) / (inkWidth - stroke);
+            const int extra = int(std::ceil(std::max(0.0, inkWidth * (factor - 1.0)) / 2.0)) + r;
+            std::vector<uint8_t> wider(size_t(gw + 2 * extra) * gh, 0u);
+            for (int y = 0; y < gh; ++y)
+            {
+                std::copy_n(bitmap.begin() + size_t(y) * gw, gw, wider.begin() + size_t(y) * (gw + 2 * extra) + extra);
+            }
+            bitmap = std::move(wider);
+            gw += 2 * extra;
+            inkLeft += extra;
+            inkRight += extra;
+            squeeze(bitmap, gw, gh, false, (inkLeft + inkRight + 1) * 0.5, factor, 0, gw);
+            spread(bitmap, gw, gh, false, int(std::lround(stroke * std::abs(factor - 1.0) / 2.0)), factor > 1.0);
+            inkLeft = gw, inkRight = -1;
+            for (int y = 0; y < gh; ++y)
+            {
+                for (int x = 0; x < gw; ++x)
+                {
+                    if (bitmap[size_t(y) * gw + x])
+                    {
+                        inkLeft = std::min(inkLeft, x);
+                        inkRight = std::max(inkRight, x);
+                    }
+                }
+            }
+            if (inkRight < 0)
+            {
+                return picture;
+            }
+            left -= extra;
+        }
+    }
     const double centre = (inkLeft + inkRight + 1) * 0.5;
     const double half = (inkRight + 1 - inkLeft) * 0.5;
     // The cell's last column is never shown (a glyph's sprite spans a texel
@@ -1614,7 +1865,8 @@ void writeSheet(uint8_t fontIndex, std::vector<SheetGlyph> glyphs)
 void writePieceSheet(const Job &job, const Picture &picture)
 {
     const uint32_t w = job.regionWidth, h = job.regionHeight, s = job.scale;
-    if (picture.rgba.empty() || job.console.size() != size_t(w) * h * 4u || picture.width != w * s ||
+    const std::vector<uint8_t> &console = job.sheetConsole.empty() ? job.console : job.sheetConsole;
+    if (picture.rgba.empty() || console.size() != size_t(w) * h * 4u || picture.width != w * s ||
         picture.height != h * s)
     {
         return;
@@ -1641,7 +1893,7 @@ void writePieceSheet(const Job &job, const Picture &picture)
             }
         }
     };
-    put(kGap, [&](uint32_t x, uint32_t y) { return &job.console[(size_t(y / s) * w + x / s) * 4u]; });
+    put(kGap, [&](uint32_t x, uint32_t y) { return &console[(size_t(y / s) * w + x / s) * 4u]; });
     put(2u * kGap + w * s, [&](uint32_t x, uint32_t y) { return &picture.rgba[(size_t(y) * picture.width + x) * 4u]; });
     char name[128];
     if (job.word)
@@ -1661,6 +1913,10 @@ void writePieceSheet(const Job &job, const Picture &picture)
         std::snprintf(name, sizeof(name), "/piece_%s_%s_%ux%u_%ux_%08X.png", job.font->name,
                       glyphLabel(job.font->glyphs[job.glyph], true).c_str(), w, h, s, uint32_t(job.key));
     }
+    // One at a time: two drawers can make the same word with other art beside
+    // it (two keys, one file).
+    static std::mutex writing;
+    std::lock_guard<std::mutex> lock(writing);
     stbi_write_png((g_sheetDirectory + name).c_str(), int(width), int(height), 3, image.data(), int(width * 3u));
 }
 
@@ -1671,10 +1927,16 @@ void drawer()
         Job job;
         {
             std::unique_lock<std::mutex> lock(g_jobsMutex);
-            g_wake.wait(lock, [] { return !g_queue.empty(); });
-            job = g_queue.front();
-            g_queue.pop_front();
+            g_wake.wait(lock, [] { return !g_queue.empty() || !g_ahead.empty(); });
+            std::deque<Job> &from = g_queue.empty() ? g_ahead : g_queue;
+            job = std::move(from.front());
+            from.pop_front();
+            if (&from == &g_ahead)
+            {
+                g_aheadKeys.erase(job.key);
+            }
         }
+        const auto started = g_traceTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         Picture picture = draw(job);
         if (job.keep && job.word && !picture.rgba.empty() &&
             job.console.size() == size_t(job.regionWidth) * job.regionHeight * 4u)
@@ -1688,7 +1950,7 @@ void drawer()
                 for (uint32_t x = 0; x < picture.width; ++x)
                 {
                     const uint32_t tx = x / s, ty = y / s;
-                    if (!job.word->onButton && tx >= job.offsetX && tx < uint32_t(job.offsetX) + job.word->width &&
+                    if (!job.word->backing && tx >= job.offsetX && tx < uint32_t(job.offsetX) + job.word->width &&
                         ty >= job.offsetY && ty < uint32_t(job.offsetY) + job.word->height)
                     {
                         continue;
@@ -1734,11 +1996,42 @@ void drawer()
                                                           : "",
                          picture.rgba.empty() ? " (empty)" : "");
         }
-        std::lock_guard<std::mutex> lock(g_jobsMutex);
-        if (g_readyBytes + picture.rgba.size() > kKeptBytes)
+        if (!job.piece)
         {
-            forgetPicturesLocked();
+            // A font's glyph is drawn in one colour: its coverage is kept.
+            for (size_t i = 0; i * 4u < picture.rgba.size(); ++i)
+            {
+                picture.rgba[i] = picture.rgba[i * 4u + 3u];
+            }
+            picture.rgba.resize(picture.rgba.size() / 4u);
+            picture.rgba.shrink_to_fit();
+            picture.coverage = true;
         }
+        std::lock_guard<std::mutex> lock(g_jobsMutex);
+        if (job.generation != g_generation)
+        {
+            // The pictures were forgotten while it was drawn (the letters
+            // turned off or on): what is asked again is made again.
+            continue;
+        }
+        if (g_traceTiming)
+        {
+            // A glyph drawn ahead has no asking: its wait is not counted.
+            const auto now = std::chrono::steady_clock::now();
+            const bool asked = job.asked != std::chrono::steady_clock::time_point{};
+            const double queued = asked ? millisecondsSince(job.asked, started) : 0.0;
+            const double drawing = millisecondsSince(started, now);
+            ++g_timing.drawn;
+            g_timing.ahead += asked ? 0u : 1u;
+            g_timing.queuedMs += queued;
+            g_timing.queuedMaxMs = std::max(g_timing.queuedMaxMs, queued);
+            g_timing.drawMs += drawing;
+            g_timing.drawMaxMs = std::max(g_timing.drawMaxMs, drawing);
+            reportTiming(now);
+        }
+        g_asked.erase(job.key);
+        keepWithinBudget(picture.rgba.size());
+        picture.used = ++g_readyClock;
         Picture &kept = g_ready[job.key];
         g_readyBytes -= kept.rgba.size();
         g_readyBytes += picture.rgba.size();
@@ -1762,33 +2055,172 @@ bool wantedPalette(uint64_t clut)
     return std::find(g_palettes.begin(), g_palettes.end(), clut) != g_palettes.end();
 }
 
-// The picture made for a job, once the drawer has it (it is then handed
-// over and forgotten here), or the job queued once.
+// The picture made for a job, once a drawer has it (a font's glyph in the
+// job's colour), or the job queued once (one drawn ahead and not yet made
+// moved to the front).
 int answer(const Job &job, uint32_t &width, uint32_t &height, std::vector<uint8_t> &rgba)
 {
     std::lock_guard<std::mutex> lock(g_jobsMutex);
+    if (!g_enabled.load(std::memory_order_relaxed))
+    {
+        // Turned off since the renderer asked (after forgetPictures): as
+        // lookup answers then, nothing queued.
+        return dq8::gfx::kRegionNone;
+    }
+    const auto now = g_traceTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     if (const auto ready = g_ready.find(job.key); ready != g_ready.end())
     {
-        Picture picture = std::move(ready->second);
-        g_readyBytes -= picture.rgba.size();
-        g_ready.erase(ready);
-        // Asked again if the GPU's copy is ever let go.
-        g_asked.erase(job.key);
+        Picture &picture = ready->second;
+        picture.used = ++g_readyClock;
+        if (!picture.handed)
+        {
+            picture.handed = true;
+            g_notAhead.erase(job.key);
+        }
+        if (g_traceTiming)
+        {
+            // Every first handover of a glyph on the screen: at once (drawn
+            // ahead, or the same shape in another colour), or after the wait
+            // since its first asking. One whose text went before it was made
+            // (not asked for the last quarter second) is not counted.
+            double handed = 0.0;
+            bool shown = true;
+            if (const auto waited = g_waiting.find(job.key); waited != g_waiting.end())
+            {
+                handed = millisecondsSince(waited->second.first, now);
+                shown = millisecondsSince(waited->second.last, now) < 250.0;
+                g_waiting.erase(waited);
+            }
+            if (shown)
+            {
+                ++g_timing.handed;
+                g_timing.handedMs += handed;
+                g_timing.handedMaxMs = std::max(g_timing.handedMaxMs, handed);
+            }
+            reportTiming(now);
+        }
         if (picture.rgba.empty())
         {
             return dq8::gfx::kRegionNone;
         }
         width = picture.width;
         height = picture.height;
-        rgba = std::move(picture.rgba);
+        if (picture.coverage)
+        {
+            rgba.resize(picture.rgba.size() * 4u);
+            for (size_t i = 0; i < picture.rgba.size(); ++i)
+            {
+                uint8_t *out = &rgba[i * 4u];
+                out[0] = job.colour[0];
+                out[1] = job.colour[1];
+                out[2] = job.colour[2];
+                out[3] = picture.rgba[i];
+            }
+        }
+        else
+        {
+            rgba = picture.rgba;
+        }
         return dq8::gfx::kRegionReady;
+    }
+    if (g_traceTiming)
+    {
+        g_waiting.try_emplace(job.key, Waiting{now, now}).first->second.last = now;
     }
     if (g_asked.insert(job.key).second)
     {
         g_queue.push_back(job);
+        g_queue.back().asked = now;
+        g_queue.back().generation = g_generation;
+        g_timing.queueMax = std::max(g_timing.queueMax, g_queue.size() + g_ahead.size());
         g_wake.notify_one();
     }
+    else if (g_aheadKeys.erase(job.key) != 0u)
+    {
+        const auto ahead = std::find_if(g_ahead.begin(), g_ahead.end(), [&](const Job &queued) { return queued.key == job.key; });
+        if (ahead != g_ahead.end())
+        {
+            g_queue.push_back(std::move(*ahead));
+            g_queue.back().asked = now;
+            g_ahead.erase(ahead);
+        }
+    }
     return dq8::gfx::kRegionPending;
+}
+
+// A font glyph's job: its picture known by the cell's alpha (its hash), the
+// scale, the version and the bold draw, not by its colour (given at the
+// handover).
+Job glyphJob(uint64_t alpha, const Cell &cell, uint32_t scale, Version version, bool bold, const uint8_t *colour)
+{
+    uint64_t key = alpha;
+    key ^= uint64_t(scale) << 3u | uint64_t(version) << 1u | (bold ? 1u : 0u);
+    key *= 0x100000001b3ull;
+    Job job{key, kFonts[cell.font], cell.glyph, cell.ink, scale, bold, version, {colour[0], colour[1], colour[2]}};
+    if (cell.rows)
+    {
+        // Drawn a row short, as the draw takes it.
+        job.regionWidth = static_cast<uint8_t>(kFonts[cell.font]->cellWidth);
+        job.regionHeight = cell.rows;
+    }
+    return job;
+}
+
+// The first time a glyph of a font is asked in a style (its scale, version,
+// bold draw, the cell a row short or whole), the font's other glyphs in that
+// style are queued behind the renderer's jobs: the rest of the screen's text,
+// and the dialogue's next letters, are made by the time they show.
+void drawAhead(const Cell &asked, uint32_t scale, Version version, bool bold)
+{
+    const uint64_t style = uint64_t(asked.font) | uint64_t(scale) << 8u | uint64_t(version) << 16u |
+                           uint64_t(bold ? 1u : 0u) << 24u | uint64_t(asked.rows) << 32u;
+    if (!g_drawAhead)
+    {
+        return;
+    }
+    uint64_t generation = 0u;
+    {
+        std::lock_guard<std::mutex> lock(g_jobsMutex);
+        if (!g_aheadStyles.insert(style).second)
+        {
+            return;
+        }
+        generation = g_generation;
+    }
+    std::vector<Job> jobs;
+    {
+        std::lock_guard<std::mutex> lock(g_cellsMutex);
+        const uint8_t white[3] = {0x80u, 0x80u, 0x80u};
+        for (const auto &[alpha, cell] : g_cells)
+        {
+            if (cell.font == asked.font && cell.glyph >= 0 && cell.rows == asked.rows)
+            {
+                jobs.push_back(glyphJob(alpha, cell, scale, version, bold, white));
+            }
+        }
+    }
+    std::lock_guard<std::mutex> lock(g_jobsMutex);
+    if (generation != g_generation || !g_enabled.load(std::memory_order_relaxed))
+    {
+        // The pictures were forgotten meanwhile (the letters turned off).
+        return;
+    }
+    // In front of the glyphs still waiting to be drawn ahead, which may be of
+    // another scale (the internal resolution changed; an effect's target is
+    // drawn at a scale of its own) and would only delay these.
+    std::vector<Job> queued;
+    queued.reserve(jobs.size());
+    for (Job &job : jobs)
+    {
+        if (g_ready.count(job.key) == 0u && g_notAhead.count(job.key) == 0u && g_asked.insert(job.key).second)
+        {
+            g_aheadKeys.insert(job.key);
+            job.generation = generation;
+            queued.push_back(std::move(job));
+        }
+    }
+    g_ahead.insert(g_ahead.begin(), std::make_move_iterator(queued.begin()), std::make_move_iterator(queued.end()));
+    g_wake.notify_all();
 }
 
 // A piece's colours from its texels (the GS's alpha): the edge's, the mean
@@ -1958,10 +2390,13 @@ int lookupWord(const dq8::gfx::RegionRequest &request, uint64_t clut, uint32_t &
     {
         return kNoWord;
     }
+    // A word is redrawn in a piece up to kWordRows tall, but on art: the
+    // Revelation Flow's title is drawn with its frame's wood, 46 rows.
     for (const PieceWord &word : kWords)
     {
         if (!word.style || word.palette != clut || word.x < request.x || word.y < request.y ||
-            word.x + word.width > request.x + request.width || word.y + word.height > request.y + request.height)
+            word.x + word.width > request.x + request.width || word.y + word.height > request.y + request.height ||
+            (request.height > kWordRows && word.backing != kOnArt))
         {
             continue;
         }
@@ -1996,61 +2431,81 @@ int lookupWord(const dq8::gfx::RegionRequest &request, uint64_t clut, uint32_t &
             }
         }
         // A word on a button: the button around it is kept, its fill put
-        // back under the word from the texels left and right of the box.
-        const bool onButton = word.onButton && ox >= 1u && ox + word.width < request.width;
-        if (word.onButton && !onButton)
+        // back under the word from the texels left and right of the box. On
+        // a band, the band put back from its own texels in the box; on art,
+        // the art from beside each run of the word's texels.
+        const bool onButton = word.backing == kOnButton && ox >= 1u && ox + word.width < request.width;
+        const bool backed = onButton || word.backing == kOnBar || word.backing == kOnArt;
+        if (word.backing == kOnButton && !onButton)
         {
             // No fill beside the box to put back under it: left the game's
             // (redrawn plainly, the fill would be read as its colours and the
             // button left with a hole).
             return dq8::gfx::kRegionNone;
         }
-        if (onButton)
+        if (backed)
         {
             alone = false;
             roomy = true;
         }
-        // The colours from the word alone, its rows the piece's (on a button,
-        // the fill's texels left out).
+        // On a button, a band or art the core meets the fill here and there,
+        // and the texels next to the cleared fill are not all edge: the
+        // edge's colour is its dark texels' (those of the word's own).
+        float sum[3] = {};
+        uint32_t count = 0u;
+        for (uint32_t y = 0; y < word.height && backed; ++y)
+        {
+            const uint8_t *row = &box[size_t(y) * word.width * 4u];
+            for (uint32_t x = 0; x < word.width; ++x)
+            {
+                const uint8_t *t = row + size_t(x) * 4u;
+                if (backingKind(word.backing, t) == ButtonTexel::Edge && t[3] >= 0x40u &&
+                    !backingAt(word.backing, row, word.width, x))
+                {
+                    for (int c = 0; c < 3; ++c)
+                    {
+                        sum[c] += t[c];
+                    }
+                    ++count;
+                }
+            }
+        }
+        uint8_t edge[4] = {0u, 0u, 0u, 0x7Fu};
+        for (int c = 0; c < 3 && count; ++c)
+        {
+            edge[c] = static_cast<uint8_t>(sum[c] / float(count) + 0.5f);
+        }
+        // The colours from the word alone, its rows the piece's: on a button
+        // or art, the fill's texels left out; on a band, they take the edge's
+        // colour, so the core is read against its own edge as the table's fit
+        // read it (pieces.py load_words).
         std::vector<uint8_t> only(size_t(request.width) * request.height * 4u, 0u);
         for (uint32_t y = 0; y < word.height; ++y)
         {
             std::memcpy(&only[(size_t(oy + y) * request.width + ox) * 4u], &box[size_t(y) * word.width * 4u],
                         size_t(word.width) * 4u);
-            for (uint32_t x = 0; x < word.width && onButton; ++x)
+            for (uint32_t x = 0; x < word.width && backed; ++x)
             {
-                uint8_t *t = &only[(size_t(oy + y) * request.width + ox + x) * 4u];
-                if (buttonTexel(t) == ButtonTexel::Fill)
+                if (backingAt(word.backing, &box[size_t(y) * word.width * 4u], word.width, x))
                 {
-                    std::memset(t, 0, 4u);
+                    uint8_t *t = &only[(size_t(oy + y) * request.width + ox + x) * 4u];
+                    if (word.backing == kOnBar && count)
+                    {
+                        std::memcpy(t, edge, 4u);
+                    }
+                    else
+                    {
+                        std::memset(t, 0, 4u);
+                    }
                 }
             }
         }
         PieceColours colours;
         const bool coloured = roomy && pieceColours(only.data(), request.width, request.height, colours,
                                                     word.shadowStrength > 0.0f);
-        if (coloured && onButton)
+        if (coloured && backed && count)
         {
-            // On a button the core meets the fill here and there, and the
-            // texels next to the cleared fill are not all edge: the edge's
-            // colour is its dark texels'.
-            float sum[3] = {};
-            uint32_t count = 0u;
-            for (size_t i = 0; i < box.size(); i += 4u)
-            {
-                if (buttonTexel(&box[i]) == ButtonTexel::Edge)
-                {
-                    for (int c = 0; c < 3; ++c)
-                    {
-                        sum[c] += box[i + size_t(c)];
-                    }
-                    ++count;
-                }
-            }
-            for (int c = 0; c < 3 && count; ++c)
-            {
-                colours.edge[c] = static_cast<uint8_t>(sum[c] / float(count) + 0.5f);
-            }
+            std::memcpy(colours.edge, edge, 3u);
         }
         if (g_trace)
         {
@@ -2100,6 +2555,11 @@ int lookupWord(const dq8::gfx::RegionRequest &request, uint64_t clut, uint32_t &
         {
             job.console.assign(request.full, request.full + size_t(request.width) * request.height * 4u);
         }
+        if (backed && !g_sheetDirectory.empty())
+        {
+            // The sheet shows the game's piece, not the backing put back.
+            job.sheetConsole = job.console;
+        }
         if (onButton)
         {
             // The kept art's box: each row the fill from the nearest fill
@@ -2137,6 +2597,112 @@ int lookupWord(const dq8::gfx::RegionRequest &request, uint64_t clut, uint32_t &
                 }
             }
         }
+        else if (word.backing == kOnArt)
+        {
+            // What is taken away: the word's texels, and its shadow, the dark
+            // texels (lightness below 40, darker than the wood ever is away
+            // from the letters) within two texels of them, in the box's rows
+            // and the row below it (the shadow's alone there). Each run of it
+            // in a row is filled from the texel left of it to the one right of
+            // it (the wood's grain runs along the rows), or from the one side
+            // that has art in the piece.
+            const uint32_t rows = std::min(request.height, oy + word.height + 1u);
+            const auto lightAt = [&](uint32_t x, uint32_t y) {
+                const uint8_t *t = &request.full[(size_t(y) * request.width + x) * 4u];
+                return (3.0f * t[0] + 6.0f * t[1] + float(t[2])) / 10.0f;
+            };
+            const auto wordAt = [&](uint32_t x, uint32_t y) {
+                return artWord(&request.full[(size_t(y) * request.width + x) * 4u]);
+            };
+            std::vector<uint8_t> taken(size_t(request.width) * rows, 0u);
+            for (uint32_t y = oy; y < rows; ++y)
+            {
+                for (uint32_t x = 0; x < request.width; ++x)
+                {
+                    const bool inBox = y < oy + word.height && x >= ox && x < ox + word.width;
+                    if (wordAt(x, y))
+                    {
+                        taken[size_t(y) * request.width + x] = inBox ? 1u : 0u;
+                        continue;
+                    }
+                    if (lightAt(x, y) >= 40.0f)
+                    {
+                        continue;
+                    }
+                    bool near = false;
+                    for (int dy = -2; dy <= 2 && !near; ++dy)
+                    {
+                        for (int dx = -2; dx <= 2 && !near; ++dx)
+                        {
+                            const int nx = int(x) + dx, ny = int(y) + dy;
+                            near = nx >= int(ox) && nx < int(ox + word.width) && ny >= int(oy) &&
+                                   ny < int(oy + word.height) && wordAt(uint32_t(nx), uint32_t(ny));
+                        }
+                    }
+                    taken[size_t(y) * request.width + x] = near ? 2u : 0u;
+                }
+            }
+            for (uint32_t y = oy; y < rows; ++y)
+            {
+                const uint8_t *row = &request.full[size_t(y) * request.width * 4u];
+                const uint8_t *flags = &taken[size_t(y) * request.width];
+                for (uint32_t x = 0; x < request.width;)
+                {
+                    if (!flags[x])
+                    {
+                        ++x;
+                        continue;
+                    }
+                    uint32_t end = x;
+                    while (end < request.width && flags[end])
+                    {
+                        ++end;
+                    }
+                    // Not from another word's texels (the frame's outline):
+                    // with no art either side, left as the game draws it.
+                    const uint8_t *left = x > 0u && !wordAt(x - 1u, y) ? row + size_t(x - 1u) * 4u : nullptr;
+                    const uint8_t *right = end < request.width && !wordAt(end, y) ? row + size_t(end) * 4u : nullptr;
+                    for (uint32_t at = x; at < end && (left || right); ++at)
+                    {
+                        uint8_t *to = &job.console[(size_t(y) * request.width + at) * 4u];
+                        const uint8_t *from = left ? left : right, *towards = right ? right : left;
+                        const float t = float(at + 1u - x) / float(end + 1u - x);
+                        for (int c = 0; c < 4; ++c)
+                        {
+                            to[c] = static_cast<uint8_t>(float(from[c]) + (float(towards[c]) - float(from[c])) * t +
+                                                         0.5f);
+                        }
+                    }
+                    x = end;
+                }
+            }
+        }
+        else if (word.backing == kOnBar)
+        {
+            // The kept art's box: each of the band's rows its colour from one
+            // end of the box to the other, the rest clear (the word's edge
+            // above and below the band).
+            for (uint32_t y = 0; y < word.height; ++y)
+            {
+                const uint8_t *row = &box[size_t(y) * word.width * 4u];
+                const bool band = bandRow(row, word.width);
+                const uint8_t *left = row, *right = row + size_t(word.width - 1u) * 4u;
+                for (uint32_t x = 0; x < word.width; ++x)
+                {
+                    uint8_t *to = &job.console[(size_t(oy + y) * request.width + ox + x) * 4u];
+                    if (!band)
+                    {
+                        std::memset(to, 0, 4u);
+                        continue;
+                    }
+                    const float t = word.width > 1u ? float(x) / float(word.width - 1u) : 0.0f;
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        to[c] = static_cast<uint8_t>(float(left[c]) + (float(right[c]) - float(left[c])) * t + 0.5f);
+                    }
+                }
+            }
+        }
         return answer(job, width, height, rgba);
     }
     return kNoWord;
@@ -2152,7 +2718,7 @@ int lookupPiece(const dq8::gfx::RegionRequest &request, uint64_t clut, uint32_t 
 {
     if (request.border || request.shadow || request.height > kPieceRows)
     {
-        if (g_tracePalettes && request.height > kPieceRows)
+        if (g_tracePalettes && request.height > kWordRows)
         {
             // Taller than a piece: logged too when looking for text the
             // letters miss (a word drawn with the art around it).
@@ -2170,6 +2736,11 @@ int lookupPiece(const dq8::gfx::RegionRequest &request, uint64_t clut, uint32_t 
         if (const int answered = lookupWord(request, clut, width, height, rgba); answered != kNoWord)
         {
             return answered;
+        }
+        if (g_tracePalettes && request.height > kWordRows)
+        {
+            // Taller than a word's piece and no word of the table's art.
+            traceUnknown(request);
         }
     }
     PieceColours colours;
@@ -2386,22 +2957,11 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
             updateLearning();
         }
     }
-    uint64_t key = alpha;
-    for (const uint64_t value : {uint64_t(request.scale) << 3u | uint64_t(version) << 1u | (request.bold ? 1u : 0u),
-                                 uint64_t(colour[0]) << 16u | uint64_t(colour[1]) << 8u | colour[2]})
-    {
-        key ^= value;
-        key *= 0x100000001b3ull;
-    }
-    Job job{key, kFonts[cell.font], cell.glyph, cell.ink, request.scale, request.bold, version,
-            {colour[0], colour[1], colour[2]}};
-    if (cell.rows)
-    {
-        // Drawn a row short, as the draw takes it.
-        job.regionWidth = static_cast<uint8_t>(request.width);
-        job.regionHeight = cell.rows;
-    }
-    return answer(job, width, height, rgba);
+    // The glyph asked for queued first, ahead of its font's others.
+    const Job job = glyphJob(alpha, cell, request.scale, version, request.bold, colour);
+    const int answered = answer(job, width, height, rgba);
+    drawAhead(cell, request.scale, version, request.bold);
+    return answered;
 }
 
 } // namespace
@@ -2410,7 +2970,9 @@ void install(PS2Runtime &runtime)
 {
     if (const char *trace = std::getenv("RG_TYPEFACE_TRACE"); trace && *trace && *trace != '0')
     {
-        g_trace = true;
+        // "timing" alone: the timing lines, not the glyphs.
+        g_traceTiming = std::strcmp(trace, "timing") == 0;
+        g_trace = !g_traceTiming;
         g_tracePalettes = std::strcmp(trace, "palettes") == 0;
         g_learning.store(g_tracePalettes, std::memory_order_relaxed);
     }
@@ -2423,6 +2985,14 @@ void install(PS2Runtime &runtime)
         {
             g_sheetScale = std::clamp(uint32_t(std::strtoul(scale, nullptr, 10)), 2u, 8u);
         }
+    }
+    if (const char *ahead = std::getenv("RG_TYPEFACE_AHEAD"); ahead && *ahead)
+    {
+        g_drawAhead = *ahead != '0';
+    }
+    if (const char *gap = std::getenv("RG_TYPEFACE_GAP"); gap && *gap)
+    {
+        g_gapOpening = std::clamp(int(std::strtol(gap, nullptr, 10)), 0, 40);
     }
     if (const char *enabled = std::getenv("RG_TYPEFACE_LETTERS"); enabled && *enabled)
     {
@@ -2441,7 +3011,19 @@ void install(PS2Runtime &runtime)
 
 void installRenderer(dq8::gfx::SdlGpuBackend &)
 {
-    std::thread(drawer).detach();
+    // A quarter of the processors, two to four: the game's own threads keep
+    // theirs (four here on 16, two on a Steam Deck's 8).
+    // RG_TYPEFACE_DRAWERS=N, for the timing trace's comparisons. (Read
+    // here: the renderer is set up before install().)
+    unsigned drawers = std::clamp(std::thread::hardware_concurrency() / 4u, 2u, 4u);
+    if (const char *count = std::getenv("RG_TYPEFACE_DRAWERS"); count && *count)
+    {
+        drawers = std::clamp(unsigned(std::strtoul(count, nullptr, 10)), 1u, 16u);
+    }
+    for (unsigned n = 0; n < drawers; ++n)
+    {
+        std::thread(drawer).detach();
+    }
     rg::texturePack::setFirstSource(&lookup, &wantedPalette);
 }
 
@@ -2499,6 +3081,16 @@ void setEnabled(bool on)
         forgetPictures();
         rg::texturePack::refresh();
     }
+}
+
+bool enabled()
+{
+    return g_enabled.load(std::memory_order_relaxed);
+}
+
+bool forced()
+{
+    return g_forced >= 0;
 }
 
 } // namespace rg::typeface

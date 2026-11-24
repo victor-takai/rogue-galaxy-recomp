@@ -12,13 +12,17 @@ class SdlGpuBackend;
 // sheet is redrawn from a free typeface made to look like the console's
 // (Andika, SIL Open Font License, thirdparty/fonts), at the internal
 // resolution, in the glyph's own cell, so the game's layout, widths and
-// borders stay. The glyphs are told apart by their pixels, which the font
-// pages hold when the game opens them (ArchiveFindEntryByName); which glyph
-// of the typeface, its size and its place come from typeface_table.inc,
+// borders stay; each as wide as the console's ink less half a pixel (before
+// its strokes' growth), so the gaps between letters are even. The glyphs
+// are told apart by their pixels, which the font pages hold when the game
+// opens them (ArchiveFindEntryByName); which glyph of the typeface, its
+// size and its place come from typeface_table.inc,
 // which tools/typeface/make_table.py writes. The menus' own font and the
 // digits and words of their pictures are redrawn the same way, known by
 // the hashes of their texels the table holds; of the game's symbols, the
-// plus-minus, times, middle dot and reference mark, found by their code.
+// plus-minus, times, middle dot and reference mark, found by their code; and
+// the registered mark, a special character drawn from the buttons' picture,
+// known as the digits are.
 // With the European text the European pages' fonts, the European menu font
 // and the digits of each language's pictures are redrawn the same way,
 // accents included (the pages' glyphs found by their codes); the words of
@@ -38,6 +42,9 @@ void install(PS2Runtime &runtime);
 void installRenderer(dq8::gfx::SdlGpuBackend &backend);
 
 void setEnabled(bool on);
+bool enabled();
+// RG_TYPEFACE_LETTERS holds the letters on or off, whatever the menu says.
+bool forced();
 
 // dq8-gfx's hash of a 256-colour CT32 palette kept in the GS's CSM1 order
 // (as a TIM2 and the game's memory hold it).

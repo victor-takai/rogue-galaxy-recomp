@@ -566,6 +566,8 @@ std::atomic<unsigned> g_f10Presses{0u};
 std::atomic<unsigned> g_f7Presses{0u};
 // F6 turns the free camera on or off.
 std::atomic<unsigned> g_f6Presses{0u};
+// F8 turns the typeface letters on or off.
+std::atomic<unsigned> g_f8Presses{0u};
 // The longest gap between two pump() calls since the stats line last printed
 // it. The presenter loop calls pump several times a frame, so this is not the
 // frame time (the backend's "longest frame" is) but the longest the main
@@ -602,8 +604,65 @@ bool SDLCALL countMarkKeys(void *, SDL_Event *event)
             // (ui_overlay.cpp's reservedKey).
             g_f6Presses.fetch_add(1u, std::memory_order_relaxed);
         }
+        else if (event->key.scancode == SDL_SCANCODE_F8 && !(g_menu && g_menu->capturingBinding()))
+        {
+            g_f8Presses.fetch_add(1u, std::memory_order_relaxed);
+        }
     }
     return true;
+}
+
+// A key bound to the pad before it became a shortcut (Controls took F6 and
+// F8 until then, and a saved binding stays) is left the player's: the
+// shortcut does nothing, rather than both acting at each press.
+bool boundToPad(const dq8::gfx::PadConfig &config, SDL_Scancode key)
+{
+    if (!config.keyboardEnabled)
+    {
+        return false;
+    }
+    for (const dq8::gfx::PadBindingSlots &slots : config.keyboard)
+    {
+        for (const dq8::gfx::PadBinding &binding : slots)
+        {
+            if (binding.kind == dq8::gfx::PadBinding::Kind::Key && binding.code == key)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// F8: the menu's Typeface letters switch flipped, so F1 shows the same and
+// it is saved. At 1x, where the switch is greyed out, a toast says why and
+// it stays as it is.
+void toggleTypefaceLetters()
+{
+    if (!g_menu)
+    {
+        rg::typeface::setEnabled(!rg::typeface::enabled());
+        return;
+    }
+    if (g_menu->shownResolutionScale() <= 1u)
+    {
+        g_menu->notify("Typeface letters show above 1\xC3\x97: raise Display > Internal resolution for them",
+                       dq8::ui::Icon::Info);
+        return;
+    }
+    if (rg::typeface::forced())
+    {
+        g_menu->notify(rg::typeface::enabled() ? "Typeface letters are held on by RG_TYPEFACE_LETTERS"
+                                               : "Typeface letters are held off by RG_TYPEFACE_LETTERS",
+                       dq8::ui::Icon::Info);
+        return;
+    }
+    // Off by default, as its switch (createMenu).
+    const auto &options = g_menu->settings().gameOptions;
+    const auto found = options.find("typeface_letters");
+    const bool on = !(found != options.end() && found->second);
+    g_menu->setGameOptionValue("typeface_letters", on);
+    g_menu->notify(on ? "Typeface letters on" : "Typeface letters off", dq8::ui::Icon::Interface);
 }
 
 // "Walk (hold)" (Controls): the left stick at 70% of its push each way, after
@@ -792,9 +851,14 @@ bool pump(void *userData)
         std::fprintf(stderr, "[mark] F10: stall report requested\n");
         debug::requestStallReport();
     }
-    if (g_f6Presses.exchange(0u, std::memory_order_relaxed) % 2u != 0u)
+    const dq8::gfx::PadConfig &padConfig = backend->padInput().config();
+    if (g_f6Presses.exchange(0u, std::memory_order_relaxed) % 2u != 0u && !boundToPad(padConfig, SDL_SCANCODE_F6))
     {
         rg::freecamera::setEnabled(!rg::freecamera::enabled());
+    }
+    if (g_f8Presses.exchange(0u, std::memory_order_relaxed) % 2u != 0u && !boundToPad(padConfig, SDL_SCANCODE_F8))
+    {
+        toggleTypefaceLetters();
     }
     // Changes made on the game's Settings screen (its pages are there with
     // the menu alone), kept as the menu's own.
@@ -938,10 +1002,11 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     host.version = RG_APP_VERSION;
     host.revision = RG_REVISION;
     host.steamDeck = onSteamDeck();
-    // The game's own keys (countMarkKeys), kept out of Controls: F6 listed
-    // beside the menu's in the Shortcuts window; the diagnostics keys, which
-    // act in every run, not.
+    // The game's own keys (countMarkKeys), kept out of Controls: F6 and F8
+    // listed beside the menu's in the Shortcuts window; the diagnostics keys,
+    // which act in every run, not.
     host.gameShortcuts = {{SDL_SCANCODE_F6, "Free camera"},
+                          {SDL_SCANCODE_F8, "Typeface letters"},
                           {SDL_SCANCODE_F7, "Frame capture and state report", false},
                           {SDL_SCANCODE_F9, "A mark in the log", false},
                           {SDL_SCANCODE_F10, "Stall report", false}};
@@ -1070,12 +1135,13 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "RB, LT and RT, or the keys and mouse buttons, as each button is bound in Controls. Off, or with a "
          "PlayStation or Nintendo controller, the game's PlayStation buttons.",
          true},
-        {"typeface_letters", "Typeface letters",
+        {"typeface_letters", "Typeface letters (F8)",
          "Above 1x, the game's Latin letters are drawn from a typeface made to look like them (Andika, SIL Open "
          "Font License) at the internal resolution, in their own places and widths, instead of enlarged as blocks: "
          "the dialogue's, the menus' and the names', and the menus' grey letters with a dark edge, their numbers "
          "and the words of their pictures. With the text in French, German, Spanish or Italian too, accents "
-         "included, except the words of the menus' pictures. Each new letter shows in a frame or two.",
+         "included, except the words of the menus' pictures. Each new letter shows in a frame or two. F8 turns "
+         "them on or off, as this switch does.",
          false},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},

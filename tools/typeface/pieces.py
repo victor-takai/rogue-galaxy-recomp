@@ -109,6 +109,11 @@ SETS = {
                       "0123456789/", italic=True),
     "resultgold": SetSpec("menu\\rc\\battle_endinfo_menu_rc_en.pac", "battle_menu_ed_EN.img", 0, 0, 22, 14, 14, 18,
                           "0123456789", italic=True),
+    # The registered mark of the memory card's messages ("PlayStation®2"): a
+    # special character of the text, its picture the smaller of the two in
+    # gaiji2.img (the buttons' picture, beside the fonts' pages), drawn 15x20.
+    # The European text's own gaiji2.img has it in the same cell.
+    "registered": SetSpec("meswin\\fontset_main_en.pak", "gaiji2.img", 0, 18, 236, 15, 15, 20, "®", ref="®"),
 }
 
 
@@ -141,6 +146,14 @@ class PieceSet:
 # alone drew Acquired Items bolder than Exp and Skills beside it), "button"
 # printed on a button's fill (the framed Player): the word told from the
 # fill by colour (button_kind), the fill put back under the new word,
+# "bar" printed on a band of colour across its whole box (the items' MAX on
+# its blue bar): a row of the box opaque at both ends is the band's, and its
+# texels but the word's core (bar_kind) are the band, put back under the new
+# word from one end of the row to the other, "art" printed on art (the
+# Revelation Flow's title on the frame's wood): its texels told from the
+# art's by colour (art_kind), its box theirs, and the art put back under the
+# new word, each run of the word's texels in a row filled from the art left
+# and right of it,
 # "scale=X" its letters' horizontal scale held at X (a word whose letters
 # stand far apart would be stretched to them), "spaced" its size held at the
 # console letters' height and its letters spread to the console word's width.
@@ -180,6 +193,9 @@ WORDS = [
         ("Ability List", 152, 53, 80, 18), ("Equipped", 152, 72, 92, 18)]),
     ("menu\\rc\\main_menu_img_en.pac", "menu_tac_a_EN.img", 0, [
         ("Suggestion Settings", 0, 60, 128, 17)]),
+    # The Revelation Flow's title, printed on the wood of its frame.
+    ("menu\\rc\\main_menu_img_en.pac", "menu_imgboard_EN.img", 0, [
+        ("Revelation Flow", 20, 16, 156, 18, "art")]),
     ("menu\\rc\\main_menu_img_en.pac", "menu_br_a_EN.img", 0, [
         ("Hunter", 164, 0, 49, 16), ("Name", 164, 16, 41, 15), ("Points", 164, 32, 46, 15),
         ("Monster", 164, 48, 57, 16), ("Target", 164, 64, 48, 16), ("List", 164, 80, 29, 16),
@@ -188,6 +204,10 @@ WORDS = [
         ("Hunter Points", 162, 184, 94, 19)]),
     ("menu\\rc\\menu_static_img_en.pac", "menu_item_b_EN.img", 3, [
         ("Power", 0, 0, 47, 16), ("Skills", 0, 16, 40, 16), ("S", 40, 16, 12, 16), ("P", 52, 16, 12, 16)]),
+    # A weapon's Skills when they are all learned (MAX, its letters apart on
+    # a blue band) and when mastered.
+    ("menu\\rc\\menu_static_img_en.pac", "menu_item_b_EN.img", 2, [
+        ("MAX", 0, 48, 54, 16, "bar spaced"), ("MASTERED", 55, 48, 55, 16)]),
     ("menu\\rc\\main_menu_img_en.pac", "menu_item_sp_EN.img", 0, [
         ("Rare Items", 160, 70, 75, 16, "shadow"), ("Ancient Key Pieces", 0, 86, 132, 17, "shadow"),
         ("Power of the Heart", 1, 104, 132, 16, "shadow")]),
@@ -223,6 +243,8 @@ class Word:
     button: bool = False  # printed on a button's fill (its box is the word's and the fill's)
     k: float | None = None  # the extra horizontal scale held (fit.Params.k); None: fitted
     spaced: bool = False  # its letters stand far apart: size held, pens spread to the console word's width
+    bar: bool = False  # printed on a flat band of colour (its box is the word's and the band's)
+    art: bool = False  # printed on art (its box is its own texels', the art's in between)
 
 
 def unswizzle8(buf: bytes, width: int, height: int) -> bytearray:
@@ -346,7 +368,7 @@ def pack_reader(disc_folder: Path, lang: str | None):
         return lambda pack: {e.name: e.data for e in european.pac_read(disc.read(pack))}
 
     def read(pack):
-        name = re.sub(r"_en(?=\.pac$)", f"_{lang.lower()}", pack, flags=re.IGNORECASE)
+        name = re.sub(r"_en(?=\.pa[ck]$)", f"_{lang.lower()}", pack, flags=re.IGNORECASE)
         entries = european.pac_read(pages.eur_read(disc_folder, lang, name))
         return {re.sub(r"_" + lang + r"(?=[._])", "_EN", e.name, flags=re.IGNORECASE): e.data for e in entries}
     return read
@@ -440,6 +462,26 @@ def button_kind(t):
     return "core" if b - r < 0x38 and light > 90 else "fill"
 
 
+def bar_kind(t):
+    """A texel of a word printed on a band (the items' MAX): "core" (the
+    word's pale blue), "edge" (its dark blue edge, and the band's) or "fill"
+    (the band's saturated blue). typeface_letters.cpp's barTexel is the same."""
+    r, g, b, _ = t
+    light = lightness(r, g, b)
+    if light < 70:
+        return "edge"
+    return "fill" if b - r > 110 and light < 115 else "core"
+
+
+def art_kind(t):
+    """A texel of a word printed on art (the Revelation Flow's title on the
+    frame's wood): "word" (its lavender core, grey bevel, black edge: blue as
+    much as red or more) or "art" (the wood and the frame, red well above
+    blue). typeface_letters.cpp's artTexel is the same."""
+    r, g, b, a = t
+    return "word" if a >= 0x40 and b + 4 >= r else "art"
+
+
 def shadow_core(rgba, w, x0, y0, bw, bh):
     """A shadowed word's core as coverage (rows), and its shadow fitted: the
     core is its light texels (their alpha, toward their row's lightest), the
@@ -526,7 +568,7 @@ def load_words(disc_folder: Path = ROOT / "disc"):
         for text, wx, wy, ww, wh, *style in words:
             flags = style[0].split() if style else []
             ink = [(x, y) for y in range(wy, min(h, wy + wh)) for x in range(wx, min(w, wx + ww))
-                   if rgba[y * w + x][3]]
+                   if rgba[y * w + x][3] and ("art" not in flags or art_kind(rgba[y * w + x]) == "word")]
             if not ink:
                 raise ValueError(f"{entry}#{tim}: no ink for {text!r}")
             x0, y0 = min(x for x, _ in ink), min(y for _, y in ink)
@@ -544,6 +586,33 @@ def load_words(disc_folder: Path = ROOT / "disc"):
                         if button_kind(rgba[y * w + x]) == "fill":
                             cleared[y * w + x] = (0, 0, 0, 0)
                 core = core_cells(cleared, w, bw, bh, [(x0, y0)])[0]
+            elif "art" in flags:
+                # Printed on art: the art's texels cleared out of the box.
+                cleared = list(rgba)
+                for y in range(y0, y0 + bh):
+                    for x in range(x0, x0 + bw):
+                        if art_kind(rgba[y * w + x]) == "art":
+                            cleared[y * w + x] = (0, 0, 0, 0)
+                core = core_cells(cleared, w, bw, bh, [(x0, y0)])[0]
+            elif "bar" in flags:
+                # Printed on a band: in the band's rows (opaque at both ends
+                # of the box) all but the word's core takes its edge's colour
+                # (the mean of its edge in the other rows), so the core is read
+                # against its own edge as any word's.
+                rows = [y for y in range(y0, y0 + bh)
+                        if rgba[y * w + x0][3] >= 0x40 and rgba[y * w + x0 + bw - 1][3] >= 0x40]
+                edges = [rgba[y * w + x] for y in range(y0, y0 + bh) if y not in rows for x in range(x0, x0 + bw)
+                         if rgba[y * w + x][3] >= 0x40 and bar_kind(rgba[y * w + x]) == "edge"]
+                if not edges:
+                    raise ValueError(f"{entry}#{tim}: {text!r} has no edge outside its band's rows")
+                # Rounded as typeface_letters.cpp rounds it (halves up).
+                edge = tuple(int(sum(t[c] for t in edges) / len(edges) + 0.5) for c in range(3)) + (0x7F,)
+                cleared = list(rgba)
+                for y in rows:
+                    for x in range(x0, x0 + bw):
+                        if bar_kind(rgba[y * w + x]) != "core":
+                            cleared[y * w + x] = edge
+                core = core_cells(cleared, w, bw, bh, [(x0, y0)])[0]
             else:
                 core = core_cells(rgba, w, bw, bh, [(x0, y0)])[0]
             img = Image.new("L", (bw, bh))
@@ -555,5 +624,6 @@ def load_words(disc_folder: Path = ROOT / "disc"):
                             Glyph(0, text, bw, img, core_ink), "i" in flags, "sc" in flags,
                             {c: g for c, g in named.items() if len(c) == 1}, shadow,
                             int(named["grow"]) if "grow" in named else None, "button" in flags,
-                            float(named["scale"]) if "scale" in named else None, "spaced" in flags))
+                            float(named["scale"]) if "scale" in named else None, "spaced" in flags,
+                            "bar" in flags, "art" in flags))
     return out
