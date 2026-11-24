@@ -17,6 +17,7 @@ with the
 hash of the picture's palette as dq8-gfx makes it. Everything is read into
 memory; only numbers go into the table.
 """
+import re
 import struct
 import sys
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "disc"))
 import european  # noqa: E402
 
+import pages  # noqa: E402
 from pages import Glyph  # noqa: E402
 
 
@@ -52,14 +54,27 @@ class SetSpec:
     # Signs in the cells after `chars` (the attributes' slash): placed on
     # the console's, without weighing in the set's fit.
     signs: str = ""
+    # Which text's pictures hold it: "all" (the digits: the European text's
+    # pictures hold them in the same cells, in palettes of their own), "en"
+    # (the English menu font) or "eur" (the European one).
+    text: str = "all"
 
+
+# The European languages: each has its copy of the menus' pictures (the same
+# cells, its own palettes), disc/EU/<LANG>.DAT.
+EUR_LANGS = ("FR", "DE", "ES", "IT")
 
 # The sets, by the name the table gives them.
 SETS = {
     # The menus' own font (item commands, Allies, shops): letters drawn one
     # by one from menu_font_EN.img, as the digits are from their pictures.
     "menu": SetSpec("menu\\rc\\menu_static_img_en.pac", "menu_font_EN.img", 0, 0, 0, 0, 0, 0, "",
-                    setting=("menu\\rc\\menu_static_res_en.pac", "menu_font_setting_EN.txt"), ref="H"),
+                    setting=("menu\\rc\\menu_static_res_en.pac", "menu_font_setting_EN.txt"), ref="H", text="en"),
+    # The European text's menu font: the same page in the four languages,
+    # its setting listing the accents as bytes 0xA0 on (pages.EUR_ACCENTS).
+    "menu_eur": SetSpec("menu\\rc\\menu_static_img_en.pac", "menu_font_EN.img", 0, 0, 0, 0, 0, 0, "",
+                        setting=("menu\\rc\\menu_static_res_en.pac", "menu_font_setting_EN.txt"), ref="H",
+                        text="eur"),
     # The clock and the play time (the main and load menus, the transporter),
     # and the row's letters after it: the Battle Recorder's points ("P");
     # the dot between (a space here) is left as it is.
@@ -323,17 +338,38 @@ def core_cells(rgba, w, cw, ch, origins):
     return out
 
 
-def load_pieces(disc_folder: Path = ROOT / "disc", names=None):
-    """{set name: PieceSet} for the sets asked (all by default)."""
-    disc = european.disc_from_folder(disc_folder)
+def pack_reader(disc_folder: Path, lang: str | None):
+    """pack -> {entry: data}: the US disc's, or a European language's
+    (disc/EU), its pack and entries named by their US names."""
+    if lang is None:
+        disc = european.disc_from_folder(disc_folder)
+        return lambda pack: {e.name: e.data for e in european.pac_read(disc.read(pack))}
+
+    def read(pack):
+        name = re.sub(r"_en(?=\.pac$)", f"_{lang.lower()}", pack, flags=re.IGNORECASE)
+        entries = european.pac_read(pages.eur_read(disc_folder, lang, name))
+        return {re.sub(r"_" + lang + r"(?=[._])", "_EN", e.name, flags=re.IGNORECASE): e.data for e in entries}
+    return read
+
+
+def load_pieces(disc_folder: Path = ROOT / "disc", names=None, lang: str | None = None):
+    """{set name: PieceSet} for the sets asked (all by default), from the US
+    pictures, or with `lang` a European language's (the sets its text has).
+    A European set alone (menu_eur) is read from the first European language."""
+    readers = {}
     packs = {}
     out = {}
     for name, spec in SETS.items():
         if names is not None and name not in names:
             continue
-        if spec.pack not in packs:
-            packs[spec.pack] = {e.name: e.data for e in european.pac_read(disc.read(spec.pack))}
-        d = packs[spec.pack][spec.entry]
+        if lang is not None and spec.text == "en":
+            continue
+        used = lang if lang is not None else (EUR_LANGS[0] if spec.text == "eur" else None)
+        if used not in readers:
+            readers[used] = pack_reader(disc_folder, used)
+        if (used, spec.pack) not in packs:
+            packs[(used, spec.pack)] = readers[used](spec.pack)
+        d = packs[(used, spec.pack)][spec.entry]
         at = d.find(b"TIM2")
         for _ in range(spec.tim):
             at = d.find(b"TIM2", at + 4)
@@ -342,16 +378,20 @@ def load_pieces(disc_folder: Path = ROOT / "disc", names=None):
         chars, cw, ch = spec.chars, spec.cw, spec.ch
         if spec.setting:
             pack, entry = spec.setting
-            if pack not in packs:
-                packs[pack] = {e.name: e.data for e in european.pac_read(disc.read(pack))}
-            lines = packs[pack][entry].decode("latin-1").splitlines()
+            if (used, pack) not in packs:
+                packs[(used, pack)] = readers[used](pack)
+            lines = packs[(used, pack)][entry].decode("latin-1").splitlines()
             numbers = [int(v) for v in lines[1].split(",") if v.strip()]
             chars, (cw, ch, page) = lines[0], numbers[:3]
+            if used is not None:
+                # The European setting's accents, one byte each from 0xA0.
+                chars = "".join(pages.EUR_ACCENTS[ord(c) - 0xA0] if 0xA0 <= ord(c) < 0xA0 + len(pages.EUR_ACCENTS)
+                                else c for c in chars)
             per_row = page // cw
             origins = [((n % per_row) * cw, (n // per_row) * ch) for n in range(len(chars))]
             widths = numbers[3:3 + len(chars)]
             spec = SetSpec(spec.pack, spec.entry, spec.tim, 0, 0, cw, cw, ch, chars, spec.italic, spec.setting,
-                           spec.ref)
+                           spec.ref, text=spec.text)
         else:
             origins = [(spec.x0 + n * spec.pitch, spec.y0) for n in range(len(chars) + len(spec.signs))]
             widths = [cw] * len(origins)
@@ -435,6 +475,32 @@ def shadow_core(rgba, w, x0, y0, bw, bh):
                 if best is None or err < best[0]:
                     best = (err, (dx, dy, sigma, k))
     return core, best[1]
+
+
+def word_picture_palettes(disc_folder: Path, lang: str) -> dict:
+    """{palette hash: picture} of a European language's copies of the WORDS
+    pictures (a picture the language has no copy of left out)."""
+    read = pack_reader(disc_folder, lang)
+    packs = {}
+    out = {}
+    for pack, entry, tim, _words in WORDS:
+        try:
+            if pack not in packs and pack.lower().endswith(".img"):
+                name = re.sub(r"_en(?=\.img$)", f"_{lang.lower()}", pack, flags=re.IGNORECASE)
+                packs[pack] = {entry: pages.eur_read(disc_folder, lang, name)}
+            elif pack not in packs:
+                packs[pack] = read(pack)
+        except ValueError:
+            packs[pack] = {}
+        d = packs[pack].get(entry)
+        if d is None:
+            continue
+        at = d.find(b"TIM2")
+        for _ in range(tim):
+            at = d.find(b"TIM2", at + 4)
+        _w, _h, _idx, pal = tim2(d, at)
+        out[palette_hash(pal, 16 if len(pal) <= 16 else 256)] = f"{lang} {entry}#{tim}"
+    return out
 
 
 def load_words(disc_folder: Path = ROOT / "disc"):

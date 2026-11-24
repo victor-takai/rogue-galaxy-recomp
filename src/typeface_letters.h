@@ -19,8 +19,11 @@ class SdlGpuBackend;
 // digits and words of their pictures are redrawn the same way, known by
 // the hashes of their texels the table holds; of the game's symbols, the
 // plus-minus, times, middle dot and reference mark, found by their code.
-// Glyphs the table leaves out (kana, kanji, the arrows and the other
-// symbols) stay the console's, and so does everything with the European text.
+// With the European text the European pages' fonts, the European menu font
+// and the digits of each language's pictures are redrawn the same way,
+// accents included (the pages' glyphs found by their codes); the words of
+// the pictures stay the console's. Glyphs the table leaves out (kana, kanji,
+// the arrows and the other symbols) stay the console's.
 // RG_TYPEFACE_LETTERS=0/1 over the menu; RG_TYPEFACE_TRACE=1 logs the pages
 // read and the glyphs made; RG_TYPEFACE_SHEET=DIR writes every glyph beside
 // the console's (docs/DEVELOPMENT.md).

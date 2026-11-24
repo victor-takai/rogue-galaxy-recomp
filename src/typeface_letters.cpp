@@ -26,7 +26,6 @@
 #include "return_hook.h"
 #include "runtime/ps2_memory.h"
 #include "scene_timing.h"
-#include "text_language.h"
 #include "texture_pack.h"
 
 // imgui's copy of stb_truetype, compiled here on its own (imgui keeps its
@@ -68,13 +67,33 @@ struct TypefaceGlyph
     // Cell pixels opened between a sign's two parts (the clock's colon:
     // the console's dots are farther apart than the typeface's).
     float gap = 0.0f;
-    // A symbol's code in the game's width table (character 0 there: the
-    // plus-minus, the times sign...); 0 for a character.
+    // The glyph's code where the character alone does not find it: a
+    // symbol's code in the game's width table (character 0 there: the
+    // plus-minus, the times sign...); every glyph's code on a European page
+    // (TypefaceFont::byCode); an accent's cell in the European menu font
+    // (character 0: the table's characters are ASCII). 0 otherwise.
     uint8_t code = 0u;
 };
+
+// A row's name in the traces and the sheets' file names: its character, or
+// for one the table has as 0 (a symbol, an accent) its code.
+std::string glyphLabel(const TypefaceGlyph &glyph, bool forFile)
+{
+    char text[8];
+    if (glyph.character != 0)
+    {
+        std::snprintf(text, sizeof(text), forFile ? "%02X" : "%c", static_cast<unsigned char>(glyph.character));
+    }
+    else
+    {
+        std::snprintf(text, sizeof(text), forFile ? "c%u" : "#%u", unsigned(glyph.code));
+    }
+    return text;
+}
 struct TypefaceFont
 {
-    // The game font: the middle of its pages' names (FontTex_normal_EN_0.tm2).
+    // The game font: the middle of its pages' names (FontTex_normal_EN_0.tm2),
+    // with "_eur" for the European text's (FontTex_normal_EUR_0.tm2).
     const char *name;
     uint32_t cellWidth, cellHeight;
     const char *file;
@@ -92,6 +111,10 @@ struct TypefaceFont
     float slant;
     const TypefaceGlyph *glyphs;
     size_t count;
+    // Its glyphs found by their code (TypefaceGlyph::code), not by the US
+    // width table's characters: a European page, whose codes past 95 hold
+    // other symbols and the accents (107-170).
+    bool byCode = false;
 };
 // A digit of the menus' pictures, or a letter of the menus' own font
 // (tools/typeface/pieces.py): the game draws a menu's numbers a digit at a
@@ -159,7 +182,9 @@ ButtonTexel buttonTexel(const uint8_t *t)
 
 #include "typeface_table.inc"
 
-constexpr const TypefaceFont *kFonts[] = {&kNormalFont, &kSystemFont, &kNameFont};
+// The English pages' fonts, then the European text's (their pages named EUR).
+constexpr const TypefaceFont *kFonts[] = {&kNormalFont,    &kSystemFont,    &kNameFont,
+                                          &kNormalEurFont, &kSystemEurFont, &kNameEurFont};
 
 struct Typeface
 {
@@ -192,6 +217,9 @@ constexpr uint32_t kFontTable = 0x0044E850u;
 // The codes it names: ASCII and the game's symbols (the accents of the
 // European fonts follow, from 107).
 constexpr uint32_t kTableCodes = 106u;
+// A European page's codes: the US page's and its accents and marks (107-170,
+// text_language.cpp's kAccentTags).
+constexpr uint32_t kEuropeanCodes = 171u;
 constexpr uint32_t kArchiveFindEntryByName = 0x00181E20u; // (pack, name), an entry of a pack
 constexpr uint32_t kRdramSize = 0x02000000u;
 
@@ -246,7 +274,9 @@ std::unordered_map<uint64_t, Cell> g_cells;
 // those only (and of every palette when a pack or a dump asks: the others
 // still stay the console's). The ones known: dq8-gfx's hashes of the three
 // fonts' palettes, the same since Sharp letters in October, and the only
-// ones the glyphs were seen drawn with (RG_TYPEFACE_TRACE=palettes). In
+// ones the glyphs were seen drawn with (RG_TYPEFACE_TRACE=palettes); then
+// the European pages' three (other alpha levels; the pages are the same in
+// the four languages' packs), seen with the text in French. In
 // case the hash ever changes, every palette is asked about from the first
 // page read until a glyph matches with a known palette (a few seconds of
 // boot), or, if none does, until a glyph of each font read has matched;
@@ -254,7 +284,8 @@ std::unordered_map<uint64_t, Cell> g_cells;
 // its levels one colour (the picture has one), up to kLearnedPalettes. A
 // known palette matched drops the learned ones: the same letters redrawn
 // at every run.
-constexpr uint64_t kKnownPalettes[] = {0x33A2CFEFAEC9F88Bull, 0xCFBAE4E31E471D6Eull, 0x75B5F042466BE787ull};
+constexpr uint64_t kKnownPalettes[] = {0x33A2CFEFAEC9F88Bull, 0xCFBAE4E31E471D6Eull, 0x75B5F042466BE787ull,
+                                       0x9DF81CD921347BF4ull, 0x397678EBC6867E16ull, 0x0CBE16E636C4943Bull};
 constexpr size_t kLearnedPalettes = 16u;
 std::vector<uint64_t> g_palettes(std::begin(kKnownPalettes), std::end(kKnownPalettes));
 bool g_pageRead[std::size(kFonts)] = {};
@@ -298,18 +329,13 @@ uint64_t hashRgba(const uint8_t *rgba, uint32_t texels)
     return hash;
 }
 
+// A palette of the menus' pictures the table knows. The European text's
+// pictures hold the same digits in palettes of their own (each language's)
+// and a menu font of their own, which the table has apart; its picture words
+// match no English one and stay the game's.
 bool piecePalette(uint64_t clut)
 {
     return std::find(std::begin(kPiecePalettes), std::end(kPiecePalettes), clut) != std::end(kPiecePalettes);
-}
-
-// The menus' pictures are redrawn with the English text only, as the fonts
-// are (afterFindEntry): with the European text the option says the letters
-// stay the game's, and a European picture sharing a palette and texels with
-// the English one would otherwise come out half redrawn.
-bool englishPieces()
-{
-    return rg::textlanguage::language() == 0;
 }
 
 // Palettes our own code changed (notePaletteAlias): changed, original.
@@ -379,20 +405,26 @@ bool readPage(const uint8_t *rdram, const TypefaceFont &font, uint8_t fontIndex,
     size_t added = 0;
     std::vector<SheetGlyph> sheet;
     std::lock_guard<std::mutex> lock(g_cellsMutex);
-    for (uint32_t code = 0; code < kTableCodes; ++code)
+    for (uint32_t code = 0; code < (font.byCode ? kEuropeanCodes : kTableCodes); ++code)
     {
-        const uint8_t *entry = getConstMemPtr(rdram, kFontTable + 4u * code);
-        if (!entry)
+        // A character by itself, a symbol (named 0) by its code; on a
+        // European page every glyph by its code.
+        char character = 0;
+        if (!font.byCode)
         {
-            break;
+            const uint8_t *entry = getConstMemPtr(rdram, kFontTable + 4u * code);
+            if (!entry)
+            {
+                break;
+            }
+            character = static_cast<char>(entry[0]);
         }
-        // A character by itself, a symbol (named 0) by its code.
-        const char character = static_cast<char>(entry[0]);
         int16_t glyph = -1;
         for (size_t i = 0; i < font.count; ++i)
         {
-            if (character != 0 ? font.glyphs[i].character == character
-                               : font.glyphs[i].character == 0 && font.glyphs[i].code == code)
+            if (font.byCode            ? font.glyphs[i].code == code
+                : character != 0       ? font.glyphs[i].character == character
+                                       : font.glyphs[i].character == 0 && font.glyphs[i].code == code)
             {
                 glyph = static_cast<int16_t>(i);
             }
@@ -473,10 +505,8 @@ bool readPage(const uint8_t *rdram, const TypefaceFont &font, uint8_t fontIndex,
 }
 
 // After ArchiveFindEntryByName: a font's first page (FontTex_normal_EN_0.tm2),
-// read where the pack lies. The English pages only: with the European text
-// (src/text_language.cpp asks for the _EUR_ pages) the accented glyphs are
-// not in the table yet and the names' cells are 16x22, so the letters stay
-// the console's there (the menu says so).
+// read where the pack lies; with the European text (src/text_language.cpp
+// asks for the EUR pages: FontTex_normal_EUR_0.tm2) the European font's.
 void afterFindEntry(uint8_t *rdram, R5900Context *ctx, PS2Runtime *, uint32_t)
 {
     const uint32_t entry = getRegU32(ctx, 2);
@@ -498,14 +528,17 @@ void afterFindEntry(uint8_t *rdram, R5900Context *ctx, PS2Runtime *, uint32_t)
         lower += static_cast<char>(std::tolower(static_cast<unsigned char>(*p)));
     }
     constexpr const char kPrefix[] = "fonttex_";
-    constexpr const char kSuffix[] = "_en_0.tm2";
-    if (lower.rfind(kPrefix, 0) != 0 || lower.size() < sizeof(kSuffix) ||
-        lower.compare(lower.size() - (sizeof(kSuffix) - 1u), sizeof(kSuffix) - 1u, kSuffix) != 0)
+    auto endsWith = [&](const std::string &suffix) {
+        return lower.size() > suffix.size() && lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    const bool european = endsWith("_eur_0.tm2");
+    if (lower.rfind(kPrefix, 0) != 0 || !(european || endsWith("_en_0.tm2")))
     {
         return;
     }
     const std::string font = lower.substr(sizeof(kPrefix) - 1u, lower.find('_', sizeof(kPrefix) - 1u) -
-                                                                    (sizeof(kPrefix) - 1u));
+                                                                    (sizeof(kPrefix) - 1u)) +
+                             (european ? "_eur" : "");
     const uint32_t dataOffset = read32(e + 0x40u), size = read32(e + 0x44u);
     if (uint64_t(offset) + dataOffset + size > kRdramSize)
     {
@@ -1210,7 +1243,7 @@ Picture draw(const Job &job)
     // its descenders end there in every draw, so the glyph, its edge and its
     // shadow agree (an edge ringing a longer g left a black band below it).
     const uint32_t shownEnd = job.piece                ? 0u
-                              : &font == &kNameFont    ? font.cellHeight - 2u
+                              : &font == &kNameFont || &font == &kNameEurFont ? font.cellHeight - 2u
                               : job.ink.bottom >= outH ? outH - 1u
                                                        : 0u;
     const bool lastRow = shownEnd != 0u && job.ink.bottom > shownEnd;
@@ -1623,8 +1656,10 @@ void writePieceSheet(const Job &job, const Picture &picture)
     }
     else
     {
-        std::snprintf(name, sizeof(name), "/piece_%s_%02X_%ux%u_%ux.png", job.font->name,
-                      static_cast<unsigned char>(job.font->glyphs[job.glyph].character), w, h, s);
+        // With its key's low bits: each European language's copy of a digit
+        // is the same set, character and size.
+        std::snprintf(name, sizeof(name), "/piece_%s_%s_%ux%u_%ux_%08X.png", job.font->name,
+                      glyphLabel(job.font->glyphs[job.glyph], true).c_str(), w, h, s, uint32_t(job.key));
     }
     stbi_write_png((g_sheetDirectory + name).c_str(), int(width), int(height), 3, image.data(), int(width * 3u));
 }
@@ -1680,12 +1715,12 @@ void drawer()
         if (g_trace)
         {
             const TypefaceFont &font = *job.font;
-            // A symbol (character 0) by its code; a word's style has no glyphs.
+            // A symbol or an accent (character 0) by its code; a word's style
+            // has no glyphs.
             std::string shown = " ";
             if (!job.word)
             {
-                const TypefaceGlyph &made = font.glyphs[job.glyph];
-                shown = made.character != 0 ? std::string(1, made.character) : "#" + std::to_string(made.code);
+                shown = glyphLabel(font.glyphs[job.glyph], false);
             }
             if (!job.piece && job.regionHeight)
             {
@@ -1719,7 +1754,7 @@ bool wantedPalette(uint64_t clut)
     {
         return false;
     }
-    if (g_learning.load(std::memory_order_relaxed) || (englishPieces() && piecePalette(unaliased(clut))))
+    if (g_learning.load(std::memory_order_relaxed) || piecePalette(unaliased(clut)))
     {
         return true;
     }
@@ -2149,9 +2184,9 @@ int lookupPiece(const dq8::gfx::RegionRequest &request, uint64_t clut, uint32_t 
             if (coloured)
             {
                 const TypefaceFont &font = *kPieceFonts[piece->set];
-                std::fprintf(stderr, "[typeface] %s piece '%c' (%ux%u at %u,%u%s)\n", font.name,
-                             font.glyphs[piece->glyph].character, request.width, request.height, request.x,
-                             request.y, request.bold ? ", bold" : "");
+                std::fprintf(stderr, "[typeface] %s piece '%s' (%ux%u at %u,%u%s)\n", font.name,
+                             glyphLabel(font.glyphs[piece->glyph], false).c_str(), request.width, request.height,
+                             request.x, request.y, request.bold ? ", bold" : "");
             }
             else
             {
@@ -2238,7 +2273,7 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
     }
     if (const uint64_t clut = unaliased(request.clut); piecePalette(clut))
     {
-        return englishPieces() ? lookupPiece(request, clut, width, height, rgba) : dq8::gfx::kRegionNone;
+        return lookupPiece(request, clut, width, height, rgba);
     }
     // The border's version for the first of a glyph's marked border copies,
     // the shadow's for a marked shadow copy (drawGlyphOutline).

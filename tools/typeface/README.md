@@ -11,7 +11,11 @@ python -I tools/typeface/make_table.py \
     normal=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
     system=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
     name=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
+    normal_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
+    system_eur=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    name_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
     menu=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    menu_eur=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
     clock=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
     status=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
     statussmall=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
@@ -26,10 +30,11 @@ python -I tools/typeface/make_table.py \
     words=thirdparty/fonts/andika/Andika-Bold.ttf+alt
 ```
 
-It needs the disc extracted (`disc/`), Pillow and fontTools
-(`pip install pillow fonttools`), and takes about five minutes. The console's
-glyphs are read from the disc into memory; the table holds only numbers,
-hashes and glyph indices.
+It needs the disc extracted (`disc/`), the European text built
+(`setup.py extract-european`, `disc/EU/`) for the `_eur` fonts, Pillow and
+fontTools (`pip install pillow fonttools`), and takes about half an hour. The
+console's glyphs are read from the disc into memory; the table holds only
+numbers, hashes and glyph indices.
 
 - **The fonts.** `normal` (dialogue and messages, 18x22 cells), `system`
   (menus, the same design narrowed, 16x20) and `name` (names over heads,
@@ -41,13 +46,31 @@ hashes and glyph indices.
   found by their code, and placed without weighing in the font's fit (the
   times sign may take the typeface's x, raised: the console's is a large
   x); the arrows stay the game's (Andika's are hairlines).
+- **The European fonts** (`normal_eur`, `system_eur`, `name_eur`): the European
+  text's pages, `FontTex_<font>_EUR_0.tm2` of the language's
+  `meswin\fontset_main_<lang>.pak` in `disc/EU` (one pack for the four
+  languages, `--eur-lang` picks whose). Their glyphs are redrawn (other alpha
+  levels), so they get fits of their own; the names' cells are 16x22. Codes
+  0-95 are the US pages', 96-106 the symbols in another order, 107-170 the accents
+  and marks of `src/text_language.cpp`'s kAccentTags (`pages.EUR_FONTS`). The
+  table finds their glyphs by code, every row holding it. A font is fitted on
+  its ASCII characters; the symbols and accents are placed. The menus'
+  pictures have a copy in each language too (`pieces.pack_reader`): the digits
+  in the same cells, in palettes of their own, so the table gets their hashes
+  as more rows of the same glyphs; and a menu font of their own, the same page
+  in the four languages with the accents after the ASCII (`menu_eur`, its
+  setting's bytes from 0xA0 being `pages.EUR_ACCENTS`). Their words are the
+  language's and stay the game's.
 - **The fit** (`fit.py`). Each candidate glyph is drawn at 8 times the
   game's size, box-filtered into the game's cell and quantized to its 16
   alpha levels; the score is its difference with the console's glyph over
   the ink. The typeface's size, an extra horizontal scale, the baseline and
   a growth of the strokes in eighths of a pixel are fitted for the whole
   font; each glyph then gets its horizontal place, and a sign (`:` `*`
-  `_`...) also its height, where the console's sits.
+  `_`...) also its height, where the console's sits. The message fonts are
+  then drawn two steps bolder than their fit (`EXTRA_GROW`): enlarged, the
+  console's glyph shows its soft edge texels as whole blocks and reads
+  fuller than its 1x weight.
 - **`+alt`** (`alternates.py`): a character may take one of the typeface's
   OpenType alternates (cvNN, ssNN, salt, aalt) where it is closer. Andika's
   give the console's straight-legged 9, tailed l, baseless 1 and straight

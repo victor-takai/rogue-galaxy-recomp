@@ -1074,8 +1074,8 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "Above 1x, the game's Latin letters are drawn from a typeface made to look like them (Andika, SIL Open "
          "Font License) at the internal resolution, in their own places and widths, instead of enlarged as blocks: "
          "the dialogue's, the menus' and the names', and the menus' grey letters with a dark edge, their numbers "
-         "and the words of their pictures. For now with the English text only. Each new letter shows in a frame "
-         "or two.",
+         "and the words of their pictures. With the text in French, German, Spanish or Italian too, accents "
+         "included, except the words of the menus' pictures. Each new letter shows in a frame or two.",
          false},
         {"skip_opening", "Skip the opening",
          "At boot, the Sony and Level-5 logos and the opening movie give way to the title screen at once.", false},
@@ -1220,8 +1220,6 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
         const uint32_t scale = g_menu ? g_menu->shownResolutionScale() : backend.activeResolutionScale();
         if (flatPacks.count(key) != 0u && scale <= 1u)
             return "Its 2D art shows above 1\xC3\x97: raise Display > Internal resolution for this.";
-        if (key == "typeface_letters" && rg::textlanguage::language() != 0)
-            return "Not yet with the text in French, German, Spanish or Italian: the letters stay the game's.";
         if (key == "typeface_letters" && scale <= 1u)
             return "It shows above 1\xC3\x97: raise Display > Internal resolution for this.";
         return gameOptionBlocked(key, backend.displayOptions().aspect);
