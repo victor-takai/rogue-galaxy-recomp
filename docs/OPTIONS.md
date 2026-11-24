@@ -61,9 +61,13 @@ missing.
 | F3 | Frame-rate counter |
 | F4 | Fast-forward |
 | F6 | Free camera |
+| F8 | Typeface letters |
 | F11 or Alt+Enter | Fullscreen |
 | F12 | Take screenshot |
 | Shift+F12 | Screenshot with the menu |
+
+A binding of F6 or F8 made in Controls before they became keys here
+stays, and the key does nothing else until that binding is cleared.
 
 ## Game options
 
@@ -91,7 +95,7 @@ F1 > Settings > Game, in these sections:
 | Option | |
 |---|---|
 | Buttons in the game's text | The buttons in the game's text follow what you play with: an Xbox controller's A, B, X, Y, LB, RB, LT and RT, or on the keyboard and mouse the keys (a letter or digit, TAB, ESC and the like, the space bar) and mouse buttons, as bound in Controls. On by default. |
-| Typeface letters | Above 1x, the game's Latin letters drawn sharp from Andika, a free typeface made to look like them, in their own places and widths, instead of enlarged as blocks: the dialogue's, the menus' and the names', and the menus' grey letters with a dark edge, their numbers and the words of their pictures (Items, Save, the battle's results). With the text in French, German, Spanish or Italian too, accents included, except the words of the menus' pictures. Off by default. |
+| Typeface letters (F8) | Above 1x, the game's Latin letters drawn sharp from Andika, a free typeface made to look like them, in their own places and widths, instead of enlarged as blocks: the dialogue's, the menus' and the names', and the menus' grey letters with a dark edge, their numbers and the words of their pictures (Items, Save, the battle's results). With the text in French, German, Spanish or Italian too, accents included, except the words of the menus' pictures. Off by default; F8 turns them on or off. |
 | Skip the opening | Straight to the title screen. |
 | Quick loading recap | The story so far appears whole, and you can go on as soon as it has loaded. |
 | Instant text | Dialogue a page at a time instead of letter by letter. |

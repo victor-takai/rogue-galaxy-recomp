@@ -87,6 +87,10 @@ uint32_t g_applied = 0u;
 bool g_loaded = false;
 // The buttons' corner as loaded, unswizzled.
 std::vector<uint8_t> g_original;
+// The picture's palette as loaded (rg::typeface::paletteHash256): the
+// colours apply() writes change it, and Typeface letters is told it is
+// still this picture's (its registered mark).
+uint64_t g_loadedPalette = 0u;
 // The Key glyphs' labels the presenting thread wants and its count of their
 // changes; the count the picture has (the game's thread).
 std::mutex g_labelsMutex;
@@ -617,6 +621,7 @@ void apply(uint8_t *rdram, uint32_t packed)
             pic.pixels[swizzled(x, y)] = region.at[y][x];
         }
     }
+    rg::typeface::notePaletteAlias(rg::typeface::paletteHash256(pic.clut), g_loadedPalette);
     g_applied = packed;
     // RG_GAIJI_DUMP's FILE.applied: the picture as drawn.
     if (g_dumpPath)
@@ -657,6 +662,7 @@ void afterLoad(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t)
     }
     g_loaded = true;
     g_applied = 0u;
+    g_loadedPalette = rg::typeface::paletteHash256(pic.clut);
     if (const uint32_t wanted = g_wanted.load(std::memory_order_relaxed); wanted != 0u)
     {
         apply(rdram, wanted);

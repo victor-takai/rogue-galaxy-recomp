@@ -27,6 +27,7 @@ python -I tools/typeface/make_table.py \
     damage=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
     result=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
     resultgold=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
+    registered=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
     words=thirdparty/fonts/andika/Andika-Bold.ttf+alt
 ```
 
@@ -82,7 +83,10 @@ numbers, hashes and glyph indices.
   and attributes; `level`, the transporter's levels and the
   items' counts; `file`, the files' numbers; `money`; in battle `battle`
   and `battlesmall`, the members' HP and AP, and `damage`; after a battle
-  `result` and `resultgold`). The menus' own font (`menu`: item commands,
+  `result` and `resultgold`), and the registered mark of the memory card's
+  messages (`registered`, a special character of the text drawn from
+  `gaiji2.img`, the buttons' picture, the European text's own copy too).
+  The menus' own font (`menu`: item commands,
   Allies, shops) is drawn the same way, a letter at a time from
   `menu_font_EN.img`, each its width (from `menu_font_setting_EN.txt`)
   wide. Each set is fitted as a font, on the
@@ -117,7 +121,15 @@ numbers, hashes and glyph indices.
   screen's "Press" and its button). A word printed on a button's fill (the
   framed Player, marked "button" in the list) is redrawn with the fill put
   back under it, each row from the fill left of the word to the fill right
-  of it; any other word printed on art stays the game's.
+  of it. A word printed on a band of colour across its box (the items'
+  MAX, marked "bar") is redrawn with the band put back: a row of the box
+  opaque at both ends is the band's, all of it but the word's core. A word
+  printed on art (the Revelation Flow's title on its frame's wood, marked
+  "art") is told from the art by colour (the word's texels are as blue as
+  red or more, the wood's red well above blue), and the art is put back
+  under the new word, each run of the word's texels in a row filled from
+  the art left of it to the art right of it (the wood's grain runs along
+  the rows).
 
 The choice of Andika, and the search over Google Fonts' sans-serif families
 it came from, are in the research notes of the work (`build/research/font`,

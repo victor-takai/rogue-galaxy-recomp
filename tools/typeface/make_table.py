@@ -22,6 +22,7 @@ usage (from the repository's root, with the disc extracted):
       damage=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
       result=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
       resultgold=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
+      registered=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
       words=thirdparty/fonts/andika/Andika-Bold.ttf+alt
   [--disc disc] [--out src/typeface_table.inc] [--work build/typeface]
 
@@ -141,8 +142,10 @@ def table_for(font, spec, glyphs, work: Path, target=None, placed=""):
     inst = fit.Instance(str(path))
     # The font is fitted on its ASCII characters; the game's symbols (times,
     # plus-minus...) and a European font's accents and marks are only placed,
-    # so the letters stay as they were without them.
-    _, p = fit.fit(inst, target, [c for c in chars if c.isascii() and c not in placed])
+    # so the letters stay as they were without them. A set of symbols alone
+    # (the registered mark) is fitted on them.
+    fitted = [c for c in chars if c.isascii() and c not in placed] or [c for c in chars if c not in placed]
+    _, p = fit.fit(inst, target, fitted)
     if p is None:
         raise SystemExit(f"{path} has no H")
     tt = TTFont(str(path))
@@ -503,7 +506,8 @@ def main():
               "// and the hash of its box's texels, the box's place and size in the picture, the",
               "// console word's ink in the box, its shift from the console's ink centre, its fit",
               "// (above) and its glyphs; a shadowed word its shadow's offset (cell pixels across",
-              "// and down), blur (sigma, cell pixels) and strength; a word on a button true last.",
+              "// and down), blur (sigma, cell pixels) and strength; a word on a button 1 last, on",
+              "// a band 2, on art 3.",
               "constexpr PieceWord kWords[] = {"]
     for n, w in enumerate(words):
         word = w["word"]
@@ -512,9 +516,9 @@ def main():
         if word.shadow:
             dx, dy, sigma, strength = word.shadow
             shadow = f", {dx}, {dy}, {sigma:.2f}f, {strength:.3f}f"
-        if word.button:
-            # On a button: no shadow, and onButton (PieceWord).
-            shadow = (shadow or ", 0, 0, 0.00f, 0.000f") + ", true"
+        if word.button or word.bar or word.art:
+            # On a button, a band or art: no shadow, and its backing (PieceWord).
+            shadow = (shadow or ", 0, 0, 0.00f, 0.000f") + (", 3" if word.art else ", 2" if word.bar else ", 1")
         lines.append(f"    {{0x{word.palette:016X}ull, 0x{word.hash:016X}ull, {word.box[0]}, {word.box[1]}, "
                      f"{word.box[2]}, {word.box[3]}, {x0}, {x1 + 1}, {y1 + 1}, {w['shift']:.3f}f, &kWord{n}Font, "
                      f"kWord{n}Glyphs, std::size(kWord{n}Glyphs){shadow}}}, // {word.text}")
