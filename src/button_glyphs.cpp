@@ -16,6 +16,7 @@
 #include "return_hook.h"
 #include "runtime/ps2_memory.h"
 #include "scene_timing.h"
+#include "typeface_letters.h"
 
 namespace rg::buttons
 {
@@ -772,7 +773,10 @@ void drawLoadingCross(uint8_t *rdram, uint32_t archive)
         }
     };
     // Its 256 colours are all in use, the cross's blues by the cross alone:
-    // emptied, one of them takes the letter's colour.
+    // emptied, one of them takes the letter's colour. The palette so changed,
+    // Typeface letters is told it is still this picture's (the "Press"
+    // beside the button keeps its colours).
+    const uint64_t originalPalette = rg::typeface::paletteHash256(pic.clut);
     put();
     if (glyph == Glyph::Key)
     {
@@ -825,6 +829,7 @@ void drawLoadingCross(uint8_t *rdram, uint32_t archive)
               nearest(pic, art::kLetterEdge));
     }
     put();
+    rg::typeface::notePaletteAlias(rg::typeface::paletteHash256(pic.clut), originalPalette);
 }
 
 void nameTableRegisterImArchive(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)

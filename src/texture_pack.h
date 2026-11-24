@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "gfx/backends/sdlgpu/sdlgpu_regions.h"
+
 namespace dq8::gfx
 {
 class SdlGpuBackend;
@@ -32,6 +34,12 @@ namespace rg::texturePack
 
 // Before the game runs.
 void install(dq8::gfx::SdlGpuBackend &backend);
+
+// Another maker of region pictures, asked before the packs (the typeface's
+// letters, src/typeface_letters.cpp): `lookup` answers kRegionNone for the
+// regions it leaves to them, `palettes` whether it wants the regions drawn
+// with a palette. Set once, after install(), before the game runs.
+void setFirstSource(dq8::gfx::RegionLookup lookup, dq8::gfx::RegionPalettes palettes);
 
 // The packs found, in the order they are read (a later one over an earlier
 // one): `key` names the pack's switch in the settings (texture_pack_KEY),

@@ -719,10 +719,16 @@ void collect(const dq8::gfx::RegionRequest &request)
     g_dumpWake.notify_one();
 }
 
+// The maker asked before the packs (setFirstSource): set before the game
+// runs, read on the renderer's thread.
+dq8::gfx::RegionLookup g_firstLookup;
+dq8::gfx::RegionPalettes g_firstPalettes;
+
 // Whether the backend should hash the regions drawn with a palette at all.
-bool wanted(uint64_t)
+bool wanted(uint64_t clut)
 {
-    return !g_dumpDirectory.empty() || g_anyPicture.load(std::memory_order_relaxed);
+    return !g_dumpDirectory.empty() || g_anyPicture.load(std::memory_order_relaxed) ||
+           (g_firstPalettes && g_firstPalettes(clut));
 }
 
 int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &height, std::vector<uint8_t> &rgba)
@@ -761,6 +767,13 @@ int lookup(const dq8::gfx::RegionRequest &request, uint32_t &width, uint32_t &he
     if (!g_dumpDirectory.empty())
     {
         collect(request);
+    }
+    if (g_firstLookup)
+    {
+        if (const int first = g_firstLookup(request, width, height, rgba); first != dq8::gfx::kRegionNone)
+        {
+            return first;
+        }
     }
     if (request.border || request.shadow)
     {
@@ -870,6 +883,13 @@ void install(dq8::gfx::SdlGpuBackend &backend)
     g_backend = &backend;
     backend.setRegionReplacements(&lookup, &wanted);
     backend.setRegionReplacementsEnabled(true);
+}
+
+void setFirstSource(dq8::gfx::RegionLookup lookup, dq8::gfx::RegionPalettes palettes)
+{
+    g_firstLookup = std::move(lookup);
+    g_firstPalettes = std::move(palettes);
+    refresh();
 }
 
 } // namespace rg::texturePack
