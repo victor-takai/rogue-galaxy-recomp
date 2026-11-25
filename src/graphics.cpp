@@ -1136,8 +1136,8 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          "PlayStation or Nintendo controller, the game's PlayStation buttons.",
          true},
         {"typeface_letters", "Typeface letters (F8)",
-         "Above 1x, the game's Latin letters are drawn from a typeface made to look like them (Andika, SIL Open "
-         "Font License) at the internal resolution, in their own places and widths, instead of enlarged as blocks: "
+         "Above 1x, the game's Latin letters are drawn from typefaces made to look like them (Rogue Letters for "
+         "the English dialogue, Andika for the rest; SIL Open Font License) at the internal resolution, in their own places and widths, instead of enlarged as blocks: "
          "the dialogue's, the menus' and the names', and the menus' grey letters with a dark edge, their numbers "
          "and the words of their pictures. With the text in French, German, Spanish or Italian too, accents "
          "included, except the words of the menus' pictures. Each new letter shows in a frame or two. F8 turns "

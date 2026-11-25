@@ -49,6 +49,8 @@ extern const unsigned char rg_typeface_andika_regular[];
 extern const size_t rg_typeface_andika_regular_size;
 extern const unsigned char rg_typeface_andika_bold[];
 extern const size_t rg_typeface_andika_bold_size;
+extern const unsigned char rg_typeface_rogue_letters_regular[];
+extern const size_t rg_typeface_rogue_letters_regular_size;
 
 namespace rg::typeface
 {
@@ -251,12 +253,16 @@ struct Typeface
     const char *file;
     const unsigned char *data;
     const size_t *size;
+    // Drawn after the console's own glyphs (Rogue Letters): see
+    // drawnAfterConsole.
+    bool afterConsole = false;
     stbtt_fontinfo info{};
     bool tried = false, ready = false;
 };
 Typeface g_typefaces[] = {
     {"Andika-Regular.ttf", rg_typeface_andika_regular, &rg_typeface_andika_regular_size},
     {"Andika-Bold.ttf", rg_typeface_andika_bold, &rg_typeface_andika_bold_size},
+    {"RogueLetters-Regular.ttf", rg_typeface_rogue_letters_regular, &rg_typeface_rogue_letters_regular_size, true},
 };
 
 // A draw past 0x80 alpha (dq8::gfx::RegionRequest::bold; the game's menus
@@ -294,12 +300,32 @@ std::atomic<bool> g_tracePalettes{false};
 // RG_TYPEFACE_TRACE=timing: how long a glyph takes from the renderer's first
 // asking to its picture handed over, a line every two seconds with work.
 std::atomic<bool> g_traceTiming{false};
-// How much narrower than the console's ink each glyph is drawn, in tenths of
-// a console pixel, before its font's stroke growth (draw): half a pixel,
-// picked by the user from the game's screens against one and one and a half
-// (2026-11-24). RG_TYPEFACE_GAP=N, 0 to 40, for comparing.
+// How much narrower than the console's ink each glyph is drawn (each Andika
+// glyph: not one drawn after the console's, see drawnAfterConsole), in
+// tenths of a console pixel, before its font's stroke growth (draw): half a
+// pixel, picked by the user from the game's screens against one and one and
+// a half (2026-11-24). RG_TYPEFACE_GAP=N, 0 to 40, for comparing.
 constexpr int kGapOpening = 5;
 std::atomic<int> g_gapOpening{kGapOpening};
+
+// A typeface drawn after the console's own glyphs (Rogue Letters, the English
+// message font's; Typeface::afterConsole): each glyph is already as wide as
+// the console's ink, so it keeps its width and the table's place, and the
+// gaps are the console's less the font's stroke growth, as the user saw and
+// kept them in the game (2026-11-25). The even gaps above are for Andika's
+// (the European message font's too). Only fields never written after start
+// are read here: no lock.
+bool drawnAfterConsole(const TypefaceFont &font)
+{
+    for (const Typeface &face : g_typefaces)
+    {
+        if (std::strcmp(face.file, font.file) == 0)
+        {
+            return face.afterConsole;
+        }
+    }
+    return false;
+}
 PS2Runtime::RecompiledFunction g_originalFindEntry = nullptr;
 
 // Where a console glyph has ink in its cell, in cell pixels from the cell's
@@ -326,7 +352,8 @@ struct Cell
 // RG_TYPEFACE_SHEET=DIR: as each page is read, every glyph the table redraws,
 // the console's (enlarged) beside the typeface's plain and bold, and the
 // plain over its border and over its shadow, into
-// DIR/typeface_<font>_<scale>x.png, at RG_TYPEFACE_SHEET_SCALE (4). Made
+// DIR/typeface_<font>_<scale>x.png, at RG_TYPEFACE_SHEET_SCALE (4), and
+// beside it typeface_<font>_<scale>x.txt, which glyph each entry is. Made
 // from the game's pages: it stays on the machine.
 std::string g_sheetDirectory;
 uint32_t g_sheetScale = 4u;
@@ -1466,10 +1493,11 @@ Picture draw(const Job &job)
         spread(thick, gw, gh, true, int(std::lround(stroke * (1.0 - factor) / 2.0)), false);
         std::copy(thick.begin() + size_t(from) * gw, thick.end(), bitmap.begin() + size_t(from) * gw);
     }
-    if (!job.word)
+    if (!job.word && !drawnAfterConsole(font))
     {
-        // Every glyph as wide as the console's ink less kGapOpening, so the
-        // gaps between letters are the console's, all opened by it: placed
+        // Every Andika glyph (not one drawn after the console's:
+        // drawnAfterConsole) as wide as the console's ink less kGapOpening, so
+        // the gaps between letters are the console's, all opened by it: placed
         // on the console's ink centres with the typeface's own widths, the
         // gaps came out uneven (the menus' digits, narrower than the
         // console's, stood apart). Stretched or squeezed about its ink
@@ -1851,6 +1879,20 @@ void writeSheet(uint8_t fontIndex, std::vector<SheetGlyph> glyphs)
     }
     const std::string path = g_sheetDirectory + "/typeface_" + font.name + "_" + std::to_string(s) + "x.png";
     const bool written = stbi_write_png(path.c_str(), int(width), int(height), 3, image.data(), int(width * 3u)) != 0;
+    // Beside it, which glyph each entry is (row by row, kColumns a row), for
+    // tools that read the sheet: the character's hex code or c and its code.
+    // Only with the sheet written: a list beside an older sheet would misname it.
+    std::FILE *list = written ? std::fopen((path.substr(0, path.size() - 4u) + ".txt").c_str(), "w") : nullptr;
+    if (list)
+    {
+        std::fprintf(list, "# entry %ux%u, columns %u, gap %u, margin %u, scale %u\n", entryWidth, entryHeight,
+                     kColumns, kGap, m, s);
+        for (size_t n = 0; n < glyphs.size(); ++n)
+        {
+            std::fprintf(list, "%zu %s\n", n, glyphLabel(font.glyphs[glyphs[n].glyph], true).c_str());
+        }
+        std::fclose(list);
+    }
     const long long ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     std::fprintf(stderr, "[typeface] sheet of %s at %ux: %s%s (%zu glyphs, four pictures each, in %lld ms)\n", font.name,

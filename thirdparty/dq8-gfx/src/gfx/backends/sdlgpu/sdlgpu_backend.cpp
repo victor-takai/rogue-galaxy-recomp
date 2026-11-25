@@ -432,6 +432,19 @@ bool spriteTexelRect(const GSPrimitiveBatch &batch, GsRegion &region) {
         region.x1 = state.textureWidth;
     if (region.y1 == state.textureHeight + 1u)
         region.y1 = state.textureHeight;
+    // Under CLAMP the texels past the texture's far edge are its last column
+    // or row again: a sprite's region ends at the edge, and the host's picture
+    // is drawn with a clamp of its own (largerClamp) that repeats that column
+    // or row as the GS does, cleared where the console's shown one is clear
+    // (GsTextureCache::replacement, from the sprite's sampled texels; Rogue
+    // Galaxy's "Defense Status" in Allies: a sprite 24 texels wider than what
+    // is left of its picture's texture). Triangles, whose sampled texels are
+    // not worked out, still go without.
+    const GsClampState clamp = gsDecodeClamp(state.context.clamp);
+    if (sprite && clamp.wrapU == kWrapClamp && region.x0 < state.textureWidth && region.x1 > state.textureWidth)
+        region.x1 = state.textureWidth;
+    if (sprite && clamp.wrapV == kWrapClamp && region.y0 < state.textureHeight && region.y1 > state.textureHeight)
+        region.y1 = state.textureHeight;
     return !region.empty() && region.x1 <= state.textureWidth && region.y1 <= state.textureHeight;
 }
 
