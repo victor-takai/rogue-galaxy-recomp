@@ -268,8 +268,9 @@ Typeface g_typefaces[] = {
 // A draw past 0x80 alpha (dq8::gfx::RegionRequest::bold; the game's menus
 // draw their letters so) doubles the alpha: the console's glyph comes out
 // bolder at its texels, the picture here only at its fine edge. A step more
-// of growth (about an eighth of a pixel) matches best, for the three fonts,
-// the doubled picture at 4x seen at 1x against the console's doubled glyph
+// of growth (about an eighth of a pixel) matches best, for the three fonts
+// in Andika (measured before the message font became Rogue Letters), the
+// doubled picture at 4x seen at 1x against the console's doubled glyph
 // (with the measure of tools/typeface: 0.24 against 0.25 at two steps, 0.28
 // at none).
 constexpr int kBolderSteps = 1;
@@ -307,6 +308,14 @@ std::atomic<bool> g_traceTiming{false};
 // a half (2026-11-24). RG_TYPEFACE_GAP=N, 0 to 40, for comparing.
 constexpr int kGapOpening = 5;
 std::atomic<int> g_gapOpening{kGapOpening};
+// The same for the names' fonts (name, name_eur: the speaker's name over the
+// dialogue, the names over heads), drawn with a border ring a pixel wide
+// that took the half pixel's gaps: the name's letters touched (Simon's cores
+// 0.75, 0.25, 0 and 0.5 pixels apart, the console's 2, 2, 1 and 1; with this,
+// 1.5, 1.5, 1 and 1). One and a half, picked by the user against one
+// (2026-11-25). The menus' and the load screen's letters keep half a pixel,
+// which the user kept there; RG_TYPEFACE_GAP does not change this one.
+constexpr int kNameGapOpening = 15;
 
 // A typeface drawn after the console's own glyphs (Rogue Letters, the English
 // message font's; Typeface::afterConsole): each glyph is already as wide as
@@ -1496,8 +1505,9 @@ Picture draw(const Job &job)
     if (!job.word && !drawnAfterConsole(font))
     {
         // Every Andika glyph (not one drawn after the console's:
-        // drawnAfterConsole) as wide as the console's ink less kGapOpening, so
-        // the gaps between letters are the console's, all opened by it: placed
+        // drawnAfterConsole) as wide as the console's ink less kGapOpening
+        // (the names' fonts kNameGapOpening), so the gaps between letters
+        // are the console's, all opened by it: placed
         // on the console's ink centres with the typeface's own widths, the
         // gaps came out uneven (the menus' digits, narrower than the
         // console's, stood apart). Stretched or squeezed about its ink
@@ -1509,7 +1519,9 @@ Picture draw(const Job &job)
         left -= int(std::lround(glyph.shift * float(r)));
         const double inkWidth = inkRight + 1 - inkLeft;
         const double consoleWidth = double(job.ink.right - job.ink.left) * r;
-        const double wanted = consoleWidth - g_gapOpening.load(std::memory_order_relaxed) / 10.0 * r;
+        const bool names = job.font == &kNameFont || job.font == &kNameEurFont;
+        const int opening = names ? kNameGapOpening : g_gapOpening.load(std::memory_order_relaxed);
+        const double wanted = consoleWidth - opening / 10.0 * r;
         const double rawStroke = strokeWidth(bitmap, gw, gh);
         const double stroke = std::min(rawStroke, inkWidth / 2.0);
         // A lone stem or dot (l, i, 1, the colon's dots) keeps its width:

@@ -14,8 +14,9 @@ class SdlGpuBackend;
 // dialogue, drawn after the console's own glyphs; Andika for the rest), at
 // the internal resolution, in the glyph's own cell, so the game's layout,
 // widths and borders stay. An Andika glyph is drawn as wide as the console's
-// ink less half a pixel (before its strokes' growth), so the gaps between
-// letters are even; a Rogue Letters glyph keeps its own width. The glyphs
+// ink less half a pixel (a name's, under its border, one and a half; before
+// its strokes' growth), so the gaps between letters are even; a Rogue
+// Letters glyph keeps its own width. The glyphs
 // are told apart by their pixels, which the font pages hold when the game
 // opens them (ArchiveFindEntryByName); which glyph of the typeface, its
 // size and its place come from typeface_table.inc,

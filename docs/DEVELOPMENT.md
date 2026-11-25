@@ -172,7 +172,7 @@ the project's fixes off to compare.
 | `RG_TYPEFACE_SHEET_SCALE=N` | The scale of those sheets, 2 to 8 (default 4) |
 | `RG_TYPEFACE_DRAWERS=N` | The threads that draw Typeface letters' glyphs, 1 to 16 (default a quarter of the processors, two to four), for comparing with `RG_TYPEFACE_TRACE=timing` |
 | `RG_TYPEFACE_AHEAD=0` | Typeface letters draws no glyphs ahead (by default, the first glyph of a font asked in a style queues the font's others in that style), for comparing with `RG_TYPEFACE_TRACE=timing` |
-| `RG_TYPEFACE_GAP=N` | Typeface letters draws each glyph as wide as the console's ink less N tenths of a console pixel (0 to 40; default 5), before the font's stroke growth, so the gaps between letters are even, for comparing (not the English dialogue's, Rogue Letters, whose glyphs keep their own widths) |
+| `RG_TYPEFACE_GAP=N` | Typeface letters draws each glyph as wide as the console's ink less N tenths of a console pixel (0 to 40; default 5), before the font's stroke growth, so the gaps between letters are even, for comparing (not the English dialogue's, Rogue Letters, whose glyphs keep their own widths, nor the names', opened by 15 under their border) |
 | `RG_TEXTURE_DUMP_WHOLE=DIR` | Write each texture the game builds, whole, as `TEX0HASH-CLUTHASH-BITS.pam` ([TEXTURE_PACKS.md](TEXTURE_PACKS.md)) |
 | `PS2X_AUDIO_DUMP=file` | Framework: copy of the audio output, raw 48 kHz s16 stereo |
 

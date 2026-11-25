@@ -399,7 +399,11 @@ Five more fix results:
   one before it, the same margin), so copies a pixel apart join as the
   GS's blocks do. The host is told each region's place in its texture,
   and a region a texel past its texture's edge (the texel a sprite's UVs
-  span past its pixels) is cut to it. The stats line counts `larger
+  span past its pixels) is cut to it. Under CLAMP a sprite's region is cut
+  at the edge however far it runs past (Rogue Galaxy's "Defense Status",
+  24 texels past a 256-wide texture), and the host picture's last column
+  or row, which the clamp repeats across the overrun, is cleared when the
+  console's shown one is clear (`GsTextureCache::replacement`). The stats line counts `larger
   regions`, `borders` and `shadows`. First written for
   a pack of upscaled pictures (the `texture-pack` branch), from which
   the frame-target test and the clamp come.
