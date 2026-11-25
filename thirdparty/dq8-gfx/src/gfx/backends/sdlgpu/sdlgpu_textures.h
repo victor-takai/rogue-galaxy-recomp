@@ -170,10 +170,14 @@ public:
     // region is hashed at every call: a memo kept until the texture's next
     // update went stale in the item menu, whose tabs' digits then came out
     // as another picture (Rogue Galaxy: added).
-    // `sampled`: the texels the draw shows (within `region`); the rest are
-    // handed over transparent: a glyph's sprite spans a texel more than its
-    // pixels, and that last row and column, never shown, can hold a
-    // descender's end, which traced and bordered stuck out below.
+    // `sampled`: the texels the draw shows (within `region`, but for a sprite
+    // run past its texture's edge under CLAMP, where it reaches past the
+    // region's far edge: then the region's last column or row, repeated
+    // across the overrun, is cleared in the host's picture where the
+    // console's shown one is clear); the rest are handed over transparent: a
+    // glyph's sprite spans a texel more than its pixels, and that last row
+    // and column, never shown, can hold a descender's end, which traced and
+    // bordered stuck out below.
     SDL_GPUTexture *replacement(const GSDrawState &state, const GsRegion &region, const GsRegion &sampled,
                                 uint32_t wantedScale, bool border, bool shadow, bool bold, uint32_t &scale,
                                 bool &nearest, std::string &error);

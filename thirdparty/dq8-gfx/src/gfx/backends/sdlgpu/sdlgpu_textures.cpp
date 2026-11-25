@@ -412,6 +412,27 @@ SDL_GPUTexture *GsTextureCache::replacement(const GSDrawState &state, const GsRe
                 if (tx < sampled.x0 || tx >= sampled.x1 || ty < sampled.y0 || ty >= sampled.y1)
                     m_regionPixels[(size_t(y) * width + x) * 4u + 3u] = 0u;
             }
+        // A sprite run past its texture's edge under CLAMP (the backend's
+        // spriteTexelRect) shows the region's last column or row again across
+        // the overrun: where the console's is clear, the host's is cleared
+        // too, or any edge of the host's there would be drawn across it. Only
+        // the console's shown texels count (m_staging has the others clear):
+        // the row or column a sprite spans past its pixels may hold other art.
+        const auto clearLast = [&](bool column) {
+            const uint32_t count = column ? region.height() : region.width();
+            for (uint32_t i = 0u; i < count; ++i) {
+                const uint32_t x = column ? region.width() - 1u : i, y = column ? i : region.height() - 1u;
+                if (m_staging[(size_t(y) * region.width() + x) * 4u + 3u] != 0u)
+                    return;
+            }
+            for (uint32_t y = column ? 0u : height - factor; y < height; ++y)
+                for (uint32_t x = column ? width - factor : 0u; x < width; ++x)
+                    m_regionPixels[(size_t(y) * width + x) * 4u + 3u] = 0u;
+        };
+        if (sampled.x1 > region.x1)
+            clearLast(true);
+        if (sampled.y1 > region.y1)
+            clearLast(false);
     }
     nearest = (reply & kRegionNearest) != 0;
     SDL_GPUTexture *texture = storeLarger(id, factor, nearest, width, height, error);

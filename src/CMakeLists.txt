@@ -131,15 +131,19 @@ add_executable(roguegalaxy
     debug/selftest.cpp
     debug/vu1_replay.cpp
 )
-# The typeface the Latin letters are redrawn from above 1x (typeface_letters.cpp),
-# inside the executable: SIL Open Font License, thirdparty/fonts/andika/OFL.txt.
+# The typefaces the Latin letters are redrawn from above 1x (typeface_letters.cpp),
+# inside the executable: SIL Open Font License, thirdparty/fonts/andika/OFL.txt
+# and thirdparty/fonts/rogue-letters/OFL.txt (the message font's, made from Andika).
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/embed_file.cmake")
 rg_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/fonts/andika/Andika-Regular.ttf"
     "${CMAKE_CURRENT_BINARY_DIR}/typeface_andika_regular.cpp" rg_typeface_andika_regular)
 rg_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/fonts/andika/Andika-Bold.ttf"
     "${CMAKE_CURRENT_BINARY_DIR}/typeface_andika_bold.cpp" rg_typeface_andika_bold)
+rg_embed_file("${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/fonts/rogue-letters/RogueLetters-Regular.ttf"
+    "${CMAKE_CURRENT_BINARY_DIR}/typeface_rogue_letters_regular.cpp" rg_typeface_rogue_letters_regular)
 target_sources(roguegalaxy PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/typeface_andika_regular.cpp"
-    "${CMAKE_CURRENT_BINARY_DIR}/typeface_andika_bold.cpp")
+    "${CMAKE_CURRENT_BINARY_DIR}/typeface_andika_bold.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/typeface_rogue_letters_regular.cpp")
 target_include_directories(roguegalaxy PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # GNU ld reads each archive once, in order: the function table defined in

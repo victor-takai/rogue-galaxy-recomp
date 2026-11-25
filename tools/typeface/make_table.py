@@ -7,10 +7,14 @@ menus' digits (pieces.py), with the hashes the game knows each one by.
 
 usage (from the repository's root, with the disc extracted):
   python -I tools/typeface/make_table.py \\
-      normal=thirdparty/fonts/andika/Andika-Regular.ttf+alt \\
+      normal=thirdparty/fonts/rogue-letters/RogueLetters-Regular.ttf \\
       system=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
       name=thirdparty/fonts/andika/Andika-Regular.ttf+alt \\
+      normal_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \\
+      system_eur=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
+      name_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \\
       menu=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
+      menu_eur=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
       clock=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
       status=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
       statussmall=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
@@ -403,7 +407,8 @@ def main():
         # not the US width table's characters): every row holds it.
         by_code = font in pages.EUR_FONTS
         name = "".join(part.capitalize() for part in font.split("_"))
-        lines += ["", f"// {font}: {t['file']} ({len(t['rows'])} glyphs; {' '.join(t['tags'])})",
+        tags = f"; {' '.join(t['tags'])}" if t["tags"] else ""
+        lines += ["", f"// {font}: {t['file']} ({len(t['rows'])} glyphs{tags})",
                   f"constexpr TypefaceGlyph k{name}Glyphs[] = {{"]
         for c, gid, glyph, shift, lift, err, gap in t["rows"]:
             extra = f", {gap:.2f}f" if gap or not c.isascii() or by_code else ""
@@ -417,7 +422,7 @@ def main():
                      f"{t['pen_x']:.4f}f, {t['pen_y']:.4f}f, {t['slant']:.4f}f, k{name}Glyphs, "
                      f"std::size(k{name}Glyphs){', true' if by_code else ''}}};")
         print(f"{font}: {t['file']}, {len(t['rows'])} glyphs, em {t['em_x']:.3f} x {t['em_y']:.3f}, "
-              f"baseline {t['baseline']}, grow {t['grow']}, slant {t['slant']:.3f}; {' '.join(t['tags'])}")
+              f"baseline {t['baseline']}, grow {t['grow']}, slant {t['slant']:.3f}{tags}")
         if font == "menu":
             menu = t
         if ps:

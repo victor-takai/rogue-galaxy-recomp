@@ -11,7 +11,7 @@
 - An FSR 1 scaling filter (AMD's upscaler) in F1 > Settings > Display,
   with a sharpness slider.
 - Typeface letters in F1 > Settings > Game: above 1x, the game's letters
-  drawn sharp from a free typeface made to look like them, instead of
+  drawn sharp from free typefaces made to look like them, instead of
   enlarged blocks. F8 turns them on or off.
 
 ### Changed

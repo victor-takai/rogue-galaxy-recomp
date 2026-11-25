@@ -8,7 +8,7 @@ typeface to the console's glyphs:
 
 ```
 python -I tools/typeface/make_table.py \
-    normal=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
+    normal=thirdparty/fonts/rogue-letters/RogueLetters-Regular.ttf \
     system=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
     name=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
     normal_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
@@ -47,6 +47,17 @@ numbers, hashes and glyph indices.
   found by their code, and placed without weighing in the font's fit (the
   times sign may take the typeface's x, raised: the console's is a large
   x); the arrows stay the game's (Andika's are hairlines).
+- **The message font's own typeface** (`normal`): Rogue Letters
+  (`thirdparty/fonts/rogue-letters`, the SIL Open Font License, made from
+  Andika). Each of its 93 characters is drawn as a few pen strokes whose
+  nodes and pen width were fitted to the console's glyph, and the
+  apostrophe, quotes and commas are Andika's, placed and sized. It has no
+  alternates (no `+alt`), and its glyphs are already as wide as the
+  console's ink, so the game keeps their widths (`drawnAfterConsole` in
+  `typeface_letters.cpp`) where it evens the gaps of Andika's. The tools
+  that drew it are in the work's research notes
+  (`build/research/custom-typeface`, outside the repository). The European
+  message font is still Andika's: Rogue Letters has no accents yet.
 - **The European fonts** (`normal_eur`, `system_eur`, `name_eur`): the European
   text's pages, `FontTex_<font>_EUR_0.tm2` of the language's
   `meswin\fontset_main_<lang>.pak` in `disc/EU` (one pack for the four
