@@ -32,6 +32,12 @@
 - Frames reach the screen at an even pace.
 - The "Player" and "Party" labels of the Revelation menu no longer have
   pink dots at their corners.
+- European texts in the Insectron: the battle's Yes and No, levels and a
+  few labels are in the chosen language, the title along the top of the Vs.
+  menus makes room for longer words, the help list is wider in Spanish and
+  French, where a long topic no longer ends in stray characters, and the
+  statistics after a Vs. battle no longer run into each other
+  ([#3](https://github.com/victor-takai/rogue-galaxy-recomp/issues/3)).
 
 ## 0.3.0 (pre-release)
 
