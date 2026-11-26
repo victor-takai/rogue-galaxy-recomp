@@ -53,6 +53,56 @@ function Invoke-InstallFirst([string]$Root, [string]$Bat, [string]$What) {
     exit $LASTEXITCODE
 }
 
+# Such a launcher updates by unpacking the new release's zip over the folder:
+# the new files replace the old ones, and build\, the old "Rogue Galaxy.exe"
+# and the files the new version dropped stay. The zip's FILES lists its
+# files and REVISION its commit. REVISION's text and the two files' dates
+# are kept in build\unpacked-archive once the archive's files are in place:
+# the files the new version no longer has removed, and the build told what
+# changed (install.ps1, Update-Unpacked; update.ps1 writes the files
+# itself). FILES's date is new for each archive made; REVISION's, which
+# Update-Unpacked sets to now, goes back to the zip's when the same archive
+# is unpacked again (a build stopped halfway, then unpacked anew, would
+# otherwise keep objects of the version before). "" when the folder has no
+# FILES or REVISION (a git checkout, or a release before FILES).
+function Get-UnpackStamp([string]$Root) {
+    $files = Join-Path $Root "FILES"
+    $revision = Join-Path $Root "REVISION"
+    if (-not (Test-Path -LiteralPath $files -PathType Leaf) -or -not (Test-Path -LiteralPath $revision -PathType Leaf)) {
+        return ""
+    }
+    $name = ([string](Get-Content -LiteralPath $revision -TotalCount 1)).Trim()
+    $filesDate = (Get-Item -LiteralPath $files).LastWriteTimeUtc.Ticks
+    $revisionDate = (Get-Item -LiteralPath $revision).LastWriteTimeUtc.Ticks
+    return "$name $filesDate $revisionDate"
+}
+
+# True when an archive was unpacked over $Root and its files are not in
+# place yet (Get-UnpackStamp).
+function Test-UnpackPending([string]$Root) {
+    $stamp = Get-UnpackStamp $Root
+    if (-not $stamp) { return $false }
+    $record = Join-Path $Root "build\unpacked-archive"
+    if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { return $true }
+    return ([string](Get-Content -LiteralPath $record -TotalCount 1)).Trim() -ne $stamp
+}
+
+# Records that the archive unpacked over $Root has its files in place.
+function Set-UnpackStamp([string]$Root) {
+    $stamp = Get-UnpackStamp $Root
+    if (-not $stamp) { return }
+    New-Item -ItemType Directory -Force -Path (Join-Path $Root "build") | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $Root "build\unpacked-archive"), "$stamp`r`n")
+}
+
+# The revision the game in $Root was built from (install.ps1 writes it when a
+# build ends well), or "".
+function Get-BuiltRevision([string]$Root) {
+    $record = Join-Path $Root "build\installed-revision"
+    if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { return "" }
+    return ([string](Get-Content -LiteralPath $record -TotalCount 1)).Trim()
+}
+
 # One install or update at a time in a folder: a second one (Install.bat
 # started again, or by "Rogue Galaxy.exe" while one runs) would build over
 # it, and the game would start half built. $Root\build\install.lock is held,

@@ -24,6 +24,9 @@
   time, in a window of its own.
 - `Rogue Galaxy.exe` offers to run `Install.bat` while the game is not
   built, so an install that stopped halfway goes on from it.
+- After an update in a launcher such as QuiverLauncher, Play offers to
+  build the new version, and `Install.bat` removes the files it no longer
+  has. From 0.3.0, run `Install.bat` once after that first update.
 - A first install compiles the game in about a fifth less time.
 - A first install configures the game in about a minute and a half less.
 - Frames reach the screen at an even pace.

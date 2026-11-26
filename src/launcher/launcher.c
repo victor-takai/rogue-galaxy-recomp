@@ -16,13 +16,17 @@
 // Build-Launcher), so a launcher that starts the folder's first program, as
 // QuiverLauncher's Play does, finds it even when an install stopped halfway:
 // while the game is not built, it offers to run Install.bat, which goes on
-// from where it stopped.
+// from where it stopped. Such a launcher updates by unpacking the new
+// release's zip over the folder, which leaves build\ and this program as
+// they were: while the folder's REVISION is not the one built, this offers
+// to run Install.bat, which builds the new version.
 //
 // Plain C linked statically: it starts from the repository's folder, away
 // from the DLLs the build puts beside the game.
 #include <windows.h>
 
 #include <stdio.h>
+#include <string.h>
 #include <wchar.h>
 
 static const wchar_t kTitle[] = L"Rogue Galaxy";
@@ -30,6 +34,7 @@ static const wchar_t kGame[] = L"build\\game\\src\\roguegalaxy.exe";
 static const wchar_t kDisc[] = L"disc\\SCUS_974.90";
 static const wchar_t kLog[] = L"build\\last-run.log";
 static const wchar_t kPreviousLog[] = L"build\\last-run.prev.log";
+static const wchar_t kInstalledRevision[] = L"build\\installed-revision";
 // The batch file's 15 lines, from at most the log's last 8 KB, each cut at
 // 150 characters: the [gfx] lines run to 300 and more, which would make a
 // message box as tall as the screen.
@@ -89,11 +94,49 @@ static const wchar_t *arguments(void)
     return line;
 }
 
-// Starts folder\Install.bat in a console window of its own, and does not wait
-// for it: the game's build writes this program's file again, which Windows
-// does not allow while it runs. cmd.exe by name: a batch file opened through
-// its file type opens in an editor on a PC set up that way.
-static int runInstall(const wchar_t *folder)
+// The first line of a small text file, without its line break and the blanks
+// around it, in `text` (`size` bytes at most, the end included); false when
+// the file cannot be read.
+static BOOL readFirstLine(const wchar_t *path, char *text, DWORD size)
+{
+    DWORD read = 0;
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        return FALSE;
+    }
+    const BOOL ok = ReadFile(file, text, size - 1, &read, NULL);
+    CloseHandle(file);
+    if (!ok)
+    {
+        return FALSE;
+    }
+    DWORD end = 0;
+    while (end < read && text[end] != '\r' && text[end] != '\n')
+    {
+        ++end;
+    }
+    while (end > 0 && (text[end - 1] == ' ' || text[end - 1] == '\t'))
+    {
+        --end;
+    }
+    DWORD begin = 0;
+    while (begin < end && (text[begin] == ' ' || text[begin] == '\t'))
+    {
+        ++begin;
+    }
+    memmove(text, text + begin, end - begin);
+    text[end - begin] = '\0';
+    return TRUE;
+}
+
+// Starts folder\Install.bat, with `options` after it, in a console window of
+// its own, and does not wait for it: the game's build writes this program's
+// file again, which Windows does not allow while it runs. cmd.exe by name: a
+// batch file opened through its file type opens in an editor on a PC set up
+// that way.
+static int runInstall(const wchar_t *folder, const wchar_t *options)
 {
     static wchar_t shell[MAX_PATH];
     static wchar_t command[32768 + MAX_PATH + 32];
@@ -104,9 +147,9 @@ static int runInstall(const wchar_t *folder)
         return 1;
     }
     wcscat(shell, L"\\cmd.exe");
-    // cmd.exe drops the outer quotes and runs "folder\Install.bat".
-    if (swprintf(command, sizeof(command) / sizeof(command[0]), L"\"%ls\" /d /c \"\"%ls\\Install.bat\"\"", shell,
-                 folder) < 0)
+    // cmd.exe drops the outer quotes and runs "folder\Install.bat" options.
+    if (swprintf(command, sizeof(command) / sizeof(command[0]), L"\"%ls\" /d /c \"\"%ls\\Install.bat\"%ls\"", shell,
+                 folder, options) < 0)
     {
         stop(L"This folder's path is too long to run Install.bat from.");
         return 1;
@@ -277,12 +320,47 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR commandLine, in
         {
             return 1;
         }
-        return runInstall(folder);
+        return runInstall(folder, L"");
     }
     if (GetFileAttributesW(kDisc) == INVALID_FILE_ATTRIBUTES)
     {
         stop(L"No extracted disc in disc\\: run  python setup.py extract  first.");
         return 1;
+    }
+
+    // A release's files unpacked over this folder (QuiverLauncher's update,
+    // or a zip unpacked by hand): REVISION names the commit they are from,
+    // build\installed-revision the one the game was built from (install.ps1
+    // writes it when a build ends well), and the two differ until the folder
+    // is built again. The game built before still runs. A git checkout has
+    // no REVISION.
+    // Without Install.bat there is nothing to offer.
+    static char revision[128];
+    static char installed[128];
+    if (readFirstLine(L"REVISION", revision, sizeof(revision)) && revision[0] != '\0' &&
+        GetFileAttributesW(L"Install.bat") != INVALID_FILE_ATTRIBUTES)
+    {
+        if (!readFirstLine(kInstalledRevision, installed, sizeof(installed)))
+        {
+            installed[0] = '\0';
+        }
+        if (strcmp(revision, installed) != 0)
+        {
+            // Newer or older: the files are what the player put here.
+            static wchar_t question[640];
+            swprintf(question, sizeof(question) / sizeof(question[0]),
+                     L"The files in this folder are version %hs, but the game built here is %hs.\n\n"
+                     L"Build %hs now? Install.bat does it in a window of its own and then offers to "
+                     L"start the game.\n\nNo starts the game built before.",
+                     revision, installed[0] != '\0' ? installed : "an earlier one", revision);
+            if (MessageBoxW(NULL, question, kTitle, MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND) == IDYES)
+            {
+                // No shortcut question (the folder was installed before);
+                // install.ps1 builds every file again (Update-Unpacked).
+                // -Updating only, which every release's install.ps1 takes.
+                return runInstall(folder, L" -Updating");
+            }
+        }
     }
 
     // RogueGalaxy.bat's variables (it says what they do): the [gfx] line a

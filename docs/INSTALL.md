@@ -48,7 +48,8 @@ Play installs the game the first time, in a window of its own, and starts
 it from then on. If the install stops halfway, Play offers to go on with
 it; if it stops in its first minutes, before `Rogue Galaxy.exe` is made,
 Play may open a build tool instead: run `Install.bat` from the game's
-folder then.
+folder then. After an update, Play offers to build the new version
+([Update](#in-quiverlauncher-or-a-zip-extracted-over-the-folder)).
 
 ## Undub (optional)
 
@@ -100,7 +101,8 @@ To update, double-click `Update.bat`. It downloads the newest release,
 replaces only the files that changed and rebuilds what depends on them.
 That takes a few minutes, or about as long as the first install when the
 new version changes how the game's code is translated. The build tools
-stay unless the new version needs newer ones.
+stay unless the new version needs newer ones. The first update from 0.3.0
+or earlier builds the whole game again.
 
 What is kept: your disc, saves (`disc\mc0`), settings
 (`%APPDATA%\RogueGalaxy\Recompiled`), textures, the undub's files
@@ -110,6 +112,20 @@ What is kept: your disc, saves (`disc\mc0`), settings
 A zip downloaded by hand from the
 [releases](https://github.com/victor-takai/rogue-galaxy-recomp/releases)
 page can be dropped onto `Update.bat` instead.
+
+### In QuiverLauncher, or a zip extracted over the folder
+
+A launcher such as QuiverLauncher updates by extracting the new zip over
+the game's folder, which keeps the game built before. Play then asks
+whether to build the new version: Yes runs `Install.bat` in a window of
+its own, which removes the files the new version no longer has and builds
+the whole game again (about as long as the first install); No starts the
+game built before. A zip extracted over the folder by hand works the same
+way, with `Install.bat`.
+
+Over a folder of 0.3.0 or earlier, `Rogue Galaxy.exe` stays as it was (the
+zip has none) and starts the old game without asking: run `Install.bat` or
+`Update.bat` once after extracting.
 
 ### From 0.1.0
 
