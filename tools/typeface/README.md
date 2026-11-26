@@ -50,14 +50,14 @@ numbers, hashes and glyph indices.
 - **The message font's own typeface** (`normal`): Rogue Letters
   (`thirdparty/fonts/rogue-letters`, the SIL Open Font License, made from
   Andika). Each of its 93 characters is drawn as a few pen strokes whose
-  nodes and pen width were fitted to the console's glyph, and the
-  apostrophe, quotes and commas are Andika's, placed and sized. It has no
+  nodes and pen width were fitted to the console's glyph; the comma (the
+  apostrophe, the semicolon's and the quotes' too) is drawn, a round head
+  and a tail. It has no
   alternates (no `+alt`), and its glyphs are already as wide as the
   console's ink, so the game keeps their widths (`drawnAfterConsole` in
-  `typeface_letters.cpp`) where it evens the gaps of Andika's. The tools
-  that drew it are in the work's research notes
-  (`build/research/custom-typeface`, outside the repository). The European
-  message font is still Andika's: Rogue Letters has no accents yet.
+  `typeface_letters.cpp`) where it evens the gaps of Andika's. It is drawn
+  with the tools in `strokes/` (below). The European message font is still
+  Andika's: Rogue Letters has no accents yet.
 - **The European fonts** (`normal_eur`, `system_eur`, `name_eur`): the European
   text's pages, `FontTex_<font>_EUR_0.tm2` of the language's
   `meswin\fontset_main_<lang>.pak` in `disc/EU` (one pack for the four
@@ -156,3 +156,72 @@ and this command with its path.
 
 In the game, `RG_TYPEFACE_SHEET=DIR` writes each font's glyphs, the
 console's beside the typeface's, as the pages are read (docs/DEVELOPMENT.md).
+
+## Rogue Letters: drawing the glyphs
+
+`strokes/` draws Rogue Letters, the message font's typeface: each character
+is a few pen strokes whose nodes and pen are fitted to the console's glyph.
+It needs the disc extracted (`disc/`) and, besides Pillow and fontTools,
+numpy, skia-pathops and PyTorch (the CPU build is enough), best in a virtual
+environment under `build/`:
+
+```
+python -m venv build/venv
+build/venv/Scripts/python -m pip install numpy pillow fonttools skia-pathops
+build/venv/Scripts/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+(`build/venv/bin/python` on Linux.) The commands below are run from the
+repository's root with that Python.
+
+- **`skeletons.py`**: each character's strokes, as nodes in its 18x22 cell
+  where the fit starts them: lines and curves (corners, smooth nodes, ends
+  cut level), dots, and the comma as drawn (`stroke_fit.COMMA`, which the
+  fit leaves as it is; the apostrophe, the semicolon and the quotes use it
+  too). Its docstring has the notation;
+  `dump_cells.py CHARS` prints the console's cells to read nodes from.
+- **`strokes.json`**: where the fit left each glyph's nodes, and its pen
+  (an ellipse, cell pixels across and down), with the skeleton's form they
+  were fitted to (its strokes' and nodes' kinds; a skeleton changed in
+  form, or its comma moved, has to be fitted again before assembling). The
+  font is built from it, so a glyph fitted again shows in a diff as its
+  line.
+- **`andika_fit.json`**: `make_table.py`'s fit of Andika Regular (with its
+  alternates) to the message font, which Rogue Letters started from: the em
+  in cell pixels the strokes are drawn in, and for each character the
+  Andika glyph whose place in the font its strokes take. `stroke_fit.py
+  --base` writes it again (a few minutes).
+- **`stroke_fit.py`**: fits glyphs and writes each into `strokes.json`
+  (`--chars ",;'"`; all of them with neither `--chars` nor `--part`: about
+  three quarters of an hour with four runs side by side, `--part 0/4` to
+  `--part 3/4`), then assembles (`--assemble` alone): every glyph stroked
+  into outlines with skia, merged and put in a copy of Andika, into
+  `build/typeface/strokes/Fitted-Regular.ttf`, with `fit_report.json`
+  (each glyph's difference with the console's: Andika's, the fit's and the
+  outline's as written).
+- **`build_font.py`**: the repository's font from that copy:
+  `thirdparty/fonts/rogue-letters/RogueLetters-Regular.ttf` (the message
+  font's characters only, no hinting nor layout tables, Rogue Letters'
+  names, a fixed date, so the same table builds the same file) and its
+  `OFL.txt`.
+- **`preview_sheet.py`** (`--chars`, `--scale`): a sheet of the console's
+  glyphs beside Andika's and the strokes', drawn as the game draws them
+  but placed as the table placed Andika (a mark can sit up to half a pixel
+  off the game's);
+  **`overlay_strokes.py --chars`**: the outline over the console's pixels,
+  enlarged. Both write into `build/typeface/strokes`: they hold the
+  console's glyphs, never for the repository.
+
+Redrawing a glyph: change its skeleton, fit it, look, then build the font
+and the table again (the table's places come from the font):
+
+```
+build/venv/Scripts/python -I tools/typeface/strokes/stroke_fit.py --chars ","
+build/venv/Scripts/python -I tools/typeface/strokes/stroke_fit.py --assemble
+build/venv/Scripts/python -I tools/typeface/strokes/preview_sheet.py --chars ",;'"
+build/venv/Scripts/python -I tools/typeface/strokes/build_font.py
+build/venv/Scripts/python -I tools/typeface/make_table.py normal=... (the command above)
+```
+
+`stroke_fit.py --assemble` and `build_font.py` with the table as it is
+give back the font in the repository byte for byte.
