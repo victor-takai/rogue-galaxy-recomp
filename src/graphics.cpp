@@ -816,6 +816,13 @@ bool pump(void *userData)
         rg::widescreen::setAspect(static_cast<float>(dq8::gfx::sdlGpuDisplayAspect(
             backend->displayOptions(), 512u, 448u, static_cast<uint32_t>(windowWidth),
             static_cast<uint32_t>(windowHeight), 1)));
+        // The shape shown now, wide or not, for the letters' "+": a frame
+        // pixel's, its 2D stretched with the picture.
+        rg::typeface::setPixelShape(dq8::gfx::sdlGpuDisplayAspect(backend->displayOptions(), 512u, 448u,
+                                                                  static_cast<uint32_t>(windowWidth),
+                                                                  static_cast<uint32_t>(windowHeight),
+                                                                  rg::widescreen::wide() ? 1 : 0) *
+                                    448.0 / 512.0);
     }
     // The menu has F11 and Alt+Enter; without it, F11 still toggles.
     static bool f11WasDown = false;
