@@ -30,6 +30,8 @@
 - A first install compiles the game in about a fifth less time.
 - A first install configures the game in about a minute and a half less.
 - Frames reach the screen at an even pace.
+- The "Player" and "Party" labels of the Revelation menu no longer have
+  pink dots at their corners.
 
 ## 0.3.0 (pre-release)
 
