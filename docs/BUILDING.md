@@ -99,6 +99,7 @@ it touches on down. From the repository root:
 | `patches/ps2recomp/`, or the commit `thirdparty/PS2Recomp` is pinned to | `python setup.py tools`, then `recompile`, then `build` |
 | A new version of a git checkout (`git pull`), or in doubt | `python setup.py install` (on Windows, `Install.bat`) |
 | A new release, in a folder `Install.bat` built | `Update.bat` ([`tools/install/update.ps1`](../tools/install/update.ps1): downloads the zip, writes only the files whose bytes differ, deletes from the code folders what the new version no longer has, then runs the installer) |
+| A new release's zip extracted over a folder `Install.bat` built (how QuiverLauncher updates) | `Install.bat`, which `Rogue Galaxy.exe` offers while `REVISION` is not the one in `build\installed-revision` ([`tools/install/install.ps1`](../tools/install/install.ps1), `Update-Unpacked`: once for each archive, deletes from the code folders what its `FILES` does not list and gives every file in it today's date, since an unzip gives them the zip's, older than the build; then the whole game is built again) |
 
 What each step keeps:
 

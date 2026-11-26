@@ -31,6 +31,7 @@
 #include "movie_audio.h"
 #include "libc_rand.h"
 #include "loading_screen.h"
+#include "art_fixes.h"
 #include "battle_rates.h"
 #include "button_glyphs.h"
 #include "camera_view.h"
@@ -177,6 +178,7 @@ int run(int argc, char **argv)
     rg::hudsize::install(runtime);
     rg::inventory::install(runtime);
     rg::buttons::install(runtime);
+    rg::artfix::install(runtime);
     rg::opening::install(runtime);
     rg::devtools::install(runtime);
     rg::cameraview::install(runtime);

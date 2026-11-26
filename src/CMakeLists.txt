@@ -68,6 +68,7 @@ endforeach()
 add_executable(roguegalaxy
     main.cpp
     graphics.cpp
+    art_fixes.cpp
     battle_rates.cpp
     button_art.cpp
     button_glyphs.cpp
