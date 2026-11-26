@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <iterator>
 
 #include "overlay/overlay_manager.h"
@@ -24,6 +25,8 @@ namespace rg::textlanguage
 {
 namespace
 {
+constexpr int kV0 = 2;
+constexpr int kA0 = 4;
 constexpr int kA1 = 5;
 constexpr int kA2 = 6;
 constexpr int kT2 = 10;
@@ -110,16 +113,26 @@ void setSpriteWidth(uint8_t *rdram, uint32_t ui, uint32_t id, int index, int32_t
 }
 
 // Where a call comes from: the main executable, or an overlay (which has to
-// be resident: other code stands at those addresses otherwise).
+// be resident: other code stands at those addresses otherwise). The battle's
+// help list, its topics' titles, the Vs. battles' statistics and the words
+// the PAL code fills in (in INSECT) and the Vs. menus' title banner (in
+// INSMENU) have hooks of their own, so that one of them failing leaves the
+// rest alone.
 enum class From : uint8_t
 {
     Main,
     Insect,
     Insmenu,
+    Help,
+    Banner,
+    HelpTitles,
+    Stats,
+    Words,
+    Count,
 };
 
 // Each screen's hooks went in (installInsectronLayouts), by From.
-bool g_screenOn[3] = {false, false, false};
+bool g_screenOn[static_cast<int>(From::Count)] = {};
 
 // The European column (French 0, German 1, Spanish 2, Italian 3) for a call
 // made from `from`, or -1 (English, that screen's hooks did not all go in, or
@@ -135,7 +148,7 @@ int columnFor(From from)
     {
         return column;
     }
-    const char *name = from == From::Insect ? "insect" : "insmenu";
+    const char *name = from == From::Insmenu || from == From::Banner ? "insmenu" : "insect";
     return std::strcmp(rg::overlay::residentName(), name) == 0 ? column : -1;
 }
 
@@ -277,6 +290,154 @@ constexpr uint32_t kRows = 0x7543u;
 constexpr int kRowCount = 5;
 constexpr int32_t kRowWidthUs = 188;
 
+// InsectBattleHelpStep (0x50A9F0), its list of help topics as it opens: a
+// window 288 wide (0x75FC, UiNineSliceSpritesLayout a2) centred on the screen
+// (UiSetWidgetPos, the screen's width less 288, halved), the list's back
+// (0x75F9) and highlight (0x75FA) 284 (UiQuadSetByModeRelated a2), the rows
+// (0x75FB) 284 (UiSpriteListFillColumnMaybe f12), the scroll bar (0x75FD) at x
+// 276 and the title centred in 288 (InsectMsgCenterX a2). The PAL code keeps
+// these in every language, and its own text shortens some long topics ("Vigila
+// el estado de tu insector..."); Spanish "Familia de los escarabajos cuchillo"
+// ran over the scroll bar and "...bazuka" reached it; French "Attention à
+// l'état de votre Insector..." (whole once its title has the PAL's room,
+// below) ran past the window. A measure of ours, not the PAL's: the window 20
+// wider in Spanish and 36 in French, which leaves "cuchillo" and "Insector..."
+// the room the PAL's shortened topics have (some 13 pixels before the rows'
+// end).
+constexpr int32_t kHelpWider[4] = {36, 0, 20, 0};
+static_assert(kHelpWider[0] % 2 == 0 && kHelpWider[1] % 2 == 0 && kHelpWider[2] % 2 == 0 && kHelpWider[3] % 2 == 0,
+              "the window stays centred by moving it half its extra width");
+constexpr int32_t kHelpWindowUs = 288;
+constexpr int32_t kHelpListUs = 284;
+constexpr float kHelpRowsUs = 284.0f;
+constexpr int32_t kHelpScrollXUs = 276;
+constexpr uint32_t kHelpWindow = 0x75FCu;
+constexpr uint32_t kHelpWindowReturn = 0x0050AC9Cu;  // UiNineSliceSpritesLayout
+constexpr uint32_t kHelpRowsReturn = 0x0050ACF4u;    // UiSpriteListFillColumnMaybe
+constexpr uint32_t kHelpWindowAtReturn = 0x0050ADBCu; // UiSetWidgetPos of 0x75FC
+
+// The help's topics: InsectHelpEntrySetTitle (0x510E80) copies each title
+// into 3 quadwords of the help's memory (MemStackAllocQw, a1, returning to
+// 0x510EA4), the PAL one into 4 (its only change there; the memory, 0x280
+// quadwords, the same). The French title of the topic on an Insector's
+// status takes more than 48 bytes: its end ran into the next allocation, and
+// the list showed "Insect?/hb0" from the file name written there. The 4
+// quadwords in every European language, as the PAL has; English keeps the US
+// 3.
+constexpr int32_t kHelpTitleQwUs = 3;
+constexpr int32_t kHelpTitleQw[4] = {4, 4, 4, 4};
+constexpr uint32_t kHelpTitleReturn = 0x00510EA4u;
+
+// The statistics under a Vs. battle's rematch prompt (InsectBattleRematch-
+// PromptDraw, 0x4F14E0): per player, 11 texts of the battle's layout
+// (Insectron_menu_def: player, label, then number and label three times,
+// "Win percentage", number, "%"; rows at y 368 and 400), each drawn through
+// InsectBattleDrawTextRec (0x4F1410: a1 the record, +0 x, +2 y, +8 the
+// alignment from bit 7), which only this screen calls. The PAL layout places
+// them per language; there its code only formats the numbers otherwise
+// (right-aligned to 3 digits, Spanish's left-aligned and plain, as the US
+// ones). Each x is the PAL language's against PAL English's (which has the
+// percentage's label 4 further right), on the US x; Spanish puts each label
+// before its number, the numbers left-aligned. Italian "sconfitta(e)" ran
+// into "Rapporto".
+constexpr int kStatsTexts = 11;
+constexpr int16_t kStatsRowY[2] = {368, 400};
+constexpr uint32_t kRecordY = 0x2u;
+constexpr uint32_t kRecordAlign = 0x8u;
+constexpr int kAlignShift = 7;
+constexpr int16_t kStatsXUs[kStatsTexts] = {10, 30, 40, 80, 148, 188, 233, 273, 350, 445, 485};
+constexpr int16_t kStatsAlignUs[kStatsTexts] = {16, 0, 36, 0, 36, 0, 36, 0, 0, 36, 0};
+constexpr int16_t kStatsX[4][kStatsTexts] = {
+    {23, 20, 37, 77, 142, 182, 251, 291, 368, 447, 487},  // French
+    {23, 20, 43, 83, 152, 192, 242, 282, 383, 445, 485},  // German
+    {23, 20, 113, 54, 225, 151, 336, 264, 372, 445, 485}, // Spanish
+    {24, 20, 40, 80, 148, 188, 257, 297, 388, 445, 485},  // Italian
+};
+constexpr int16_t kStatsAlign[4][kStatsTexts] = {
+    {16, 0, 36, 0, 36, 0, 36, 0, 0, 36, 0},
+    {16, 0, 36, 0, 36, 0, 36, 0, 0, 36, 0},
+    {16, 0, 0, 0, 0, 0, 0, 0, 0, 36, 0},
+    {16, 0, 36, 0, 36, 0, 36, 0, 0, 36, 0},
+};
+
+// A record is moved while it holds its US place, so it is moved once: no
+// language's place may be another text's US place.
+constexpr bool statsMovedOnce()
+{
+    for (int c = 0; c < 4; ++c)
+        for (int k = 0; k < kStatsTexts; ++k)
+            for (int j = 0; j < kStatsTexts; ++j)
+                if (j != k && kStatsX[c][k] == kStatsXUs[j] && kStatsAlign[c][k] == kStatsAlignUs[j])
+                    return false;
+    return true;
+}
+static_assert(statsMovedOnce(), "a statistics text would be moved again as another");
+
+// The words the US battle has fixed: in its layout (insect_status_view):
+// "Yes" and "No" on the prompts' buttons (widgets 0xC37B and 0xC37C), " Useful
+// Info" (0xC36E's second text) and the opponent panel's "Name:" (0xC382's
+// first); in the overlay: "ACE" and "Lv%d" (0x524C28, 0x524C30: a piece's
+// level) and "(AI)" (0x524BA8, after a victory code). The PAL layout leaves
+// those texts empty, and its InsectBattleLoadResources (0x4F9370), once the
+// battle's messages are in (InsectMsgSetBank, here returning to 0x4F969C),
+// sets them: the system messages 0x52 and 0x53 (the active table's, which in
+// a Vs. battle is the field's) centred at 26 in their buttons, the battle's
+// messages 5004 and 5005 (and 5002, ":" in every language); its code takes
+// 5000, 5001 and 5003 where the US one has the fixed strings. The European
+// texts carry those messages (the PAL file is their base), so the same is
+// done here after that call, in a European language; an overlay string takes
+// its message where it fits the string's room and the game's use of it.
+constexpr uint32_t kMsgSetBankReturn = 0x004F969Cu;
+constexpr uint32_t kBattleMessages = 0x506Cu; // the battle's message bank, at its state's +0x506C
+constexpr uint32_t kBattleUi = 0x87Cu;        // the battle's UI, at its state's +0x87C
+constexpr uint32_t kSysMode = 0x0047E224u;    // SysGetCurMode's word
+constexpr uint32_t kFieldMessages = 0x00481BBCu; // MsgGetActiveTable's table in mode 0
+constexpr uint32_t kMode1Messages = 0x00484180u; // and in mode 1
+constexpr uint32_t kVsMode = 6u;              // the PAL takes mode 0's table there too
+constexpr int32_t kButtonMiddle = 26;
+
+struct LayoutWord
+{
+    uint16_t widget;
+    uint32_t text; // which of its texts
+    uint32_t message;
+    bool system;  // a system message, else the battle's
+    bool centred; // centred at kButtonMiddle
+};
+constexpr LayoutWord kLayoutWords[] = {
+    {0xC37B, 0, 0x52, true, true},
+    {0xC37C, 0, 0x53, true, true},
+    {0xC36E, 1, 5004, false, false},
+    {0xC382, 0, 5005, false, false},
+};
+
+// How the game uses an overlay string: as sprintf's format into a piece's
+// 6-byte slot of the roster (InsectBattleRosterListRefresh, 0x4FB030 and
+// 0x4FB058: at most 5 characters printed), "ACE" with no argument and
+// "Lv%d" with a level (at most 3 digits, as the US one allows); or appended
+// to the victory code's text (strcat).
+enum class Use : uint8_t
+{
+    Format,
+    LevelFormat,
+    Appended,
+};
+constexpr uint32_t kSlotCharacters = 5;
+constexpr uint32_t kLevelDigits = 3;
+
+struct OverlayWord
+{
+    uint32_t address;
+    uint32_t room; // bytes, its terminator included
+    uint32_t message;
+    Use use;
+};
+constexpr OverlayWord kOverlayWords[] = {
+    {0x00524C28u, 8, 5000, Use::Format},
+    {0x00524C30u, 16, 5001, Use::LevelFormat},
+    {0x00524BA8u, 8, 5003, Use::Appended},
+};
+
 // --- The Vs. menus (INSMENU.BIN) ------------------------------------------
 // Opened from the title's Insectron row. The PAL overlay sizes each panel's
 // rows per language from tables in its own data (0x507D80 on). Where its
@@ -358,6 +519,50 @@ constexpr BlockPiece kPlayersBlock[] = {
     {0x38u, true, 6, 181},
 };
 
+// The title banner along the top (InsectVsTitleBannerLayout 0x4EA600, the first
+// widget 0x39, the layout's group 30240). Its sprites: the bar (0 its back, from
+// -4 and 320 wide; 1 its slanted end at 316; 2 the rest, from 352, 180 wide),
+// the mode's title (3, a row of the picture InscPW_03a, told by its v) and the
+// mode's pieces after it: two icons (4, 5), "VS" (6) and the arrows (7, 8), at
+// the x the US code sets per mode for the English words (-1: not shown). The
+// PAL code places those pieces after the title by its words' width, from
+// tables per mode and language (0x507D80 to 0x507E00: English, Spanish, French,
+// Italian, German; the words' right edge and 3 to 5), and ends the bar after
+// the last piece. Here the pieces move by the language's width less the US
+// English one, and the bar's end moves right as far, when they do: Spanish
+// "Batalla con contraseña" ran under its icons, French "Combat mot de passe"
+// reached them.
+struct BannerRow
+{
+    int16_t v;         // the title's row in the picture
+    int16_t english;   // the US English title's width, in the PAL tables' measure
+    int16_t width[4];  // French, German, Spanish, Italian (PAL)
+    int16_t pieces[5]; // sprites 4 to 8's x in that mode, in the US code (-1: none)
+};
+constexpr BannerRow kBannerRows[] = {
+    // "Insectron": 166 in PAL English, whose picture is wider; the US one is as
+    // wide as the European ones.
+    {0x58, 158, {158, 158, 158, 158}, {-1, -1, -1, -1, -1}},
+    {0x74, 180, {174, 132, 228, 140}, {232, 278, 259, -1, -1}}, // 2-Player Battle
+    {0x90, 194, {212, 198, 234, 116}, {232, 278, 259, -1, -1}}, // Password Battle
+    {0xAC, 154, {180, 180, 170, 164}, {232, 278, 259, -1, -1}}, // Watch Battle
+    {0xC8, 142, {116, 136, 100, 160}, {226, 288, -1, 253, 253}}, // Registration
+    {0xE4, 280, {276, 296, 276, 254}, {-1, -1, -1, -1, -1}},     // its panels
+    {0x100, 280, {266, 248, 292, 268}, {-1, -1, -1, -1, -1}},
+    {0x11C, 250, {232, 300, 246, 242}, {278, -1, -1, -1, -1}},
+    {0x138, 268, {266, 294, 264, 268}, {294, -1, -1, -1, -1}},
+};
+constexpr uint16_t kBannerWidget = 0x39u;
+constexpr int kBannerTitle = 3;
+constexpr int kBannerFirstPiece = 4;
+constexpr uint32_t kSpriteX = 0x0u;
+constexpr uint32_t kSpriteV = 0xAu;
+// The bar as the US layout has it.
+constexpr int16_t kBarBackWidth = 320; // sprite 0
+constexpr int16_t kBarEndX = 316;      // sprite 1
+constexpr int16_t kBarRestX = 352;     // sprite 2
+constexpr int16_t kBarRestWidth = 180;
+
 // --- The patches, by the function called -------------------------------
 // Three of these functions are hooked by text_language.cpp too (UiLayout-
 // WindowFrame and UiSetSpriteW for the cage's commands, UiMoveWidgetUniform
@@ -385,7 +590,9 @@ constexpr ArgPatch kSpriteWPatches[] = {
 };
 // UiSetWidgetPos (0x290F60): a2 x. The notices' frames and highlights; the
 // battle's help box (0x7556 at 200) and team panels (0x753F from -192); the
-// 2-Player panel's controller marks (0x45) at the panel's width less 8.
+// 2-Player panel's controller marks (0x45) at the panel's width less 8; the
+// help list's scroll bar (0x75FD at 276; its window's x, centred, is in
+// widgetPos).
 constexpr ArgPatch kWidgetPosPatches[] = {
     leftOf(From::Main, 0x00396BDCu, kA2, 348, 94, kCaught),
     leftOf(From::Main, 0x00396FA4u, kA2, 339 + kNoticeInset, 94, kCaught),
@@ -398,13 +605,33 @@ constexpr ArgPatch kWidgetPosPatches[] = {
      -kPanelUs,
      {-kPanelUs - kPanelWider[0], -kPanelUs - kPanelWider[1], -kPanelUs - kPanelWider[2], -kPanelUs - kPanelWider[3]}},
     narrower(From::Insmenu, 0x004F1DF4u, kA2, kPanelRowUs, kTwoPlayer, 8),
+    wider(From::Help, 0x0050AE0Cu, kA2, kHelpScrollXUs, kHelpWider),
 };
 // UiQuadSetByModeRelated (0x3934D0): a2 the width. The commands' highlight;
-// the team panel's bar 0x7542.
+// the team panel's bar 0x7542; the help list's back and highlight.
 constexpr ArgPatch kQuadSetPatches[] = {
     narrower(From::Insect, kCommandHighlightReturn, kA2, kCommandWidthUs, kCommandWidth,
              kCommandWidthUs - kCommandHighlightUs),
     wider(From::Insect, 0x005007B0u, kA2, 0xB8, kPanelWider),
+    wider(From::Help, 0x0050ACC4u, kA2, kHelpListUs, kHelpWider),
+    wider(From::Help, 0x0050AD1Cu, kA2, kHelpListUs, kHelpWider),
+};
+// UiNineSliceSpritesLayout (0x3930D0): a2 the width. The help list's window.
+constexpr ArgPatch kNineSliceSpritesPatches[] = {
+    wider(From::Help, kHelpWindowReturn, kA2, kHelpWindowUs, kHelpWider),
+};
+// INSECT's InsectMsgCenterX (0x512B10): a2 the width to centre a message in.
+// The help list's title.
+constexpr ArgPatch kCenterXPatches[] = {
+    wider(From::Help, 0x0050AF24u, kA2, kHelpWindowUs, kHelpWider),
+};
+// MemStackAllocQw (0x14D950): a1 the quadwords. The help's topic titles.
+constexpr ArgPatch kStackAllocQwPatches[] = {
+    {From::HelpTitles,
+     kHelpTitleReturn,
+     kA1,
+     kHelpTitleQwUs,
+     {kHelpTitleQw[0], kHelpTitleQw[1], kHelpTitleQw[2], kHelpTitleQw[3]}},
 };
 // InsectBattleMenuFrameNineSliceMaybe (0x393AC0): a2 the width. The team
 // panel's help box (the panel itself, below, also sets its pieces).
@@ -469,6 +696,17 @@ constexpr uint32_t kSpriteSize = 0x0028FC30u;   // UiSetSpriteSize
 constexpr uint32_t kListFrameFit = 0x004EA4E0u; // INSMENU's InsectVsListFrameFit
 constexpr uint32_t kHighlightBar = 0x004EA410u; // INSMENU's InsectVsHighlightBarSize
 constexpr uint32_t kTopLayout = 0x004F2C20u;    // INSMENU's InsectVsTopPanelLayout
+constexpr uint32_t kBannerLayout = 0x004EA600u; // INSMENU's InsectVsTitleBannerLayout
+constexpr uint32_t kNineSliceSprites = 0x003930D0u; // UiNineSliceSpritesLayout
+constexpr uint32_t kFillColumn = 0x003939E0u;       // UiSpriteListFillColumnMaybe: f12 the width
+constexpr uint32_t kCenterX = 0x00512B10u;          // INSECT's InsectMsgCenterX
+constexpr uint32_t kStackAllocQw = 0x0014D950u;     // MemStackAllocQw: a1 the quadwords
+constexpr uint32_t kStatsText = 0x004F1410u;        // INSECT's InsectBattleDrawTextRec: a1 the record
+constexpr uint32_t kMsgSetBank = 0x00512B80u;       // INSECT's InsectMsgSetBank: a0 the bank
+constexpr uint32_t kMsgGet = 0x00512B70u;           // INSECT's InsectMsgGet(bank, id)
+constexpr uint32_t kMsgTableLookup = 0x0028AA30u;   // MsgTableLookup(table, id)
+constexpr uint32_t kUiSetTextString = 0x0028F510u;  // UiSetTextString(ui, id, text, which)
+constexpr uint32_t kUiSetTextCenteredX = 0x0028F300u; // UiSetTextCenteredX(ui, id, x, which)
 
 PS2Runtime::RecompiledFunction g_originalWindowFrame = nullptr;
 PS2Runtime::RecompiledFunction g_originalSpriteW = nullptr;
@@ -484,6 +722,13 @@ PS2Runtime::RecompiledFunction g_originalSpriteSize = nullptr;
 PS2Runtime::RecompiledFunction g_originalListFrameFit = nullptr;
 PS2Runtime::RecompiledFunction g_originalHighlightBar = nullptr;
 PS2Runtime::RecompiledFunction g_originalTopLayout = nullptr;
+PS2Runtime::RecompiledFunction g_originalBannerLayout = nullptr;
+PS2Runtime::RecompiledFunction g_originalNineSliceSprites = nullptr;
+PS2Runtime::RecompiledFunction g_originalFillColumn = nullptr;
+PS2Runtime::RecompiledFunction g_originalCenterX = nullptr;
+PS2Runtime::RecompiledFunction g_originalStackAllocQw = nullptr;
+PS2Runtime::RecompiledFunction g_originalStatsText = nullptr;
+PS2Runtime::RecompiledFunction g_originalMsgSetBank = nullptr;
 
 void windowFrame(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
@@ -514,6 +759,15 @@ void widgetPos(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         else if (column >= 0 && header && widget == kCommandHeader)
         {
             setReg(ctx, kA2, reg(ctx, kA2) - (std::max(width, us) - us));
+        }
+    }
+    else if (from == kHelpWindowAtReturn)
+    {
+        // Centred: the screen's width less the window's, halved.
+        const int column = columnFor(From::Help);
+        if (column >= 0 && (getRegU32(ctx, kA1) & 0xFFFFu) == kHelpWindow)
+        {
+            setReg(ctx, kA2, reg(ctx, kA2) - kHelpWider[column] / 2);
         }
     }
     else
@@ -629,6 +883,171 @@ void fillSetSize(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     g_originalFillSetSize(rdram, ctx, runtime);
 }
 
+void nineSliceSprites(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    applyPatches(ctx, kNineSliceSpritesPatches);
+    g_originalNineSliceSprites(rdram, ctx, runtime);
+}
+
+void fillColumn(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (getRegU32(ctx, kRa) == kHelpRowsReturn && ctx->f[12] == kHelpRowsUs)
+    {
+        if (const int column = columnFor(From::Help); column >= 0)
+        {
+            ctx->f[12] = kHelpRowsUs + static_cast<float>(kHelpWider[column]);
+        }
+    }
+    g_originalFillColumn(rdram, ctx, runtime);
+}
+
+void centerX(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    applyPatches(ctx, kCenterXPatches);
+    g_originalCenterX(rdram, ctx, runtime);
+}
+
+void stackAllocQw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    applyPatches(ctx, kStackAllocQwPatches);
+    g_originalStackAllocQw(rdram, ctx, runtime);
+}
+
+void statsText(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const int column = columnFor(From::Stats);
+    const uint32_t record = getRegU32(ctx, kA1);
+    const int16_t y = column >= 0 ? readHalf(rdram, record + kRecordY) : 0;
+    if (y == kStatsRowY[0] || y == kStatsRowY[1])
+    {
+        const int16_t x = readHalf(rdram, record);
+        const auto packed = static_cast<uint16_t>(readHalf(rdram, record + kRecordAlign));
+        const int align = packed >> kAlignShift;
+        for (int k = 0; k < kStatsTexts; ++k)
+        {
+            if (x == kStatsXUs[k] && align == kStatsAlignUs[k])
+            {
+                writeHalf(rdram, record, kStatsX[column][k]);
+                const unsigned low = packed & ((1u << kAlignShift) - 1u);
+                writeHalf(rdram, record + kRecordAlign,
+                          static_cast<int16_t>(low | (static_cast<unsigned>(kStatsAlign[column][k]) << kAlignShift)));
+                break;
+            }
+        }
+    }
+    g_originalStatsText(rdram, ctx, runtime);
+}
+
+// The game's function at `entry`, run to its end with `args` in a0 on: its
+// v0, or 0 if it could not finish.
+uint32_t callGame(uint8_t *rdram, const R5900Context *ctx, PS2Runtime *runtime, uint32_t entry,
+                  std::initializer_list<uint32_t> args)
+{
+    PS2Runtime::RecompiledFunction function = runtime->lookupFunction(entry);
+    if (!function)
+    {
+        return 0u;
+    }
+    R5900Context local = *ctx;
+    int r = kA0;
+    for (const uint32_t arg : args)
+    {
+        setReg(&local, r++, static_cast<int32_t>(arg));
+    }
+    if (!rg::hooks::runToEnd(function, entry, rdram, local, runtime))
+    {
+        std::fprintf(stderr, "[rg] an Insectron word stopped at 0x%08X\n", local.pc);
+        return 0u;
+    }
+    return getRegU32(&local, kV0);
+}
+
+// The bytes (its terminator included) of the message at `text` if it may
+// stand in for `word`'s US string, else 0: it fits the string's room, and as
+// a format it has the US one's conversions (none, or one %d) and prints no
+// more than the slot takes.
+uint32_t standInBytes(const uint8_t *rdram, uint32_t text, const OverlayWord &word)
+{
+    uint32_t percents = 0;
+    bool levels = true; // each % a %d
+    for (uint32_t i = 0; i < word.room; ++i)
+    {
+        const uint8_t c = rdram[(text + i) & 0x1FFFFFFFu];
+        if (c == 0u)
+        {
+            bool fits = true;
+            if (word.use == Use::Format)
+            {
+                fits = percents == 0u && i <= kSlotCharacters;
+            }
+            else if (word.use == Use::LevelFormat)
+            {
+                fits = percents == 1u && levels && i - 2u + kLevelDigits <= kSlotCharacters;
+            }
+            return fits ? i + 1u : 0u;
+        }
+        if (c == '%')
+        {
+            ++percents;
+            levels = levels && rdram[(text + i + 1u) & 0x1FFFFFFFu] == 'd';
+        }
+    }
+    return 0u;
+}
+
+void afterMsgSetBank(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t bank)
+{
+    if (columnFor(From::Words) < 0)
+    {
+        return;
+    }
+    const uint32_t ui = readWord(rdram, bank - kBattleMessages + kBattleUi);
+    const uint32_t mode = readWord(rdram, kSysMode);
+    const uint32_t system = readWord(rdram, mode == 1u ? kMode1Messages : kFieldMessages);
+    const bool systemOn = mode == 0u || mode == 1u || mode == kVsMode;
+    for (const LayoutWord &word : kLayoutWords)
+    {
+        uint32_t text = 0u;
+        if (!word.system)
+        {
+            text = callGame(rdram, ctx, runtime, kMsgGet, {bank, word.message});
+        }
+        else if (systemOn && system != 0u)
+        {
+            text = callGame(rdram, ctx, runtime, kMsgTableLookup, {system, word.message});
+        }
+        if (ui == 0u || text == 0u)
+        {
+            continue;
+        }
+        callGame(rdram, ctx, runtime, kUiSetTextString, {ui, word.widget, text, word.text});
+        if (word.centred)
+        {
+            callGame(rdram, ctx, runtime, kUiSetTextCenteredX,
+                     {ui, word.widget, static_cast<uint32_t>(kButtonMiddle), word.text});
+        }
+    }
+    for (const OverlayWord &word : kOverlayWords)
+    {
+        const uint32_t text = callGame(rdram, ctx, runtime, kMsgGet, {bank, word.message});
+        const uint32_t bytes = text ? standInBytes(rdram, text, word) : 0u;
+        if (bytes != 0u)
+        {
+            std::memmove(rdram + (word.address & 0x1FFFFFFFu), rdram + (text & 0x1FFFFFFFu), bytes);
+        }
+    }
+}
+
+void msgSetBank(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (getRegU32(ctx, kRa) != kMsgSetBankReturn || columnFor(From::Words) < 0)
+    {
+        g_originalMsgSetBank(rdram, ctx, runtime);
+        return;
+    }
+    rg::hooks::callThen(g_originalMsgSetBank, rdram, ctx, runtime, &afterMsgSetBank, getRegU32(ctx, kA0));
+}
+
 void frameRects(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
     applyPatches(ctx, kFrameRectsPatches);
@@ -714,6 +1133,62 @@ void topLayout(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     rg::hooks::callThen(g_originalTopLayout, rdram, ctx, runtime, &afterTopLayout, 0u);
 }
 
+// After the US code has set the mode's title and pieces: the pieces it set
+// (those at their US x) moved, and the bar ended `by` further right. The bar is
+// left alone unless it is the US layout's, moved right by a step of ours.
+void afterBannerLayout(uint8_t *rdram, R5900Context *, PS2Runtime *, uint32_t)
+{
+    const int column = columnFor(From::Banner);
+    const uint32_t banner = column >= 0 ? findWidget(rdram, kVsUi, kBannerWidget) : 0u;
+    const uint32_t sprites = banner ? readWord(rdram, banner + kWidgetSprites) : 0u;
+    if (sprites == 0u)
+    {
+        return;
+    }
+    const auto at = [sprites](int sprite, uint32_t field) {
+        return sprites + static_cast<uint32_t>(sprite) * kSpriteBytes + field;
+    };
+    const int16_t v = readHalf(rdram, at(kBannerTitle, kSpriteV));
+    const BannerRow *row = std::find_if(std::begin(kBannerRows), std::end(kBannerRows),
+                                        [v](const BannerRow &r) { return r.v == v; });
+    if (row == std::end(kBannerRows))
+    {
+        return;
+    }
+    const int32_t delta = row->width[column] - row->english;
+    for (int i = 0; i < static_cast<int>(std::size(row->pieces)); ++i)
+    {
+        const uint32_t x = at(kBannerFirstPiece + i, kSpriteX);
+        if (row->pieces[i] >= 0 && readHalf(rdram, x) == row->pieces[i])
+        {
+            writeHalf(rdram, x, static_cast<int16_t>(row->pieces[i] + delta));
+        }
+    }
+    const int32_t was = readHalf(rdram, at(1, kSpriteX)) - kBarEndX;
+    const bool usBar = was >= 0 && was < kBarRestWidth &&
+                       readHalf(rdram, at(0, kSpriteWidth)) == kBarBackWidth + was &&
+                       readHalf(rdram, at(2, kSpriteX)) == kBarRestX + was &&
+                       readHalf(rdram, at(2, kSpriteWidth)) == kBarRestWidth - was;
+    if (usBar)
+    {
+        const int32_t by = std::clamp(delta, 0, kBarRestWidth - 1);
+        writeHalf(rdram, at(0, kSpriteWidth), static_cast<int16_t>(kBarBackWidth + by));
+        writeHalf(rdram, at(1, kSpriteX), static_cast<int16_t>(kBarEndX + by));
+        writeHalf(rdram, at(2, kSpriteX), static_cast<int16_t>(kBarRestX + by));
+        writeHalf(rdram, at(2, kSpriteWidth), static_cast<int16_t>(kBarRestWidth - by));
+    }
+}
+
+void bannerLayout(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    if (columnFor(From::Banner) < 0)
+    {
+        g_originalBannerLayout(rdram, ctx, runtime); // English: the US code alone
+        return;
+    }
+    rg::hooks::callThen(g_originalBannerLayout, rdram, ctx, runtime, &afterBannerLayout, 0u);
+}
+
 struct Hook
 {
     const char *overlay; // null: the main executable's
@@ -761,15 +1236,15 @@ void installInsectronLayouts(PS2Runtime &runtime)
         return; // a second time would hook its own hooks
     }
     installed = true;
-    // Shared by the screens: without them, none.
+    // Shared by the screens that change widths: without them, none of those.
     const Hook shared[] = {
         {nullptr, kSpriteW, &spriteW, g_originalSpriteW},
         {nullptr, kWidgetPos, &widgetPos, g_originalWidgetPos},
     };
-    if (!hookAll(runtime, shared))
+    const bool widthsOn = hookAll(runtime, shared);
+    if (!widthsOn)
     {
         std::fprintf(stderr, "[rg] the Insectron screens keep the US widths\n");
-        return;
     }
     const Hook notices[] = {
         {nullptr, kWindowFrame, &windowFrame, g_originalWindowFrame},
@@ -782,6 +1257,13 @@ void installInsectronLayouts(PS2Runtime &runtime)
         {nullptr, kNineSlice, &nineSlice, g_originalNineSlice},
         {nullptr, kFillSetSize, &fillSetSize, g_originalFillSetSize},
     };
+    // The help list's back and highlight go through the battle's
+    // UiQuadSetByModeRelated hook: its own hooks only with those.
+    const Hook help[] = {
+        {nullptr, kNineSliceSprites, &nineSliceSprites, g_originalNineSliceSprites},
+        {nullptr, kFillColumn, &fillColumn, g_originalFillColumn},
+        {"insect", kCenterX, &centerX, g_originalCenterX},
+    };
     const Hook vs[] = {
         {nullptr, kFrameRects, &frameRects, g_originalFrameRects},
         {nullptr, kSpriteSize, &spriteSize, g_originalSpriteSize},
@@ -789,20 +1271,48 @@ void installInsectronLayouts(PS2Runtime &runtime)
         {"insmenu", kHighlightBar, &highlightBar, g_originalHighlightBar},
         {"insmenu", kTopLayout, &topLayout, g_originalTopLayout},
     };
-    g_screenOn[static_cast<int>(From::Main)] = hookAll(runtime, notices);
-    g_screenOn[static_cast<int>(From::Insect)] = hookAll(runtime, battle);
-    g_screenOn[static_cast<int>(From::Insmenu)] = hookAll(runtime, vs);
-    if (!g_screenOn[static_cast<int>(From::Main)])
+    const Hook banner[] = {
+        {"insmenu", kBannerLayout, &bannerLayout, g_originalBannerLayout},
+    };
+    const Hook helpTitles[] = {
+        {nullptr, kStackAllocQw, &stackAllocQw, g_originalStackAllocQw},
+    };
+    const Hook stats[] = {
+        {"insect", kStatsText, &statsText, g_originalStatsText},
+    };
+    const Hook words[] = {
+        {"insect", kMsgSetBank, &msgSetBank, g_originalMsgSetBank},
+    };
+    g_screenOn[static_cast<int>(From::Main)] = widthsOn && hookAll(runtime, notices);
+    g_screenOn[static_cast<int>(From::Insect)] = widthsOn && hookAll(runtime, battle);
+    g_screenOn[static_cast<int>(From::Help)] = g_screenOn[static_cast<int>(From::Insect)] && hookAll(runtime, help);
+    g_screenOn[static_cast<int>(From::Insmenu)] = widthsOn && hookAll(runtime, vs);
+    // These use none of the shared hooks.
+    g_screenOn[static_cast<int>(From::Banner)] = hookAll(runtime, banner);
+    g_screenOn[static_cast<int>(From::HelpTitles)] = hookAll(runtime, helpTitles);
+    g_screenOn[static_cast<int>(From::Stats)] = hookAll(runtime, stats);
+    g_screenOn[static_cast<int>(From::Words)] = hookAll(runtime, words);
+    const struct
     {
-        std::fprintf(stderr, "[rg] the Insectron capture notices keep the US widths\n");
-    }
-    if (!g_screenOn[static_cast<int>(From::Insect)])
+        From from;
+        bool widths; // a width screen: told above when the shared hooks failed
+        const char *kept;
+    } screens[] = {
+        {From::Main, true, "the Insectron capture notices keep the US widths"},
+        {From::Insect, true, "the Insectron battle's menus keep the US widths"},
+        {From::Help, true, "the Insectron battle's help list keeps the US width"},
+        {From::Insmenu, true, "the Insectron Vs. menus keep the US widths"},
+        {From::Banner, false, "the Insectron Vs. menus' title banner keeps the US layout"},
+        {From::HelpTitles, false, "the Insectron battle's help topics keep the US room for their titles"},
+        {From::Stats, false, "the Insectron Vs. battles' statistics keep the US places"},
+        {From::Words, false, "the Insectron battle keeps its English Yes, No and labels"},
+    };
+    for (const auto &screen : screens)
     {
-        std::fprintf(stderr, "[rg] the Insectron battle's menus keep the US widths\n");
-    }
-    if (!g_screenOn[static_cast<int>(From::Insmenu)])
-    {
-        std::fprintf(stderr, "[rg] the Insectron Vs. menus keep the US widths\n");
+        if (!g_screenOn[static_cast<int>(screen.from)] && (widthsOn || !screen.widths))
+        {
+            std::fprintf(stderr, "[rg] %s\n", screen.kept);
+        }
     }
 }
 
