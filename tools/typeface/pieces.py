@@ -178,11 +178,12 @@ WORDS = [
         ("Player", 2, 0, 44, 16), ("Party", 5, 17, 39, 15),
         # The framed button with Player printed on its fill (Allies, Strategy):
         # the box is the word and its edge, the fill left and right of it. Its
-        # letters stand far apart: the plain Player's proportions, strokes and
-        # double-storey a held, the size its P's, the pens spread to its width
-        # (the fit alone stretched the letters 1.67 times as wide, or shrank
-        # and thinned them).
-        ("Player", 19, 70, 58, 12, "button scale=1.12 spaced grow=1 a=a")]),
+        # letters stand far apart: the plain Player's proportions, strokes,
+        # double-storey a and tailed y held (scale 1.20 and grow 2, its fit
+        # since the magenta at its corners is cleared, ART_FIXES), the size its
+        # P's, the pens spread to its width (the fit alone stretched the
+        # letters 1.67 times as wide, or shrank and thinned them).
+        ("Player", 19, 70, 58, 12, "button scale=1.20 spaced grow=2 a=a y=y")]),
     ("menu\\rc\\menu_static_img_en.pac", "menu_pt_b_EN.img", 2, [
         ("Jaster", 0, 0, 64, 18, "i sc J=J.BarTop"), ("Lilika", 76, 0, 56, 18, "i sc"),
         ("Deego", 0, 18, 60, 18, "i sc"), ("Jupis", 76, 18, 53, 18, "i sc J=J.BarTop"), ("Simon", 0, 36, 58, 18, "i sc"), ("Zegram", 76, 36, 73, 18, "i sc"),
@@ -299,6 +300,28 @@ def tim2(d: bytes, at: int):
     return w, h, bytes(idx), pal
 
 
+#: Slips in the pictures that the game fixes as it registers them
+#: (src/art_fixes.cpp), so the hashes here are of what it draws: (entry, TIM2
+#: number) -> (the indices replaced, the index they take, how many texels).
+#: Pty_02's "Player" and "Party" have opaque magenta at their edges' outer
+#: corners, the clear index taken instead.
+ART_FIXES = {
+    ("menu_pt_b_EN.img", 1): ((74, 83, 90), 98, 14),
+}
+
+
+def fix_art(entry: str, tim: int, idx: bytes) -> bytes:
+    """`idx` (a TIM2's indices) as the game draws them: ART_FIXES applied."""
+    fix = ART_FIXES.get((entry, tim))
+    if fix is None:
+        return idx
+    slips, clear, count = fix
+    found = sum(1 for v in idx if v in slips)
+    if found != count:
+        raise ValueError(f"{entry}#{tim}: {found} texels of {slips}, not the {count} src/art_fixes.cpp clears")
+    return bytes(clear if v in slips else v for v in idx)
+
+
 FNV_SEED, FNV_PRIME, MASK = 0xCBF29CE484222325, 0x100000001B3, (1 << 64) - 1
 
 
@@ -396,6 +419,8 @@ def load_pieces(disc_folder: Path = ROOT / "disc", names=None, lang: str | None 
         for _ in range(spec.tim):
             at = d.find(b"TIM2", at + 4)
         w, h, idx, pal = tim2(d, at)
+        if used is None:
+            idx = fix_art(spec.entry, spec.tim, idx)
         rgba = [pal[i] if i < len(pal) else (0, 0, 0, 0) for i in idx]
         chars, cw, ch = spec.chars, spec.cw, spec.ch
         if spec.setting:
@@ -563,6 +588,7 @@ def load_words(disc_folder: Path = ROOT / "disc"):
         for _ in range(tim):
             at = d.find(b"TIM2", at + 4)
         w, h, idx, pal = tim2(d, at)
+        idx = fix_art(entry, tim, idx)
         rgba = [pal[i] if i < len(pal) else (0, 0, 0, 0) for i in idx]
         palette = palette_hash(pal, 16 if len(pal) <= 16 else 256)
         for text, wx, wy, ww, wh, *style in words:

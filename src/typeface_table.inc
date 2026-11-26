@@ -1352,17 +1352,17 @@ constexpr TypefaceFont kWord35Font{"Slot 1", 45, 15, "Andika-Bold.ttf", 16.8775f
 constexpr WordGlyph kWord36Glyphs[] = {{54, 0.000f}, {79, 10.176f}, {82, 15.425f}, {87, 24.958f}, {21, 36.741f}};
 constexpr TypefaceFont kWord36Font{"Slot 2", 48, 15, "Andika-Bold.ttf", 16.8172f, 17.7218f, 14.1371f, 3, 0.8569f, 0.9030f, 0.0000f, nullptr, 0};
 
-// word 'Player' (menu_pt_b_EN.img#1, error 0.27)
-constexpr WordGlyph kWord37Glyphs[] = {{51, 0.000f}, {79, 8.166f}, {297, 12.294f}, {2823, 20.011f}, {72, 27.100f}, {85, 34.189f}};
-constexpr TypefaceFont kWord37Font{"Player", 42, 14, "Andika-Bold.ttf", 13.1012f, 11.6725f, 9.9463f, 1, 0.7179f, 0.6396f, 0.0000f, nullptr, 0};
+// word 'Player' (menu_pt_b_EN.img#1, error 0.21)
+constexpr WordGlyph kWord37Glyphs[] = {{51, 0.000f}, {79, 8.135f}, {297, 12.149f}, {92, 19.756f}, {72, 26.729f}, {85, 33.807f}};
+constexpr TypefaceFont kWord37Font{"Player", 42, 14, "Andika-Bold.ttf", 12.9946f, 10.8457f, 9.7183f, 2, 0.8452f, 0.7054f, 0.0000f, nullptr, 0};
 
-// word 'Party' (menu_pt_b_EN.img#1, error 0.30)
-constexpr WordGlyph kWord38Glyphs[] = {{51, 0.000f}, {297, 8.002f}, {85, 15.484f}, {87, 21.719f}, {92, 27.226f}};
-constexpr TypefaceFont kWord38Font{"Party", 37, 13, "Andika-Bold.ttf", 12.7819f, 10.5441f, 8.5235f, 2, 0.8313f, 0.6858f, 0.0000f, nullptr, 0};
+// word 'Party' (menu_pt_b_EN.img#1, error 0.28)
+constexpr WordGlyph kWord38Glyphs[] = {{51, 0.000f}, {297, 7.970f}, {85, 15.485f}, {87, 21.633f}, {92, 27.098f}};
+constexpr TypefaceFont kWord38Font{"Party", 37, 13, "Andika-Bold.ttf", 12.7520f, 10.3303f, 8.5472f, 3, 0.9109f, 0.7379f, 0.0000f, nullptr, 0};
 
 // word 'Player' (menu_pt_b_EN.img#1, error 1.07)
-constexpr WordGlyph kWord39Glyphs[] = {{51, 0.000f}, {79, 11.531f}, {297, 18.098f}, {2823, 28.993f}, {72, 39.251f}, {85, 49.509f}};
-constexpr TypefaceFont kWord39Font{"Player", 58, 12, "Andika-Bold.ttf", 15.6545f, 13.9773f, 11.0000f, 1, 1.0182f, 0.9091f, 0.0000f, nullptr, 0};
+constexpr WordGlyph kWord39Glyphs[] = {{51, 0.000f}, {79, 11.582f}, {297, 17.845f}, {92, 28.745f}, {72, 38.827f}, {85, 49.045f}};
+constexpr TypefaceFont kWord39Font{"Player", 58, 12, "Andika-Bold.ttf", 16.7727f, 13.9773f, 11.0000f, 2, 1.0909f, 0.9091f, 0.0000f, nullptr, 0};
 
 // word 'Jaster' (menu_pt_b_EN.img#2, error 0.20)
 constexpr WordGlyph kWord40Glyphs[] = {{2756, 0.000f}, {2910, 9.310f}, {3395, 20.274f}, {3413, 29.480f}, {3018, 38.893f}, {3373, 47.893f}};
@@ -12126,8 +12126,8 @@ constexpr PieceWord kWords[] = {
     {0x1B48DC696D8B3CB6ull, 0x0D904E01331A59E5ull, 141, 2, 39, 16, 1, 38, 15, -0.625f, &kWord34Font, kWord34Glyphs, std::size(kWord34Glyphs)}, // FILE
     {0x1B48DC696D8B3CB6ull, 0xD5A87F8F52A11DA8ull, 4, 41, 45, 15, 1, 44, 15, -0.125f, &kWord35Font, kWord35Glyphs, std::size(kWord35Glyphs)}, // Slot 1
     {0x1B48DC696D8B3CB6ull, 0xD437EAFF496E5417ull, 60, 41, 48, 15, 1, 47, 15, -0.250f, &kWord36Font, kWord36Glyphs, std::size(kWord36Glyphs)}, // Slot 2
-    {0x9C43218F59134971ull, 0xAB9B842359ACE7B3ull, 3, 1, 42, 14, 0, 41, 13, 0.500f, &kWord37Font, kWord37Glyphs, std::size(kWord37Glyphs)}, // Player
-    {0x9C43218F59134971ull, 0x47605A8B62F2FF37ull, 6, 18, 37, 13, 0, 36, 12, 0.625f, &kWord38Font, kWord38Glyphs, std::size(kWord38Glyphs)}, // Party
+    {0x9C43218F59134971ull, 0x289F17AD40ABE150ull, 3, 1, 42, 14, 1, 40, 12, 0.500f, &kWord37Font, kWord37Glyphs, std::size(kWord37Glyphs)}, // Player
+    {0x9C43218F59134971ull, 0x7A709903E3CE24B5ull, 6, 18, 37, 13, 1, 36, 11, 0.125f, &kWord38Font, kWord38Glyphs, std::size(kWord38Glyphs)}, // Party
     {0x9C43218F59134971ull, 0x7714DFC1270F335Eull, 19, 70, 58, 12, 1, 57, 12, 0.000f, &kWord39Font, kWord39Glyphs, std::size(kWord39Glyphs), 0, 0, 0.00f, 0.000f, 1}, // Player
     {0x6A3A505C67D05743ull, 0x81482E1791EF60A4ull, 1, 1, 62, 16, 1, 61, 15, 0.000f, &kWord40Font, kWord40Glyphs, std::size(kWord40Glyphs)}, // Jaster
     {0x6A3A505C67D05743ull, 0x2E8DF61B620AEE22ull, 77, 1, 54, 16, 1, 53, 15, 0.375f, &kWord41Font, kWord41Glyphs, std::size(kWord41Glyphs)}, // Lilika

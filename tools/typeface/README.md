@@ -141,6 +141,11 @@ numbers, hashes and glyph indices.
   under the new word, each run of the word's texels in a row filled from
   the art left of it to the art right of it (the wood's grain runs along
   the rows).
+- **Pictures the game fixes** (`pieces.ART_FIXES`): a slip that
+  `src/art_fixes.cpp` mends in a picture as the game registers it (the
+  magenta at the corners of Pty_02's Player and Party) is mended here too
+  as the picture is read, so the words' hashes and fits are of what the
+  game draws.
 
 The choice of Andika, and the search over Google Fonts' sans-serif families
 it came from, are in the research notes of the work (`build/research/font`,
