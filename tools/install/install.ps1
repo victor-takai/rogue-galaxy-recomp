@@ -15,7 +15,9 @@
 #   Install.bat -UseToolsOnPath         (developers: the toolchain already on PATH)
 #   Install.bat -Yes                    (no questions: a copy is made if the folder cannot hold
 #                                        the build, no shortcut is made and the game is not started)
-#   Install.bat -Updating               (from Update.bat: rebuilds what changed, no shortcut question)
+#   Install.bat -Updating               (from Update.bat or "Rogue Galaxy.exe": rebuilds what changed, no
+#                                        shortcut question; all of it after a zip unpacked over the folder,
+#                                        Update-Unpacked)
 #
 # Started by a launcher with no window to show in, it opens one
 # (launchers.ps1). "Rogue Galaxy.exe" is built as soon as the compiler is
@@ -266,6 +268,92 @@ function Build-Launcher([string]$Python, [string]$Clang) {
     }
 }
 
+# A release's zip unpacked over this folder (QuiverLauncher's update, or a
+# zip unpacked by hand; launchers.ps1), once for each archive: what the code
+# folders hold beyond the archive's FILES goes, as Update.bat does, since the
+# build would still take it by pattern (src\*.cpp, patches\ps2recomp\*.patch,
+# the framework's own globs). Kept: Python's caches, the patch stamp and the
+# files this version's patches create, which framework_patches.cmake removes
+# itself when the framework is back unpatched (an unpack leaves it so). Then
+# every file of the archive gets now's date: an unpack gives them the zip's,
+# a day before their commit (tools/release/source_zip.py), which may be
+# older than the build, so a changed file would not be built again, and the
+# whole game is built again. Whoever wrote the files: 0.3.0's Update.bat,
+# which wrote only those that changed, dated now, leaves no record either,
+# so its update is built whole too, once. Nothing is touched while a file
+# FILES lists is missing: the unpack did not finish. Through $BuildRoot, for
+# the framework's deepest paths. True when a game built before is built again.
+$CodeFolders = @("src", "patches", "config", "cmake", "tools", "docs", "debug", "thirdparty")
+function Update-Unpacked {
+    if (-not (Test-UnpackPending $Root)) { return $false }
+    # A first install has nothing to say here.
+    $built = Test-Path -LiteralPath (Join-Path $Root "build\game\src\roguegalaxy.exe")
+    # "E:\" at a drive's root: the paths below it start one character later.
+    $rootLength = $BuildRoot.TrimEnd("\").Length + 1
+    # As source_zip.py writes it: UTF-8, which 5.1 would read as ANSI.
+    $listed = @(Get-Content -LiteralPath (Join-Path $BuildRoot "FILES") -Encoding UTF8 | Where-Object { $_ })
+    # An unpack cut short leaves some of the new files out, or the old FILES
+    # beside them; what it left would be deleted below as stale.
+    $missing = @($listed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $BuildRoot $_.Replace("/", "\")) -PathType Leaf) })
+    if ($missing.Count -gt 0) {
+        Stop-Install ("$($missing.Count) of the files this version lists in FILES are missing, such as $($missing[0]): " +
+            "its zip was not unpacked whole. Unpack it over this folder again (in QuiverLauncher, update the game " +
+            "again), then run Install.bat. Nothing was changed.")
+    }
+    $keep = @{}
+    foreach ($name in $listed) { $keep[$name.Replace("/", "\").ToLowerInvariant()] = $true }
+    $keep["thirdparty\ps2recomp\.rg-patches-applied"] = $true
+    foreach ($name in $listed) {
+        if ($name -notmatch "^patches/ps2recomp/[^/]+\.patch$") { continue }
+        $patch = Join-Path $BuildRoot $name.Replace("/", "\")
+        if (-not (Test-Path -LiteralPath $patch -PathType Leaf)) { continue }
+        $previous = ""
+        foreach ($line in [System.IO.File]::ReadAllLines($patch)) {
+            if ($previous -eq "--- /dev/null" -and $line.StartsWith("+++ b/")) {
+                $keep[("thirdparty\PS2Recomp\" + $line.Substring(6).Trim().Replace("/", "\")).ToLowerInvariant()] = $true
+            }
+            $previous = $line
+        }
+    }
+    $removed = @()
+    foreach ($folder in $CodeFolders) {
+        $dir = Join-Path $BuildRoot $folder
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        foreach ($file in @(Get-ChildItem -LiteralPath $dir -File -Recurse -Force)) {
+            $relative = $file.FullName.Substring($rootLength)
+            if ($keep.ContainsKey($relative.ToLowerInvariant())) { continue }
+            if ($relative -match "\\__pycache__\\|\.pyc$|(^|\\)\.git(\\|$)") { continue }
+            Invoke-Patiently "delete $relative" { Remove-Item -LiteralPath $file.FullName -Force }
+            $removed += $relative
+        }
+    }
+    $now = [DateTime]::UtcNow
+    $dated = 0
+    foreach ($name in $listed) {
+        $path = Join-Path $BuildRoot $name.Replace("/", "\")
+        # Opened for writing to be dated: not while read-only, and an
+        # antivirus may hold it (Invoke-Patiently).
+        Invoke-Patiently "date $name" {
+            $item = Get-Item -LiteralPath $path -Force
+            if ($item.IsReadOnly) { $item.IsReadOnly = $false }
+            [System.IO.File]::SetLastWriteTimeUtc($path, $now)
+        }
+        $dated++
+    }
+    if ($built) {
+        Write-Step "The new version's files, unpacked over the old ones"
+    } elseif ($removed.Count -gt 0) {
+        Write-Step "The new version's files"
+    }
+    if ($removed.Count -gt 0) {
+        Write-Host "  $($removed.Count) file(s) this version no longer has, removed:"
+        foreach ($name in $removed) { Write-Host "    $name" }
+    }
+    if ($built) { Write-Host "  $dated file(s) given today's date, so that the build takes them all" }
+    Set-UnpackStamp $Root
+    return $built
+}
+
 # The build sees these tools and Windows only: compilers, Python or CMake
 # settings installed for other projects change what it does.
 function Set-BuildEnvironment {
@@ -398,6 +486,15 @@ function Main {
             Write-Host "The build tools see this folder by a short name while they run, ${shortName}:"
             Write-Host "it leads to this folder, nothing is copied, and it is removed afterwards."
         }
+        # The revision these files are, read before they are built: once
+        # "Rogue Galaxy.exe" has handed over to this window, QuiverLauncher
+        # counts the game as closed and may unpack another zip meanwhile.
+        $buildingRevision = ""
+        $revisionFile = Join-Path $Root "REVISION"
+        if (Test-Path -LiteralPath $revisionFile -PathType Leaf) {
+            $buildingRevision = ([string](Get-Content -LiteralPath $revisionFile -TotalCount 1)).Trim()
+        }
+        $overOld = Update-Unpacked
         Write-Step "Build tools"
         # Before the tools run: Build-Launcher's compiler too.
         Set-BuildEnvironment
@@ -434,7 +531,10 @@ function Main {
             if ($LASTEXITCODE -ne 0) { Stop-Install "Fetching the git submodules failed." }
         }
 
-        if ($Updating) {
+        if ($overOld) {
+            Write-Step "Building the new version"
+            Write-Host "Its files were unpacked over the old ones, so the whole game is built again: about as long as the first install."
+        } elseif ($Updating) {
             Write-Step "Rebuilding what changed"
             Write-Host "A few minutes when little changed; as long as the first install when the new version changed how the game's code is translated."
         } else {
@@ -476,6 +576,12 @@ function Main {
             }
             Stop-Install "The install stopped (code $code).$hint The full output is in $log. Run Install.bat again to continue from where it stopped."
         }
+        # The revision built, for "Rogue Galaxy.exe" and Update.bat: a
+        # release's zip unpacked over the folder names another one in
+        # REVISION until it is built (launchers.ps1). A git checkout has none.
+        if ($buildingRevision) {
+            [System.IO.File]::WriteAllText((Join-Path $Root "build\installed-revision"), "$buildingRevision`n")
+        }
     } finally {
         Remove-ShortName $shortName
     }
@@ -484,7 +590,7 @@ function Main {
 
     Write-Step "Done"
     Write-Host "The game is $game"
-    if (-not $Yes -and -not $Updating -and (Confirm-Step "Put a shortcut to it on the desktop?")) {
+    if (-not $Yes -and -not $Updating -and -not $overOld -and (Confirm-Step "Put a shortcut to it on the desktop?")) {
         $shell = New-Object -ComObject WScript.Shell
         $link = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath("Desktop")) "Rogue Galaxy.lnk"))
         $link.TargetPath = $game
