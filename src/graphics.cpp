@@ -1091,8 +1091,8 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
     constexpr const char *kTimes = dq8::ui::kMultiplierFormat;
     host.gameOptions = {
         {"sixty_fps", "60 frames per second",
-         "The game runs at 60 frames a second instead of its own 30, its logic still at the PS2's pace; movies "
-         "and the loading screen keep 30. Takes effect the next time the game starts.",
+         "The game runs at 60 frames a second instead of its own 30, its logic still at the PS2's pace; movies, "
+         "the loading screen and the Factory keep 30. Takes effect the next time the game starts.",
          true, 0, 0, 0, "", 1, true, true},
         {"widescreen", "Widescreen",
          "The game draws a wider view, and the HUD over the scene and the movies fit it; with Display > Aspect "
