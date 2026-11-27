@@ -168,11 +168,22 @@ if(WIN32)
     # stops at boot in a folder named in letters the system's code page
     # lacks, which Install.bat no longer turns away.
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    # It needs only the files it names. Otherwise a custom command waits for
+    # every library its target links, the runtime with its compiled VU code
+    # among them, and every object of a target waits for its custom
+    # commands: all of src/ compiled after the last VU shard, at the end of
+    # a first build (the shaders did the same before,
+    # thirdparty/dq8-gfx/cmake/Dq8Shaders.cmake). CMake 3.27 and later.
+    set(rg_depends_explicit_only)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.27)
+        set(rg_depends_explicit_only DEPENDS_EXPLICIT_ONLY)
+    endif()
     set(rg_game_resources "${CMAKE_CURRENT_BINARY_DIR}/roguegalaxy_resources.res")
     add_custom_command(OUTPUT "${rg_game_resources}"
         COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/launcher/make_resources.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/roguegalaxy.manifest" "${rg_game_resources}"
         DEPENDS launcher/make_resources.py roguegalaxy.manifest
+        ${rg_depends_explicit_only}
         VERBATIM)
     set_source_files_properties("${rg_game_resources}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
     target_sources(roguegalaxy PRIVATE "${rg_game_resources}")

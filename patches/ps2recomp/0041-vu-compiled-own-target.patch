@@ -1,0 +1,109 @@
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index 2ce5419..d5785fd 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -462,6 +462,15 @@ function(ps2x_stage_ffmpeg_runtime_dlls target_name)
+     )
+ endfunction()
+ 
++# The compiled VU code's own target (ps2_vu_compiled, below) is made before
++# ps2_runtime, and gets its sources there: Ninja starts jobs of equal
++# priority in the order build.ninja lists them, and CMake writes a folder's
++# targets in the order they are made. Made after it, the shards, the
++# longest work of a first build, waited for all of ps2_runtime's own units
++# to start. It is made whether or not there is VU code: whether there is
++# is known only after the cache entries below.
++add_library(ps2_vu_compiled OBJECT)
++
+ add_library(ps2_runtime STATIC
+     src/lib/game_overrides.cpp
+     src/lib/gs/ps2_gif_arbiter.cpp
+@@ -499,8 +508,11 @@ set(PS2X_VU_AOT_IMAGES "" CACHE STRING "Local VU code images or block profiles t
+ set(PS2X_VU_AOT_PAIR_IMAGES "" CACHE STRING "Additional local VU inputs to compile as reusable individual pairs")
+ set(PS2X_VU_AOT_LOOP_IMAGES "" CACHE STRING "Local VU code images to scan for bounded conditional loops")
+ option(PS2X_VU_AOT_DEBUG_INFO "Include expanded VU AOT debug scopes (slow to compile)" OFF)
++set(PS2X_VU_AOT_SOURCES "")
++set(PS2X_VU_PROGRAM_SOURCES "")
++set(PS2X_VU_COMPILE_POOL "")
+ set(PS2X_VU_AOT_SHARDS "32" CACHE STRING "Number of independent VU AOT compilation units")
+-set(PS2X_VU_AOT_COMPILE_JOBS "2" CACHE STRING "Maximum concurrent runtime compilations with VU AOT (Ninja)")
++set(PS2X_VU_AOT_COMPILE_JOBS "2" CACHE STRING "Maximum concurrent compiles of the VU shards (Ninja)")
+ if(PS2X_VU_AOT_IMAGES OR PS2X_VU_AOT_PAIR_IMAGES OR PS2X_VU_AOT_LOOP_IMAGES)
+     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+     if(NOT PS2X_VU_AOT_SHARDS MATCHES "^[1-9][0-9]*$")
+@@ -509,10 +521,11 @@ if(PS2X_VU_AOT_IMAGES OR PS2X_VU_AOT_PAIR_IMAGES OR PS2X_VU_AOT_LOOP_IMAGES)
+     if(NOT PS2X_VU_AOT_COMPILE_JOBS MATCHES "^[1-9][0-9]*$")
+         message(FATAL_ERROR "PS2X_VU_AOT_COMPILE_JOBS must be a positive integer")
+     endif()
+-    # Static data-flow specializations otherwise exhaust memory in parallel builds.
++    # Static data-flow specializations otherwise exhaust memory in parallel
++    # builds. The pool takes the compiled VU code only (ps2_vu_compiled below).
+     if(CMAKE_GENERATOR MATCHES "Ninja")
+         set_property(GLOBAL APPEND PROPERTY JOB_POOLS ps2_vu_aot_compile=${PS2X_VU_AOT_COMPILE_JOBS})
+-        set_property(TARGET ps2_runtime PROPERTY JOB_POOL_COMPILE ps2_vu_aot_compile)
++        set(PS2X_VU_COMPILE_POOL ps2_vu_aot_compile)
+     endif()
+     set(PS2X_VU_AOT_INCLUDE "${CMAKE_CURRENT_BINARY_DIR}/generated/vu_aot_blocks.inc")
+     set(PS2X_VU_AOT_EXTERN_INCLUDE "${CMAKE_CURRENT_BINARY_DIR}/generated/vu_aot_blocks_extern.inc")
+@@ -533,7 +546,6 @@ if(PS2X_VU_AOT_IMAGES OR PS2X_VU_AOT_PAIR_IMAGES OR PS2X_VU_AOT_LOOP_IMAGES)
+         VERBATIM)
+     add_custom_target(ps2_vu_aot DEPENDS "${PS2X_VU_AOT_INCLUDE}" "${PS2X_VU_AOT_EXTERN_INCLUDE}" ${PS2X_VU_AOT_SOURCES})
+     add_dependencies(ps2_runtime ps2_vu_aot)
+-    target_sources(ps2_runtime PRIVATE ${PS2X_VU_AOT_SOURCES})
+     target_compile_definitions(ps2_runtime PRIVATE
+         PS2X_VU_AOT_INCLUDE="${PS2X_VU_AOT_INCLUDE}"
+         PS2X_VU_AOT_EXTERN_INCLUDE="${PS2X_VU_AOT_EXTERN_INCLUDE}")
+@@ -584,7 +596,6 @@ if(PS2X_VU_PROGRAM_PROFILES)
+     add_custom_target(ps2_vu_programs DEPENDS "${PS2X_VU_PROGRAM_INCLUDE}"
+                       "${PS2X_VU_PROGRAM_EXTERN_INCLUDE}" ${PS2X_VU_PROGRAM_SOURCES})
+     add_dependencies(ps2_runtime ps2_vu_programs)
+-    target_sources(ps2_runtime PRIVATE ${PS2X_VU_PROGRAM_SOURCES})
+     set_source_files_properties(src/lib/vu/ps2_vu1_program.cpp PROPERTIES COMPILE_DEFINITIONS
+         "PS2X_VU_PROGRAM_INCLUDE=\"${PS2X_VU_PROGRAM_INCLUDE}\";PS2X_VU_PROGRAM_EXTERN_INCLUDE=\"${PS2X_VU_PROGRAM_EXTERN_INCLUDE}\"")
+     set_source_files_properties(${PS2X_VU_PROGRAM_SOURCES} PROPERTIES
+@@ -595,6 +606,45 @@ if(PS2X_VU_PROGRAM_PROFILES)
+     endif()
+ endif()
+ 
++# The compiled VU code (the routines' and the blocks' shards) is a target of
++# its own, part of ps2_runtime and built with ps2_runtime's include folders,
++# definitions and options, so that only it goes through the VU pool: with
++# the pool on all of ps2_runtime, the runtime's other units, ready early,
++# waited behind the shards and were the last thing a first build compiled.
++# Linking nothing, its compiles wait for nothing but their generators, not
++# for what ps2_runtime links; so FFmpeg's downloaded headers are left out of
++# its include folders, and a shard that came to include one fails every
++# time instead of when the download is late. ps2_runtime's other target
++# properties do not follow (INTERPROCEDURAL_OPTIMIZATION: the game turns it
++# off on ps2_runtime after this file). The target is made before
++# ps2_runtime (above); the routines' shards come first in it, and after the
++# block shards (the heaviest first) they were the end of a build, about
++# 16 s each.
++set(PS2X_VU_COMPILED_SOURCES ${PS2X_VU_PROGRAM_SOURCES} ${PS2X_VU_AOT_SOURCES})
++if(NOT PS2X_VU_COMPILED_SOURCES)
++    # No VU code to compile: an empty unit, since a target needs a source.
++    set(PS2X_VU_COMPILED_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/generated/vu_compiled_none.cpp")
++    file(CONFIGURE OUTPUT "${PS2X_VU_COMPILED_SOURCES}" CONTENT "// No compiled VU code.\n")
++endif()
++target_sources(ps2_vu_compiled PRIVATE ${PS2X_VU_COMPILED_SOURCES})
++set_property(TARGET ps2_vu_compiled PROPERTY INCLUDE_DIRECTORIES
++    "$<FILTER:$<TARGET_PROPERTY:ps2_runtime,INCLUDE_DIRECTORIES>,EXCLUDE,/ThirdParty/ffmpeg-prefix/>")
++foreach(PS2X_FLAGS IN ITEMS COMPILE_DEFINITIONS COMPILE_OPTIONS)
++    set_property(TARGET ps2_vu_compiled PROPERTY ${PS2X_FLAGS} "$<TARGET_PROPERTY:ps2_runtime,${PS2X_FLAGS}>")
++endforeach()
++if(PS2X_VU_COMPILE_POOL)
++    set_property(TARGET ps2_vu_compiled PROPERTY JOB_POOL_COMPILE ${PS2X_VU_COMPILE_POOL})
++endif()
++# The generators' outputs are its sources: with a Makefile or Visual Studio
++# generator each target using them gets its own copy of the rule, so it
++# builds after the targets that run them.
++foreach(PS2X_GENERATOR IN ITEMS ps2_vu_aot ps2_vu_programs)
++    if(TARGET ${PS2X_GENERATOR})
++        add_dependencies(ps2_vu_compiled ${PS2X_GENERATOR})
++    endif()
++endforeach()
++target_sources(ps2_runtime PRIVATE $<TARGET_OBJECTS:ps2_vu_compiled>)
++
+ if(PS2X_ENABLE_RUNTIME_LOGS)
+     target_compile_definitions(ps2_runtime PUBLIC
+         PS2_RUNTIME_LOGS=1

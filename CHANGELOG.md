@@ -28,6 +28,7 @@
   build the new version, and `Install.bat` removes the files it no longer
   has. From 0.3.0, run `Install.bat` once after that first update.
 - A first install compiles the game in about a fifth less time.
+- A first install compiles the game about a minute faster again.
 - A first install configures the game in about a minute and a half less.
 - Frames reach the screen at an even pace.
 - The "Player" and "Party" labels of the Revelation menu no longer have
