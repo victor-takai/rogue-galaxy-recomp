@@ -48,6 +48,7 @@
 #include "native_renderer.h"
 #include "hud_size.h"
 #include "inventory.h"
+#include "efl.h"
 #include "opening.h"
 #include "widescreen.h"
 #include "quick_scenes.h"
@@ -177,6 +178,7 @@ int run(int argc, char **argv)
     rg::widescreen::install(runtime);
     rg::hudsize::install(runtime);
     rg::inventory::install(runtime);
+    rg::efl::install(runtime);
     rg::buttons::install(runtime);
     rg::artfix::install(runtime);
     rg::opening::install(runtime);
