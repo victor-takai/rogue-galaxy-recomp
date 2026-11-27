@@ -70,6 +70,19 @@ constexpr uint32_t kDrawEnvSetVsyncInterval = 0x00144140u;
 // mode (the title's own overlay, in GameStart) is the game's.
 constexpr uint32_t kGameMode = 0x004B51A0u;
 constexpr uint32_t kFieldModes[] = {5u, 6u, 7u, 9u, 10u, 11u, 12u, 13u};
+// The Factory (FactoryModeUpdate, 0x27DB40; FACTORY.BIN) runs at the
+// game's interval of 2 with the scale unlocked, so it would take the
+// host's half steps, but its tasks count frames, all of them: the floor's
+// step (TaskStepFactory, 0x367960: a working machine's pulse by a count of
+// its calls, its sparks one chance in 60 a call, a part's drop 15 calls,
+// the pad's repeats), its menus (TaskStepMenuFactory, 0x204880) and its
+// camera (CameraModeFactoryUpdate, 0x3679C0: the floor cursor moved by the
+// stick a call, the camera eased toward it and shaken by fixed amounts a
+// call). At 60 fps the machines, the menus and the cursor went at twice
+// the speed (the user, 2026-11-27). The whole mode flips at the console's
+// two vblanks instead, as the movies do, with whole steps (while the scale
+// is ours: the game only enters it after SceneOverlayModeOff).
+constexpr uint32_t kFactoryMode = 16u;
 // The pad PadUpdate (0x1843A0) keeps: buttons held now at +0x4, held the
 // frame before at +0x5C, input disabled at +0x24C (PadIsTriggered, 0x1839F0).
 constexpr uint32_t kPad = 0x004B2570u;
@@ -90,8 +103,11 @@ std::atomic<bool> g_sixtyPreferred{true};
 bool g_adaptive = false;  // RG_TIME_SCALE=game
 unsigned g_stepFixes = ~0u; // RG_STEP_FIXES: which frame-counted systems take the step
 bool g_trace = false;     // RG_TIME_TRACE=1
-// What beforeFlip set this frame's flip to wait for, in vblanks.
+// What beforeFlip set this frame's flip to wait for, in vblanks, and whether
+// a movie or the loading screen asked for the 2 (the Factory's comes from
+// g_factory, decided at each update).
 uint32_t g_interval = 2u;
+bool g_movieFlip = true;
 // The vblanks a logic frame spans for the readers above: 2 while the
 // scene's scale is ours (half steps at interval 1), 0 to leave the field's
 // value alone (the game's overlays, or the 30 fps mode).
@@ -104,6 +120,11 @@ uint32_t g_gameInterval = 2u;
 // The scale written after this frame's update, and whether it was ours.
 float g_lastScale = 1.0f;
 bool g_ours = false;
+// The scale is ours and the game is in the Factory: this frame flips at two
+// vblanks (kFactoryMode). Honoured only by a flip with an update before it:
+// the title, where a quit from the Factory's pause leads, runs no update.
+bool g_factory = false;
+uint32_t g_flipUpdateCount = 0u;
 uint32_t g_updateCount = 0u;
 // The systems that count frames rather than step: whole steps accumulated
 // from the host's, decided once per update by the first asker.
@@ -188,7 +209,7 @@ void reportState(const uint8_t *rdram, uint32_t scene, float scale)
                 "%u skipped, %u early since the last report%s\n",
                 mode, g_interval, g_gameInterval, locked, g_ours ? "our" : "the game's", scale,
                 g_logicRuns - g_reportedRuns, g_logicSkips - g_reportedSkips, g_logicEarly - g_reportedEarly,
-                g_moviePlaying || g_inMovieModal ? ", movie" : "");
+                g_moviePlaying || g_inMovieModal ? ", movie" : g_factory ? ", factory" : "");
     g_reportedRuns = g_logicRuns;
     g_reportedSkips = g_logicSkips;
     g_reportedEarly = g_logicEarly;
@@ -218,6 +239,9 @@ void afterUpdate(uint8_t *rdram, R5900Context *ctx, PS2Runtime *, uint32_t scene
     float scale = 1.0f;
     g_logicInterval = 0u;
     g_ours = false;
+    // Set below once the scale is ours: under the game's own overlay mode
+    // (its UI made for 60 Hz) the Factory's frames are the game's too.
+    g_factory = false;
     ++g_updateCount;
     if (g_sixty)
     {
@@ -245,8 +269,17 @@ void afterUpdate(uint8_t *rdram, R5900Context *ctx, PS2Runtime *, uint32_t scene
         }
         g_ours = true;
         g_logicInterval = 2u;
-        // A movie frame keeps the 30 fps step.
-        const float base = g_interval == 2u ? 1.0f : 0.5f;
+        // Decided here, where the step is, for this frame's flip too: the
+        // update runs before the frame's mode dispatch, which may enter or
+        // leave the Factory, and the flip decided from the mode after it
+        // would give the Factory's first frame a half step in two vblanks.
+        uint32_t mode = 0u;
+        g_factory = stepFix(StepFix::Factory) && readGuest(rdram, kGameMode, mode) && mode == kFactoryMode;
+        // A frame flipped at two vblanks (a movie, the loading screen, the
+        // Factory) keeps the 30 fps step; the last flip's 2 counts only
+        // for a movie or the loading screen, the Factory's own being
+        // decided just above (the frame out of it flips at one).
+        const float base = g_movieFlip || g_factory ? 1.0f : 0.5f;
         scale = base;
         uint32_t drawCtx = 0u;
         float frameTime = 0.0f;
@@ -429,7 +462,8 @@ unsigned parseStepFixes(const char *value)
                                  {"menu", StepFix::Menu},
                                  {"ai", StepFix::Ai},
                                  {"texture", StepFix::Texture},
-                                 {"camera", StepFix::Camera}};
+                                 {"camera", StepFix::Camera},
+                                 {"factory", StepFix::Factory}};
     unsigned fixes = 0u;
     const char *p = value;
     while (*p)
@@ -448,7 +482,7 @@ unsigned parseStepFixes(const char *value)
         if (!known && length > 0u)
         {
             std::fprintf(stderr,
-                         "[rg] RG_STEP_FIXES: unknown name \"%.*s\" (clock, movie, npc, judge, gravity, event, menu, ai, texture, camera)\n",
+                         "[rg] RG_STEP_FIXES: unknown name \"%.*s\" (clock, movie, npc, judge, gravity, event, menu, ai, texture, camera, factory)\n",
                          static_cast<int>(length), p);
         }
         p = end ? end + 1 : p + length;
@@ -537,9 +571,12 @@ void beforeFlip(uint8_t *rdram, R5900Context *ctx)
     {
         return;
     }
-    // A movie, or the loading screen, whose fades count frames: both flip at
-    // the console's 30.
+    // A movie, the loading screen or the Factory, which count frames: they
+    // flip at the console's 30.
     const uint8_t movie = g_moviePlaying || rg::loading::active() ? 1u : 0u;
+    const uint8_t factory = g_factory && g_updateCount != g_flipUpdateCount ? 1u : 0u;
+    g_flipUpdateCount = g_updateCount;
+    g_movieFlip = movie != 0u;
     uint32_t before = 0u;
     readGuest(rdram, env + kVsyncInterval, before);
     // A write of the game's that did not go through DrawEnvSetVsyncInterval
@@ -549,17 +586,18 @@ void beforeFlip(uint8_t *rdram, R5900Context *ctx)
     {
         g_gameInterval = before;
     }
-    g_interval = movie != 0u ? 2u : 1u;
+    g_interval = movie != 0u || factory != 0u ? 2u : 1u;
     if (g_trace)
     {
         static uint32_t shown = 0u;
-        static uint8_t lastMovie = 0xFFu;
-        if (shown < 5u || movie != lastMovie)
+        static uint8_t lastMovie = 0xFFu, lastFactory = 0xFFu;
+        if (shown < 5u || movie != lastMovie || factory != lastFactory)
         {
             ++shown;
             lastMovie = movie;
-            std::printf("[timing] flip: gp 0x%08X drawctx 0x%08X env 0x%08X interval %u -> %u, movie %u\n", gp, drawCtx,
-                        env, before, g_interval, movie);
+            lastFactory = factory;
+            std::printf("[timing] flip: gp 0x%08X drawctx 0x%08X env 0x%08X interval %u -> %u, movie %u, factory %u\n",
+                        gp, drawCtx, env, before, g_interval, movie, factory);
         }
     }
     writeGuest(rdram, env + kVsyncInterval, g_interval);
@@ -618,14 +656,14 @@ void install(PS2Runtime &runtime)
         {
             std::fprintf(stderr, "[rg] 60 fps: the game's own menus may take half steps\n");
         }
-        std::printf("[rg] 60 fps: the flip waits one vblank and the scene takes %s; step fixes:%s%s%s%s%s%s%s%s%s%s%s\n",
+        std::printf("[rg] 60 fps: the flip waits one vblank and the scene takes %s; step fixes:%s%s%s%s%s%s%s%s%s%s%s%s\n",
                     g_adaptive ? "steps sized by the frame time, half at full rate" : "half steps",
                     g_stepFixes == 0u ? " none" : "", stepFix(StepFix::Clock) ? " clock" : "",
                     stepFix(StepFix::Movie) ? " movie" : "", stepFix(StepFix::Npc) ? " npc" : "",
                     stepFix(StepFix::Judge) ? " judge" : "", stepFix(StepFix::Gravity) ? " gravity" : "",
                     stepFix(StepFix::Event) ? " event" : "", stepFix(StepFix::Menu) ? " menu" : "",
                     stepFix(StepFix::Ai) ? " ai" : "", stepFix(StepFix::Texture) ? " texture" : "",
-                    stepFix(StepFix::Camera) ? " camera" : "");
+                    stepFix(StepFix::Camera) ? " camera" : "", stepFix(StepFix::Factory) ? " factory" : "");
     }
 }
 

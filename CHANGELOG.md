@@ -40,6 +40,9 @@
   French, where a long topic no longer ends in stray characters, and the
   statistics after a Vs. battle no longer run into each other
   ([#3](https://github.com/victor-takai/rogue-galaxy-recomp/issues/3)).
+- With 60 frames per second on, the Factory's machines, menus and cursor
+  no longer move at twice the speed: the Factory plays at the console's
+  30 frames per second.
 
 ## 0.3.0 (pre-release)
 

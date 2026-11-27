@@ -24,8 +24,10 @@
 // scene's time scale follows the measured frame time: 0.5 at full rate, 1.0
 // when a frame took two vblanks, so the logic advances at the same rate over
 // however many frames the host manages. RG_TIME_SCALE=fixed makes it 0.5
-// always (slow motion below 60). Movies keep two vblanks. The game's own
-// overlay mode (menus at 60 Hz with the scale locked) is left alone.
+// always (slow motion below 60), 1.0 where the flip waits two vblanks.
+// Movies keep two vblanks, and so does the Factory (game mode 16), where
+// everything counts frames. The game's own overlay mode (menus at 60 Hz
+// with the scale locked) is left alone.
 //
 // Only the scene: music still advances by the measured frame time, so it
 // keeps its tempo. RG_TIME_SCALE=game at 30 fps leaves the game's own
@@ -68,16 +70,17 @@ void requestStateReport();
 // RG_STEP_FIXES=clock,gravity).
 enum class StepFix : unsigned
 {
-    Clock = 1u << 0,   // "clock": play clock, minimap, name entry (the interval readers)
-    Movie = 1u << 1,   // "movie": scale 1.0 inside movies
-    Npc = 1u << 2,     // "npc": NPC walk and turn rates
-    Judge = 1u << 3,   // "judge": projectiles and thrown objects
-    Gravity = 1u << 4, // "gravity": character gravity, terminal velocity and the air move's step
-    Event = 1u << 5,   // "event": scripts, the event player and message windows at the console's rate
-    Menu = 1u << 6,    // "menu": the field's menus and HUD windows (the battle results among them), the chests, the doors' triangles
-    Ai = 1u << 7,      // "ai": the characters' AI (its scripts and timers) at the console's rate
-    Texture = 1u << 8, // "texture": texture animations (scrolling layers, flip-books) at the console's rate
-    Camera = 1u << 9,  // "camera": the camera's turn by the stick, and the free camera, at the console's rate (camera_view.cpp)
+    Clock = 1u << 0,    // "clock": play clock, minimap, name entry (the interval readers)
+    Movie = 1u << 1,    // "movie": scale 1.0 inside movies
+    Npc = 1u << 2,      // "npc": NPC walk and turn rates
+    Judge = 1u << 3,    // "judge": projectiles and thrown objects
+    Gravity = 1u << 4,  // "gravity": character gravity, terminal velocity and the air move's step
+    Event = 1u << 5,    // "event": scripts, the event player and message windows at the console's rate
+    Menu = 1u << 6,     // "menu": the field's menus and HUD windows (the battle results among them), the chests, the doors' triangles
+    Ai = 1u << 7,       // "ai": the characters' AI (its scripts and timers) at the console's rate
+    Texture = 1u << 8,  // "texture": texture animations (scrolling layers, flip-books) at the console's rate
+    Camera = 1u << 9,   // "camera": the camera's turn by the stick, and the free camera, at the console's rate (camera_view.cpp)
+    Factory = 1u << 10, // "factory": the Factory at the console's 30 frames a second
 };
 bool stepFix(StepFix which);
 // Any of them.
