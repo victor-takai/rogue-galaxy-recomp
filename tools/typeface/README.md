@@ -10,7 +10,7 @@ typeface to the console's glyphs:
 python -I tools/typeface/make_table.py \
     normal=thirdparty/fonts/rogue-letters/RogueLetters-Regular.ttf \
     system=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
-    name=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
+    name=thirdparty/fonts/rogue-letters/RogueLettersNames-Regular.ttf \
     normal_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
     system_eur=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
     name_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
@@ -50,14 +50,18 @@ numbers, hashes and glyph indices.
 - **The message font's own typeface** (`normal`): Rogue Letters
   (`thirdparty/fonts/rogue-letters`, the SIL Open Font License, made from
   Andika). Each of its 93 characters is drawn as a few pen strokes whose
-  nodes and pen width were fitted to the console's glyph, and the
-  apostrophe, quotes and commas are Andika's, placed and sized. It has no
+  nodes and pen width were fitted to the console's glyph; the comma (the
+  apostrophe, the semicolon's and the quotes' too) is drawn, a round head
+  and a tail. It has no
   alternates (no `+alt`), and its glyphs are already as wide as the
   console's ink, so the game keeps their widths (`drawnAfterConsole` in
-  `typeface_letters.cpp`) where it evens the gaps of Andika's. The tools
-  that drew it are in the work's research notes
-  (`build/research/custom-typeface`, outside the repository). The European
-  message font is still Andika's: Rogue Letters has no accents yet.
+  `typeface_letters.cpp`) where it evens the gaps of Andika's. It is drawn
+  with the tools in `strokes/` (below). The European message font is still
+  Andika's: Rogue Letters has no accents yet.
+- **The names font's own typeface** (`name`): Rogue Letters Names, drawn
+  the same way from the console's names font, another design than the
+  message font's (below), and drawn the same way in the game (its widths
+  kept). The European names font is still Andika's.
 - **The European fonts** (`normal_eur`, `system_eur`, `name_eur`): the European
   text's pages, `FontTex_<font>_EUR_0.tm2` of the language's
   `meswin\fontset_main_<lang>.pak` in `disc/EU` (one pack for the four
@@ -141,6 +145,11 @@ numbers, hashes and glyph indices.
   under the new word, each run of the word's texels in a row filled from
   the art left of it to the art right of it (the wood's grain runs along
   the rows).
+- **Pictures the game fixes** (`pieces.ART_FIXES`): a slip that
+  `src/art_fixes.cpp` mends in a picture as the game registers it (the
+  magenta at the corners of Pty_02's Player and Party) is mended here too
+  as the picture is read, so the words' hashes and fits are of what the
+  game draws.
 
 The choice of Andika, and the search over Google Fonts' sans-serif families
 it came from, are in the research notes of the work (`build/research/font`,
@@ -151,3 +160,138 @@ and this command with its path.
 
 In the game, `RG_TYPEFACE_SHEET=DIR` writes each font's glyphs, the
 console's beside the typeface's, as the pages are read (docs/DEVELOPMENT.md).
+
+## Rogue Letters: drawing the glyphs
+
+`strokes/` draws Rogue Letters, the message font's typeface: each character
+is a few pen strokes whose nodes and pen are fitted to the console's glyph.
+It needs the disc extracted (`disc/`) and, besides Pillow and fontTools,
+numpy, skia-pathops and PyTorch (the CPU build is enough), best in a virtual
+environment under `build/`:
+
+```
+python -m venv build/venv
+build/venv/Scripts/python -m pip install numpy pillow fonttools skia-pathops
+build/venv/Scripts/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+(`build/venv/bin/python` on Linux.) The commands below are run from the
+repository's root with that Python.
+
+- **`skeletons.py`**: each character's strokes, as nodes in its 18x22 cell
+  where the fit starts them: lines and curves (corners, smooth nodes, ends
+  cut level), dots, and the comma as drawn (`stroke_fit.COMMA`, which the
+  fit leaves as it is; the apostrophe, the semicolon and the quotes use it
+  too). Its docstring has the notation;
+  `dump_cells.py CHARS` prints the console's cells to read nodes from.
+- **`strokes.json`**: where the fit left each glyph's nodes, and its pen
+  (an ellipse, cell pixels across and down), with the skeleton's form they
+  were fitted to (its strokes' and nodes' kinds; a skeleton changed in
+  form, or its comma moved, has to be fitted again before assembling). The
+  font is built from it, so a glyph fitted again shows in a diff as its
+  line.
+- **`andika_fit.json`**: `make_table.py`'s fit of Andika Regular (with its
+  alternates) to the message font, which Rogue Letters started from: the em
+  in cell pixels the strokes are drawn in, and for each character the
+  Andika glyph whose place in the font its strokes take. `stroke_fit.py
+  --base` writes it again (a few minutes).
+- **`stroke_fit.py`**: fits glyphs and writes each into `strokes.json`
+  (`--chars ",;'"`; all of them with neither `--chars` nor `--part`: about
+  three quarters of an hour with four runs side by side, `--part 0/4` to
+  `--part 3/4`), then assembles (`--assemble` alone): every glyph stroked
+  into outlines with skia, merged and put in a copy of Andika, into
+  `build/typeface/strokes/Fitted-Regular.ttf`, with `fit_report.json`
+  (each glyph's difference with the console's: Andika's, the fit's and the
+  outline's as written). Three terms keep the drawing a type designer's,
+  not a copy of the console's pixel steps; each font has its weights in
+  `profiles.py`: on for the names' font, off for the message font's, whose
+  table was fitted before them, so a glyph of it fits again as its
+  neighbours did:
+  - a guard (`--fair`; `FAIR_SPACING`, `FAIR_TURN`): two neighbouring nodes
+    stay at least half as far apart as the skeleton sets them, and a smooth
+    node turns little more sharply than in the skeleton (else a dent; a
+    glyph still breaking it is marked `KINKS` in the fit's line);
+  - fair curves (`--smooth`, the names' 0.2): the change of curvature along each
+    stroke weighs in, within its pieces and across its smooth nodes (else
+    the bend gathers at the nodes, flat between them: a polygon with
+    rounded corners at 4x);
+  - joins (`--join`): an end marked `j` in the skeleton stays on the centre
+    line of the stroke it joins, near its place there, and is drawn round
+    (else it stands out of that stem, a blot).
+- **`check_glyphs.py`**: checks the assembled glyphs as they come out
+  large: blots out of the console's ink, counters (the holes of a, e, o,
+  8) as many as the console's, uneven curves, bends tighter than the pen,
+  joins off their stroke and ends touching a stroke without `j`; into
+  `check.json` beside the font. A round is shown only once it lists none.
+- **`review_page.py`**: a page a round
+  (`build/typeface/strokes/.../review/round-N/index.html`, for a browser):
+  each glyph numbered, the console's at 4x beside ours at 4x and ours big,
+  with the checks' notes and a mark on the glyphs changed since the round
+  before, and names set in both, a dark ring around (`--lang pt` writes it
+  in Portuguese). It holds the console's glyphs: never for the
+  repository.
+- **`build_font.py`**: the repository's font from that copy:
+  `thirdparty/fonts/rogue-letters/RogueLetters-Regular.ttf` (the message
+  font's characters only, no hinting nor layout tables, Rogue Letters'
+  names, a fixed date, so the same table builds the same file) and its
+  `OFL.txt`.
+- **`preview_sheet.py`** (`--chars`, `--scale`): a sheet of the console's
+  glyphs beside Andika's and the strokes', drawn as the game draws them
+  but placed as the table placed Andika (a mark can sit up to half a pixel
+  off the game's);
+  **`overlay_strokes.py --chars`**: the outline over the console's pixels,
+  enlarged. Both write into `build/typeface/strokes`: they hold the
+  console's glyphs, never for the repository.
+
+Redrawing a glyph: change its skeleton, fit it, look, then build the font
+and the table again (the table's places come from the font):
+
+```
+build/venv/Scripts/python -I tools/typeface/strokes/stroke_fit.py --chars ","
+build/venv/Scripts/python -I tools/typeface/strokes/stroke_fit.py --assemble
+build/venv/Scripts/python -I tools/typeface/strokes/preview_sheet.py --chars ",;'"
+build/venv/Scripts/python -I tools/typeface/strokes/build_font.py
+build/venv/Scripts/python -I tools/typeface/make_table.py normal=... (the command above)
+```
+
+`stroke_fit.py --assemble` and `build_font.py` with the table as it is
+give back the font in the repository byte for byte.
+
+### The names' font: Rogue Letters Names
+
+The console's names font (`name`: the speaker's name over the dialogue
+box, the names over heads) is another design, not the message font made
+smaller: heavier and narrower, with a two-storey a, a 4 closed at the top,
+a 9 whose stem curves round, a J with a bar on top, an M with upright legs.
+It gets a typeface of its own, Rogue Letters Names
+(`thirdparty/fonts/rogue-letters/RogueLettersNames-Regular.ttf`), drawn the
+same way with `--font name` on every tool (`profiles.py` lists the fonts):
+its skeletons in `skeletons_name.py` (its 16x18 cell; `dump_cells.py CHARS
+--font name`), its fit in `strokes_name.json`, Andika's fit to it in
+`andika_fit_name.json`, its files in `build/typeface/strokes/name`. Its
+comma, apostrophe and quotes are the message font's drawn "9".
+
+Its skeletons' module holds more than the message font's:
+- `MIRROR`: a glyph drawn as another's mirror image, not fitted on its own
+  (`]` from `[`, `)`, `}`, `>`): the other's fitted nodes reflected across
+  their console ink's centres of mass, the same pen. Fit the other first;
+  a fit of every glyph does.
+- `PULL_FOR` may give one weight a stroke: the a's stem and foot held to
+  their drawing, its bowl free.
+- `ACCEPT`: a check of `check_glyphs.py` a glyph is let off where the user
+  chose a drawing the console's does not have (the @'s ring left open).
+- Where the user wanted a glyph unlike the console's (the t's and a's ends
+  turned up, the ±'s plus on its bars' middle, the l's shorter foot), its
+  nodes are held (`PULL_FOR`), or the fit draws it back to the console's.
+
+A round of work: fit, assemble, check, look at every glyph big, then the
+review page for the user; the font and the table once it is approved.
+
+```
+build/venv/Scripts/python -I tools/typeface/strokes/stroke_fit.py --font name --chars "a9"
+build/venv/Scripts/python -I tools/typeface/strokes/stroke_fit.py --font name --assemble
+build/venv/Scripts/python -I tools/typeface/strokes/check_glyphs.py --font name
+build/venv/Scripts/python -I tools/typeface/strokes/review_page.py --font name
+build/venv/Scripts/python -I tools/typeface/strokes/build_font.py --font name
+build/venv/Scripts/python -I tools/typeface/make_table.py name=... (the command above)
+```

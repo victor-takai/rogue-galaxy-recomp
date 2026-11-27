@@ -154,8 +154,9 @@ committed.
 - [Andika](https://software.sil.org/andika/) by SIL International (SIL Open
   Font License 1.1), the typeface the Typeface letters option draws the
   game's letters from, inside the executable (`thirdparty/fonts/andika`).
-  The dialogue's own typeface, Rogue Letters, is made from it, under the
-  same licence (`thirdparty/fonts/rogue-letters`).
+  The dialogue's and the names' own typefaces, Rogue Letters and Rogue
+  Letters Names, are made from it, under the same licence
+  (`thirdparty/fonts/rogue-letters`).
 - [RGDecomp](https://github.com/Dorgengoa/RGDecomp) (CC0), the function maps
   and names for this build (`config/SCUS_974.90/functions_*.csv` derive from
   it).

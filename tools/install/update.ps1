@@ -8,7 +8,11 @@
 # depends on them), deletes from the code folders the files the new version
 # no longer has, and runs install.ps1, which keeps the disc and the build
 # tools it already has. The player's disc, saves, settings and textures are
-# never touched.
+# never touched. A newer release's zip unpacked over the folder (as
+# QuiverLauncher updates; launchers.ps1) leaves REVISION at that release
+# while the game built is older (build\installed-revision): then nothing is
+# downloaded (nor when GitHub cannot be asked), and install.ps1 builds the
+# whole game again (Update-Unpacked).
 #
 #   Update.bat                          (or drop a downloaded RogueGalaxy-*.zip onto it)
 #   Update.bat -Yes                     (no questions; the game is not started)
@@ -118,12 +122,17 @@ function Get-RunningGame {
 
 # The newest release GitHub lists with a RogueGalaxy-<version>.zip: its tag
 # and that asset (GitHub gives the asset's SHA-256 as "sha256:<hex>").
-function Get-NewestRelease {
+# -Optional: $null when GitHub cannot be asked, instead of stopping.
+function Get-NewestRelease([switch]$Optional) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     try {
         $releases = Invoke-RestMethod -Uri $ReleasesApi -Headers @{ Accept = "application/vnd.github+json" } `
             -UserAgent "RogueGalaxyRecompiled-Update" -UseBasicParsing
     } catch {
+        if ($Optional) {
+            Write-Host "  could not ask GitHub for the releases: $($_.Exception.Message)"
+            return $null
+        }
         Stop-Update ("Could not ask GitHub for the releases: $($_.Exception.Message) Check the internet connection, " +
             "or download the zip from $ReleasePage and drop it onto Update.bat.")
     }
@@ -374,6 +383,10 @@ function Main {
         $current = ([string](Get-Content -LiteralPath $revisionFile -TotalCount 1)).Trim()
     }
     Write-Host "  this folder: $current"
+    # A newer release's zip unpacked over this folder (as QuiverLauncher
+    # updates; launchers.ps1) names itself in REVISION before it is built.
+    $built = Get-BuiltRevision $Root
+    $rebuildOnly = $false
 
     Write-Step "The newest release"
     if ($Zip) {
@@ -381,13 +394,29 @@ function Main {
         $zipPath = (Resolve-Path -LiteralPath $Zip).Path
         Write-Host "  from $zipPath"
     } else {
-        $release = Get-NewestRelease
-        Write-Host ("  {0}: {1} ({2:N1} MB)" -f $release.Tag, $release.Name, ($release.Size / 1MB))
-        if ((Compare-Versions $release.Tag $current) -le 0) {
-            Write-Host ""
-            Write-Host "This folder is already at $current; nothing to update." -ForegroundColor Green
-            exit 0
+        # Without REVISION there is nothing to tell (as before).
+        $unbuilt = $built -ne $current -and $current -ne "unknown"
+        $builtName = $built
+        if (-not $builtName) { $builtName = "an earlier version" }
+        # The files here need no download to be built.
+        $release = Get-NewestRelease -Optional:$unbuilt
+        if (-not $release) {
+            Write-Host "  this folder's files are $current, but the game built here is $($builtName): building them"
+            $rebuildOnly = $true
+        } else {
+            Write-Host ("  {0}: {1} ({2:N1} MB)" -f $release.Tag, $release.Name, ($release.Size / 1MB))
+            if ((Compare-Versions $release.Tag $current) -le 0) {
+                if (-not $unbuilt) {
+                    Write-Host ""
+                    Write-Host "This folder is already at $current; nothing to update." -ForegroundColor Green
+                    exit 0
+                }
+                Write-Host "  this folder's files are $current already, but the game built here is $($builtName): building it"
+                $rebuildOnly = $true
+            }
         }
+    }
+    if (-not $rebuildOnly -and -not $Zip) {
         $downloads = Join-Path $Root "build\update"
         New-Item -ItemType Directory -Force -Path $downloads | Out-Null
         $zipPath = Join-Path $downloads $release.Name
@@ -405,37 +434,49 @@ function Main {
         Read-Host "The game is running. Close it, then press Enter"
     }
 
-    Write-Step "Replacing what changed"
-    # Nothing else works in the folder from here (launchers.ps1), until
-    # install.ps1 takes over below.
-    $lock = Lock-Folder $Root
-    if ($lock -is [string]) {
-        Stop-Update "An install or update is already running in this folder, in another window. Let it end there."
-    }
-    # Through the short name the build will see the folder by, for the
-    # framework's deepest paths; without one the rebuild could not go on
-    # either, so nothing is written.
-    $shortName = ""
-    if (Test-NeedsShortName $Root) {
-        $shortName = Use-ShortName $Root
-        if (-not $shortName) {
-            Stop-Update ("Windows did not let the update make $(Get-ShortName $Root), the short name the build tools see " +
-                "this folder by. Nothing was changed. Move this folder to a short path without spaces, such as " +
-                "C:\RogueGalaxy, and run Install.bat there.")
+    $lock = $null
+    $result = $null
+    # A zip unpacked over the folder before, its files not in place yet:
+    # install.ps1 gives them all now's date (Update-Unpacked), so no record
+    # is written below.
+    $wasUnpacked = Test-UnpackPending $Root
+    if (-not $rebuildOnly) {
+        Write-Step "Replacing what changed"
+        # Nothing else works in the folder from here (launchers.ps1), until
+        # install.ps1 takes over below.
+        $lock = Lock-Folder $Root
+        if ($lock -is [string]) {
+            Stop-Update "An install or update is already running in this folder, in another window. Let it end there."
         }
-        $script:FileRoot = $shortName
-    }
-    try {
-        $result = Apply-Zip $zipPath
-        Write-Host "  $($result.Revision): $($result.Written) file(s) written"
-        $removed = @(Remove-Stale $result.Delivered)
-    } finally {
-        $script:FileRoot = $Root
-        Remove-ShortName $shortName
-    }
-    if ($removed.Count -gt 0) {
-        Write-Host "  $($removed.Count) file(s) the new version no longer has, removed:"
-        foreach ($name in $removed) { Write-Host "    $name" }
+        # Through the short name the build will see the folder by, for the
+        # framework's deepest paths; without one the rebuild could not go on
+        # either, so nothing is written.
+        $shortName = ""
+        if (Test-NeedsShortName $Root) {
+            $shortName = Use-ShortName $Root
+            if (-not $shortName) {
+                Stop-Update ("Windows did not let the update make $(Get-ShortName $Root), the short name the build tools see " +
+                    "this folder by. Nothing was changed. Move this folder to a short path without spaces, such as " +
+                    "C:\RogueGalaxy, and run Install.bat there.")
+            }
+            $script:FileRoot = $shortName
+        }
+        # The files of such a zip may be dated before the build, and only
+        # those this zip changes are written below. Otherwise the files are
+        # in place once written, dated now where they changed.
+        try {
+            $result = Apply-Zip $zipPath
+            Write-Host "  $($result.Revision): $($result.Written) file(s) written"
+            $removed = @(Remove-Stale $result.Delivered)
+        } finally {
+            $script:FileRoot = $Root
+            Remove-ShortName $shortName
+        }
+        if (-not $wasUnpacked) { Set-UnpackStamp $Root }
+        if ($removed.Count -gt 0) {
+            Write-Host "  $($removed.Count) file(s) the new version no longer has, removed:"
+            foreach ($name in $removed) { Write-Host "    $name" }
+        }
     }
     if ($NoBuild) {
         Write-Host "  (-NoBuild: not rebuilding)"
@@ -452,7 +493,11 @@ function Main {
         Stop-Update "The rebuild stopped (code $LASTEXITCODE); install.log has the details. Run Update.bat again to continue from where it stopped."
     }
     Write-Host ""
-    Write-Host "Updated from $current to $($result.Revision)." -ForegroundColor Green
+    if ($rebuildOnly) {
+        Write-Host "Built $current." -ForegroundColor Green
+    } else {
+        Write-Host "Updated from $current to $($result.Revision)." -ForegroundColor Green
+    }
 }
 
 # Dot-sourced (tests), only the functions.

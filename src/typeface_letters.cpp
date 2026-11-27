@@ -51,6 +51,8 @@ extern const unsigned char rg_typeface_andika_bold[];
 extern const size_t rg_typeface_andika_bold_size;
 extern const unsigned char rg_typeface_rogue_letters_regular[];
 extern const size_t rg_typeface_rogue_letters_regular_size;
+extern const unsigned char rg_typeface_rogue_letters_names_regular[];
+extern const size_t rg_typeface_rogue_letters_names_regular_size;
 
 namespace rg::typeface
 {
@@ -263,6 +265,8 @@ Typeface g_typefaces[] = {
     {"Andika-Regular.ttf", rg_typeface_andika_regular, &rg_typeface_andika_regular_size},
     {"Andika-Bold.ttf", rg_typeface_andika_bold, &rg_typeface_andika_bold_size},
     {"RogueLetters-Regular.ttf", rg_typeface_rogue_letters_regular, &rg_typeface_rogue_letters_regular_size, true},
+    {"RogueLettersNames-Regular.ttf", rg_typeface_rogue_letters_names_regular,
+     &rg_typeface_rogue_letters_names_regular_size, true},
 };
 
 // A draw past 0x80 alpha (dq8::gfx::RegionRequest::bold; the game's menus
@@ -308,22 +312,43 @@ std::atomic<bool> g_traceTiming{false};
 // a half (2026-11-24). RG_TYPEFACE_GAP=N, 0 to 40, for comparing.
 constexpr int kGapOpening = 5;
 std::atomic<int> g_gapOpening{kGapOpening};
-// The same for the names' fonts (name, name_eur: the speaker's name over the
-// dialogue, the names over heads), drawn with a border ring a pixel wide
-// that took the half pixel's gaps: the name's letters touched (Simon's cores
-// 0.75, 0.25, 0 and 0.5 pixels apart, the console's 2, 2, 1 and 1; with this,
-// 1.5, 1.5, 1 and 1). One and a half, picked by the user against one
-// (2026-11-25). The menus' and the load screen's letters keep half a pixel,
-// which the user kept there; RG_TYPEFACE_GAP does not change this one.
+// The same for the names' fonts in Andika (name_eur, the European text's
+// speaker's name over the dialogue and names over heads; the English one,
+// name, is Rogue Letters Names, drawn after the console's), drawn with a
+// border ring a pixel wide that took the half pixel's gaps: the name's
+// letters touched (Simon's cores 0.75, 0.25, 0 and 0.5 pixels apart, the
+// console's 2, 2, 1 and 1; with this, 1.5, 1.5, 1 and 1). One and a half,
+// picked by the user against one (2026-11-25). The menus' and the load
+// screen's letters keep half a pixel, which the user kept there;
+// RG_TYPEFACE_GAP does not change this one.
 constexpr int kNameGapOpening = 15;
+// The "+" (the settings pages' - and + buttons, the texts' bonuses) is drawn
+// with arms that come out equal on the screen, whatever its shape
+// (setPixelShape): not with the even gaps' width above, nor the message
+// font's own. Andika's "+", narrow in the cell as the fit draws every glyph,
+// came out wider than tall once those gaps stretched it to the console's
+// ink, and half as wide again on a 16:9 screen; the message font's, its arms
+// equal on a 4:3 screen, a third longer across on 16:9 (the user,
+// 2026-11-25). The shape a frame pixel is shown at, width over height, in
+// kShapeSteps: 37 a 4:3 picture's (7/6), 50 a 16:9 one's.
+constexpr int kShapeSteps = 32;
+std::atomic<int> g_shapeStep{37};
+// A new shape is taken once the window has shown it this many frames in a
+// row: a window's edge dragged under Auto with Widescreen (or Stretch) goes
+// through a shape a frame, and each would let every larger picture go
+// (setPixelShape).
+constexpr int kShapeSettleFrames = 10;
 
 // A typeface drawn after the console's own glyphs (Rogue Letters, the English
-// message font's; Typeface::afterConsole): each glyph is already as wide as
-// the console's ink, so it keeps its width and the table's place, and the
-// gaps are the console's less the font's stroke growth, as the user saw and
-// kept them in the game (2026-11-25). The even gaps above are for Andika's
-// (the European message font's too). Only fields never written after start
-// are read here: no lock.
+// message font's, and Rogue Letters Names, the English names';
+// Typeface::afterConsole): each glyph is already as wide as the console's
+// ink, so it keeps its width and the table's place, and the gaps are the
+// console's less the font's stroke growth, as the user saw and kept them in
+// the game (2026-11-25). The names' gaps come out so a little wider than the
+// console's (Simon's cores 2.5, 2.25, 1.75 and 2 pixels apart, the console's
+// 2, 2, 1 and 1, as a 4x capture's warm fill shows them). The even gaps
+// above are for Andika's (the European message and names fonts' too). Only
+// fields never written after start are read here: no lock.
 bool drawnAfterConsole(const TypefaceFont &font)
 {
     for (const Typeface &face : g_typefaces)
@@ -609,6 +634,11 @@ bool readPage(const uint8_t *rdram, const TypefaceFont &font, uint8_t fontIndex,
     return added != 0u;
 }
 
+// Every larger picture the renderer holds let go (rg::texturePack::refresh),
+// and so the "+" pictures it was handed (g_shapesHanded): a shape change
+// after it has none to refresh.
+void refreshPictures();
+
 // After ArchiveFindEntryByName: a font's first page (FontTex_normal_EN_0.tm2),
 // read where the pack lies; with the European text (src/text_language.cpp
 // asks for the EUR pages: FontTex_normal_EUR_0.tm2) the European font's.
@@ -661,7 +691,7 @@ void afterFindEntry(uint8_t *rdram, R5900Context *ctx, PS2Runtime *, uint32_t)
             if (tim && readPage(rdram, *kFonts[i], i, tim, size, name) &&
                 g_enabled.load(std::memory_order_relaxed))
             {
-                rg::texturePack::refresh();
+                refreshPictures();
             }
         }
     }
@@ -803,7 +833,19 @@ struct Job
     // With RG_TYPEFACE_SHEET, the piece's texels as the game has them, where
     // console has a word's backing put back (writePieceSheet).
     std::vector<uint8_t> sheetConsole;
+    // A font's "+": the screen shape it is drawn for (g_shapeStep's steps);
+    // 0 for every other glyph.
+    int shapeStep = 0;
 };
+
+// The screen shape a font's glyph is drawn for: the current one for the "+"
+// (g_shapeStep), 0 for the others.
+int shapeStepFor(const TypefaceFont &font, int16_t glyph)
+{
+    return glyph >= 0 && size_t(glyph) < font.count && font.glyphs[glyph].character == '+'
+               ? g_shapeStep.load(std::memory_order_relaxed)
+               : 0;
+}
 struct Picture
 {
     uint32_t width = 0u, height = 0u;
@@ -884,6 +926,9 @@ std::unordered_set<uint64_t> g_aheadStyles;
 // over: made again only when asked, or past the budget each eviction would
 // have every style asked draw its unused glyphs again, evicting others'.
 std::unordered_set<uint64_t> g_notAhead;
+// The screen shapes of the "+" pictures handed over since the renderer last
+// let its copies go: one drawn for another shape asks it to (setPixelShape).
+std::unordered_set<int> g_shapesHanded;
 // Counts forgetPicturesLocked: a job queued before it is dropped when made.
 uint64_t g_generation = 0u;
 // With the timing trace: when each picture not ready was first and last
@@ -910,6 +955,7 @@ void forgetPicturesLocked()
     g_aheadStyles.clear();
     g_notAhead.clear();
     g_waiting.clear();
+    g_shapesHanded.clear();
     ++g_generation;
 }
 
@@ -951,6 +997,17 @@ void forgetPictures()
 {
     std::lock_guard<std::mutex> lock(g_jobsMutex);
     forgetPicturesLocked();
+}
+
+void refreshPictures()
+{
+    // Cleared first: a "+" handed between the two is let go too, and at
+    // worst asks one refresh more of a later shape change.
+    {
+        std::lock_guard<std::mutex> lock(g_jobsMutex);
+        g_shapesHanded.clear();
+    }
+    rg::texturePack::refresh();
 }
 
 // The drawer's thread and the sheets' open the typefaces.
@@ -1103,6 +1160,47 @@ void squeeze(std::vector<uint8_t> &image, int width, int height, bool alongY, do
             image[at(line, i)] = static_cast<uint8_t>(std::min(255.0, sum * factor + 0.5));
         }
     }
+}
+
+// A glyph's bitmap stretched (factor above 1) or squeezed across about its
+// ink centre, in room made each side first; then `back` render pixels taken
+// off each side of its strokes (stretched) or put back on (squeezed), so they
+// keep their width. The ink's columns found again, and its place on the
+// canvas (`left`) kept. False when no ink is left.
+bool scaleAcross(std::vector<uint8_t> &bitmap, int &gw, int gh, int &inkLeft, int &inkRight, int &left,
+                 double factor, int back, int r)
+{
+    const double inkWidth = inkRight + 1 - inkLeft;
+    const int extra = int(std::ceil(std::max(0.0, inkWidth * (factor - 1.0)) / 2.0)) + r;
+    std::vector<uint8_t> wider(size_t(gw + 2 * extra) * gh, 0u);
+    for (int y = 0; y < gh; ++y)
+    {
+        std::copy_n(bitmap.begin() + size_t(y) * gw, gw, wider.begin() + size_t(y) * (gw + 2 * extra) + extra);
+    }
+    bitmap = std::move(wider);
+    gw += 2 * extra;
+    inkLeft += extra;
+    inkRight += extra;
+    squeeze(bitmap, gw, gh, false, (inkLeft + inkRight + 1) * 0.5, factor, 0, gw);
+    spread(bitmap, gw, gh, false, back, factor > 1.0);
+    inkLeft = gw, inkRight = -1;
+    for (int y = 0; y < gh; ++y)
+    {
+        for (int x = 0; x < gw; ++x)
+        {
+            if (bitmap[size_t(y) * gw + x])
+            {
+                inkLeft = std::min(inkLeft, x);
+                inkRight = std::max(inkRight, x);
+            }
+        }
+    }
+    if (inkRight < 0)
+    {
+        return false;
+    }
+    left -= extra;
+    return true;
 }
 
 // The squared distance of each texel of a line to the nearest of `f`'s
@@ -1502,7 +1600,59 @@ Picture draw(const Job &job)
         spread(thick, gw, gh, true, int(std::lround(stroke * (1.0 - factor) / 2.0)), false);
         std::copy(thick.begin() + size_t(from) * gw, thick.end(), bitmap.begin() + size_t(from) * gw);
     }
-    if (!job.word && !drawnAfterConsole(font))
+    // The cell's last column is never shown (a glyph's sprite spans a texel
+    // past its pixels, and the backend clears that one in the picture): the
+    // right edge is the column before it, the stroke's growth inside it. A
+    // word's piece is clear around the word: its edges are the console
+    // word's ink, the growth inside them too.
+    const double leftLimit = std::max(0.0, job.ink.left - 0.5) * r + (job.word ? std::max(0, growX) : 0) + offX;
+    const double rightLimit =
+        (job.word ? (job.ink.right + 0.5) * r - std::max(0, growX)
+                  : std::min((double(std::min(font.cellWidth, outW)) - 1.0) * r - std::max(0, growX),
+                             (job.ink.right + 0.5) * r)) +
+        offX;
+    const double room = rightLimit - leftLimit;
+    if (job.shapeStep != 0)
+    {
+        // The "+" (g_shapeStep): its ink as wide as it is tall once shown,
+        // each with the growth both ways (below), stretched or squeezed
+        // across about its ink centre, its stem with it (scaled with the
+        // arms, it keeps to the bar on the screen what it has in the font).
+        // The table's shift stays: it puts the stem on the console's.
+        const double shape = double(job.shapeStep) / kShapeSteps;
+        const double inkWidth = inkRight + 1 - inkLeft;
+        double wanted = std::max(double(r), double(inkEnd - inkTop + 2 * growY) / shape - 2.0 * growX);
+        if (room > double(r) && wanted > room)
+        {
+            // Wider than its room (a pixel shown narrow: Stretch in a window
+            // near square), it is as wide as the room and as much shorter,
+            // squeezed down about its bar: narrowed across alone, by the
+            // room's fit below, it stood taller than wide.
+            const double height = inkEnd - inkTop;
+            const double fits = std::max(double(r), (room + 2.0 * growX) * shape - 2.0 * growY);
+            if (fits < height)
+            {
+                squeeze(bitmap, gw, gh, true, (inkTop + inkEnd) * 0.5, fits / height, 0, gh);
+                inkTop = gh, inkEnd = 0;
+                for (int y = 0; y < gh; ++y)
+                {
+                    if (std::any_of(bitmap.begin() + size_t(y) * gw, bitmap.begin() + size_t(y + 1) * gw,
+                                    [](uint8_t v) { return v != 0u; }))
+                    {
+                        inkTop = std::min(inkTop, y);
+                        inkEnd = y + 1;
+                    }
+                }
+            }
+            wanted = room;
+        }
+        if (std::abs(wanted - inkWidth) > r / 8.0 &&
+            !scaleAcross(bitmap, gw, gh, inkLeft, inkRight, left, wanted / inkWidth, 0, r))
+        {
+            return picture;
+        }
+    }
+    else if (!job.word && !drawnAfterConsole(font))
     {
         // Every Andika glyph (not one drawn after the console's:
         // drawnAfterConsole) as wide as the console's ink less kGapOpening
@@ -1519,6 +1669,9 @@ Picture draw(const Job &job)
         left -= int(std::lround(glyph.shift * float(r)));
         const double inkWidth = inkRight + 1 - inkLeft;
         const double consoleWidth = double(job.ink.right - job.ink.left) * r;
+        // The names' fonts open by kNameGapOpening: today only the European
+        // one comes here, the English names' (Rogue Letters Names) being
+        // drawn after the console's (drawnAfterConsole).
         const bool names = job.font == &kNameFont || job.font == &kNameEurFont;
         const int opening = names ? kNameGapOpening : g_gapOpening.load(std::memory_order_relaxed);
         const double wanted = consoleWidth - opening / 10.0 * r;
@@ -1529,54 +1682,17 @@ Picture draw(const Job &job)
         const bool stem = rawStroke >= inkWidth * 0.75;
         if (!stem && std::abs(wanted - inkWidth) > r / 4.0 && inkWidth > stroke && wanted > stroke)
         {
-            // Room each side for the ink stretched by the factor, before its
-            // strokes are thinned back.
+            // Stretched by the factor, then its strokes thinned back.
             const double factor = (wanted - stroke) / (inkWidth - stroke);
-            const int extra = int(std::ceil(std::max(0.0, inkWidth * (factor - 1.0)) / 2.0)) + r;
-            std::vector<uint8_t> wider(size_t(gw + 2 * extra) * gh, 0u);
-            for (int y = 0; y < gh; ++y)
-            {
-                std::copy_n(bitmap.begin() + size_t(y) * gw, gw, wider.begin() + size_t(y) * (gw + 2 * extra) + extra);
-            }
-            bitmap = std::move(wider);
-            gw += 2 * extra;
-            inkLeft += extra;
-            inkRight += extra;
-            squeeze(bitmap, gw, gh, false, (inkLeft + inkRight + 1) * 0.5, factor, 0, gw);
-            spread(bitmap, gw, gh, false, int(std::lround(stroke * std::abs(factor - 1.0) / 2.0)), factor > 1.0);
-            inkLeft = gw, inkRight = -1;
-            for (int y = 0; y < gh; ++y)
-            {
-                for (int x = 0; x < gw; ++x)
-                {
-                    if (bitmap[size_t(y) * gw + x])
-                    {
-                        inkLeft = std::min(inkLeft, x);
-                        inkRight = std::max(inkRight, x);
-                    }
-                }
-            }
-            if (inkRight < 0)
+            if (!scaleAcross(bitmap, gw, gh, inkLeft, inkRight, left, factor,
+                             int(std::lround(stroke * std::abs(factor - 1.0) / 2.0)), r))
             {
                 return picture;
             }
-            left -= extra;
         }
     }
     const double centre = (inkLeft + inkRight + 1) * 0.5;
     const double half = (inkRight + 1 - inkLeft) * 0.5;
-    // The cell's last column is never shown (a glyph's sprite spans a texel
-    // past its pixels, and the backend clears that one in the picture): the
-    // right edge is the column before it, the stroke's growth inside it. A
-    // word's piece is clear around the word: its edges are the console
-    // word's ink, the growth inside them too.
-    const double leftLimit = std::max(0.0, job.ink.left - 0.5) * r + (job.word ? std::max(0, growX) : 0) + offX;
-    const double rightLimit =
-        (job.word ? (job.ink.right + 0.5) * r - std::max(0, growX)
-                  : std::min((double(std::min(font.cellWidth, outW)) - 1.0) * r - std::max(0, growX),
-                             (job.ink.right + 0.5) * r)) +
-        offX;
-    const double room = rightLimit - leftLimit;
     const double canvasCentre = left + centre;
     if (room > 0.0 && (canvasCentre - half < leftLimit - 0.5 || canvasCentre + half > rightLimit + 0.5))
     {
@@ -1838,11 +1954,15 @@ void writeSheet(uint8_t fontIndex, std::vector<SheetGlyph> glyphs)
         const SheetGlyph &g = glyphs[n];
         const uint32_t x0 = kGap + uint32_t(n % kColumns) * entryWidth, y0 = kGap + uint32_t(n / kColumns) * entryHeight;
         paint(x0, y0 + m, [&](uint32_t x, uint32_t y) { return float(g.alpha[(y / s) * font.cellWidth + x / s]); });
+        auto sheetJob = [&](bool bold, Version version) {
+            Job job{0u, &font, g.glyph, g.ink, s, bold, version, {255u, 255u, 255u}};
+            job.shapeStep = shapeStepFor(font, g.glyph);
+            return job;
+        };
         Picture plain;
         for (int bold = 0; bold < 2; ++bold)
         {
-            Picture picture =
-                draw(Job{0u, &font, g.glyph, g.ink, s, bold != 0, Version::Glyph, {255u, 255u, 255u}});
+            Picture picture = draw(sheetJob(bold != 0, Version::Glyph));
             paint(x0 + (1u + uint32_t(bold)) * (cw + kGap), y0 + m, [&](uint32_t x, uint32_t y) {
                 return picture.rgba.empty() ? 0.0f : float(picture.rgba[(size_t(y) * picture.width + x) * 4u + 3u]);
             });
@@ -1881,10 +2001,8 @@ void writeSheet(uint8_t fontIndex, std::vector<SheetGlyph> glyphs)
                 }
             }
         };
-        const Picture border =
-            draw(Job{0u, &font, g.glyph, g.ink, s, false, Version::Border, {255u, 255u, 255u}});
-        const Picture shadow =
-            draw(Job{0u, &font, g.glyph, g.ink, s, false, Version::Shadow, {255u, 255u, 255u}});
+        const Picture border = draw(sheetJob(false, Version::Border));
+        const Picture shadow = draw(sheetJob(false, Version::Shadow));
         const uint32_t bx = x0 + 3u * (cw + kGap) + kGap;
         layered(bx, {{&border, 0, 0.0f}});
         layered(bx + vw + kGap, {{&shadow, int(s), 128.0f}, {&shadow, 2 * int(s), 0.0f}});
@@ -2121,6 +2239,13 @@ int answer(const Job &job, uint32_t &width, uint32_t &height, std::vector<uint8_
         // lookup answers then, nothing queued.
         return dq8::gfx::kRegionNone;
     }
+    if (job.shapeStep != 0 && job.shapeStep != g_shapeStep.load(std::memory_order_relaxed))
+    {
+        // A "+" for the screen's shape before (setPixelShape changed it since
+        // lookup read it): the renderer asks again at its next draw, for
+        // the shape now. Never handed over, so no copy of it is left drawn.
+        return dq8::gfx::kRegionPending;
+    }
     const auto now = g_traceTiming ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     if (const auto ready = g_ready.find(job.key); ready != g_ready.end())
     {
@@ -2156,6 +2281,10 @@ int answer(const Job &job, uint32_t &width, uint32_t &height, std::vector<uint8_
         if (picture.rgba.empty())
         {
             return dq8::gfx::kRegionNone;
+        }
+        if (job.shapeStep != 0)
+        {
+            g_shapesHanded.insert(job.shapeStep);
         }
         width = picture.width;
         height = picture.height;
@@ -2203,14 +2332,16 @@ int answer(const Job &job, uint32_t &width, uint32_t &height, std::vector<uint8_
 }
 
 // A font glyph's job: its picture known by the cell's alpha (its hash), the
-// scale, the version and the bold draw, not by its colour (given at the
-// handover).
+// scale, the version, the bold draw and for the "+" the screen's shape, not
+// by its colour (given at the handover).
 Job glyphJob(uint64_t alpha, const Cell &cell, uint32_t scale, Version version, bool bold, const uint8_t *colour)
 {
+    const int shape = shapeStepFor(*kFonts[cell.font], cell.glyph);
     uint64_t key = alpha;
-    key ^= uint64_t(scale) << 3u | uint64_t(version) << 1u | (bold ? 1u : 0u);
+    key ^= uint64_t(scale) << 3u | uint64_t(version) << 1u | (bold ? 1u : 0u) | uint64_t(shape) << 40u;
     key *= 0x100000001b3ull;
     Job job{key, kFonts[cell.font], cell.glyph, cell.ink, scale, bold, version, {colour[0], colour[1], colour[2]}};
+    job.shapeStep = shape;
     if (cell.rows)
     {
         // Drawn a row short, as the draw takes it.
@@ -2825,11 +2956,14 @@ int lookupPiece(const dq8::gfx::RegionRequest &request, uint64_t clut, uint32_t 
     {
         return dq8::gfx::kRegionNone;
     }
+    // A menu font's "+" is drawn for the screen's shape too (setPixelShape).
+    const int shape = shapeStepFor(*kPieceFonts[piece->set], piece->glyph);
     uint64_t key = hash;
-    key ^= uint64_t(request.scale) << 3u | 0x100u;
+    key ^= uint64_t(request.scale) << 3u | 0x100u | uint64_t(shape) << 40u;
     key *= 0x100000001b3ull;
     Job job{key, kPieceFonts[piece->set], piece->glyph, Ink{piece->inkLeft, piece->inkRight, piece->inkBottom},
             request.scale, false, Version::Glyph, {0u, 0u, 0u}};
+    job.shapeStep = shape;
     job.piece = true;
     job.regionWidth = static_cast<uint8_t>(request.width);
     job.regionHeight = static_cast<uint8_t>(request.height);
@@ -3140,6 +3274,50 @@ void setEnabled(bool on)
 bool enabled()
 {
     return g_enabled.load(std::memory_order_relaxed);
+}
+
+void setPixelShape(double widthOverHeight)
+{
+    const int step =
+        std::clamp(int(std::lround(widthOverHeight * kShapeSteps)), kShapeSteps / 2, kShapeSteps * 4);
+    // Called by the window's thread alone (graphics.cpp's pump, a frame).
+    static int pending = 0, frames = 0;
+    if (step == g_shapeStep.load(std::memory_order_relaxed))
+    {
+        pending = 0;
+        return;
+    }
+    frames = step == pending ? frames + 1 : 1;
+    pending = step;
+    if (frames < kShapeSettleFrames)
+    {
+        return;
+    }
+    g_shapeStep.store(step, std::memory_order_relaxed);
+    pending = 0;
+    // A "+" the renderer holds was drawn for another shape: its copies let
+    // go, the "+" is asked again (the others come back from g_ready). Only
+    // then: a change with no "+" handed since the last refresh refreshes
+    // nothing. Going to the loading screen's 4:3 after a "+" was shown at
+    // 16:9 refreshes, unless the load reading the font pages did first
+    // (readPage, refreshPictures); coming back only if a "+" was drawn
+    // meanwhile.
+    bool stale = false;
+    {
+        std::lock_guard<std::mutex> lock(g_jobsMutex);
+        for (const int handed : g_shapesHanded)
+        {
+            stale = stale || handed != step;
+        }
+        if (stale)
+        {
+            g_shapesHanded.clear();
+        }
+    }
+    if (stale)
+    {
+        rg::texturePack::refresh();
+    }
 }
 
 bool forced()

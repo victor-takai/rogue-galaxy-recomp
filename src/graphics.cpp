@@ -816,6 +816,13 @@ bool pump(void *userData)
         rg::widescreen::setAspect(static_cast<float>(dq8::gfx::sdlGpuDisplayAspect(
             backend->displayOptions(), 512u, 448u, static_cast<uint32_t>(windowWidth),
             static_cast<uint32_t>(windowHeight), 1)));
+        // The shape shown now, wide or not, for the letters' "+": a frame
+        // pixel's, its 2D stretched with the picture.
+        rg::typeface::setPixelShape(dq8::gfx::sdlGpuDisplayAspect(backend->displayOptions(), 512u, 448u,
+                                                                  static_cast<uint32_t>(windowWidth),
+                                                                  static_cast<uint32_t>(windowHeight),
+                                                                  rg::widescreen::wide() ? 1 : 0) *
+                                    448.0 / 512.0);
     }
     // The menu has F11 and Alt+Enter; without it, F11 still toggles.
     static bool f11WasDown = false;
@@ -1137,7 +1144,8 @@ std::unique_ptr<dq8::ui::Overlay> createMenu(PS2Runtime &runtime, dq8::gfx::SdlG
          true},
         {"typeface_letters", "Typeface letters (F8)",
          "Above 1x, the game's Latin letters are drawn from typefaces made to look like them (Rogue Letters for "
-         "the English dialogue, Andika for the rest; SIL Open Font License) at the internal resolution, in their own places and widths, instead of enlarged as blocks: "
+         "the English dialogue, Rogue Letters Names for the English names, Andika for the rest; SIL Open Font "
+         "License) at the internal resolution, in their own places and widths, instead of enlarged as blocks: "
          "the dialogue's, the menus' and the names', and the menus' grey letters with a dark edge, their numbers "
          "and the words of their pictures. With the text in French, German, Spanish or Italian too, accents "
          "included, except the words of the menus' pictures. Each new letter shows in a frame or two. F8 turns "

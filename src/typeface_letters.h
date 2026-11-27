@@ -11,12 +11,15 @@ class SdlGpuBackend;
 // glyphs enlarged: each glyph the renderer is about to draw from the font
 // sheet is redrawn from a free typeface made to look like the console's
 // (SIL Open Font License, thirdparty/fonts: Rogue Letters for the English
-// dialogue, drawn after the console's own glyphs; Andika for the rest), at
-// the internal resolution, in the glyph's own cell, so the game's layout,
-// widths and borders stay. An Andika glyph is drawn as wide as the console's
-// ink less half a pixel (a name's, under its border, one and a half; before
+// dialogue and Rogue Letters Names for the English names, both drawn after
+// the console's own glyphs; Andika for the rest), at the internal
+// resolution, in the glyph's own cell, so the game's layout, widths and
+// borders stay. An Andika glyph is drawn as wide as the console's ink less
+// half a pixel (a European name's, under its border, one and a half; before
 // its strokes' growth), so the gaps between letters are even; a Rogue
-// Letters glyph keeps its own width. The glyphs
+// Letters glyph keeps its own width. The "+" of every font is as wide as it
+// is tall on the screen, a Widescreen picture's included (setPixelShape).
+// The glyphs
 // are told apart by their pixels, which the font pages hold when the game
 // opens them (ArchiveFindEntryByName); which glyph of the typeface, its
 // size and its place come from typeface_table.inc,
@@ -48,6 +51,12 @@ void setEnabled(bool on);
 bool enabled();
 // RG_TYPEFACE_LETTERS holds the letters on or off, whatever the menu says.
 bool forced();
+
+// The shape a frame pixel is shown at, width over height (the picture's
+// shape over the frame's 512x448), for the "+", whose arms are drawn to come
+// out equal on the screen. Each frame, from the window's thread; a new shape
+// is taken once it has held for a few frames (a window's edge dragged).
+void setPixelShape(double widthOverHeight);
 
 // dq8-gfx's hash of a 256-colour CT32 palette kept in the GS's CSM1 order
 // (as a TIM2 and the game's memory hold it).
