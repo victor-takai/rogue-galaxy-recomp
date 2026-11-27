@@ -117,11 +117,13 @@ set(PS2X_VU_AOT_SHARDS ${rg_vu_shards} CACHE STRING "Number of independent VU AO
 # compiles are heavy on memory and slow each other. A first build on 8
 # cores, 16 threads and 32 GB took 826 s with 4 at a time, 709 s with 6,
 # 612-653 s with 8 and 682 s with 12, where the 32 shards four at a time
-# took 738-774 s (llvm-mingw, 2026-11-14). The pool holds the runtime's
-# other units too, 0.3 GB or less each. A shard's share grows with the
-# blocks it gets and, as patch 0038 weighs them, with the longest block's
-# words squared: the format allows blocks of up to 32 words, but the
-# recorder writes four, so the longer ones are unmeasured.
+# took 738-774 s (llvm-mingw, 2026-11-14, when the pool held the runtime's
+# other units too). Since patch 0041 the pool holds the shards only, the
+# VU1 routines' eight among them; its depth is not measured again. A
+# shard's share grows with the blocks it gets and, as patch 0038 weighs
+# them, with the longest block's words squared: the format allows blocks
+# of up to 32 words, but the recorder writes four, so the longer ones are
+# unmeasured.
 set(rg_vu_words 4)
 foreach(rg_record IN LISTS rg_vu_records)
     string(REGEX MATCHALL " " rg_gaps "${rg_record}")
@@ -148,7 +150,7 @@ elseif(rg_vu_jobs GREATER 16)
     set(rg_vu_jobs 16)
 endif()
 set(PS2X_VU_AOT_COMPILE_JOBS "${rg_vu_jobs}" CACHE STRING
-    "Maximum concurrent runtime compilations with VU AOT (Ninja)" FORCE)
+    "Maximum concurrent compiles of the VU shards (Ninja)" FORCE)
 message(STATUS "VU blocks: ${rg_vu_blocks} (${rg_vu_shards} shards, ${rg_vu_jobs} at a time)")
 
 # Local changes to the pinned framework (patches/ps2recomp), applied to the
