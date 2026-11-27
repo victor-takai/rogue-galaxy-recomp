@@ -22,8 +22,13 @@ writes andika_fit.json again, from make_table.py's fit of Andika Regular
 (with its alternates) to the message font. Every step reads the console's
 glyphs from the disc (disc/); the previews of a fit, beside the console's
 pixels, go to build/typeface/strokes/glyphs.
+
+--font name does the same for the names' font (Rogue Letters Names, its
+16x18 cell): skeletons_name.py, strokes_name.json, andika_fit_name.json,
+and build/typeface/strokes/name (PROFILES).
 """
 import argparse
+import importlib
 import json
 import math
 import os
@@ -45,11 +50,20 @@ from fontTools.ttLib.tables import ttProgram
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import raster as fg  # noqa: E402
+from profiles import PROFILES  # noqa: E402
 from skeletons import GLYPH_FOR, LIMIT_FOR, PULL_FOR, SKELETONS, parse  # noqa: E402
 
 TABLE = HERE / "strokes.json"
 BASE = HERE / "andika_fit.json"
 ANDIKA = fg.ROOT / "thirdparty/fonts/andika/Andika-Regular.ttf"
+# The game font drawn (profiles.PROFILES; use() picks it): the message
+# font's by default.
+FONT = "normal"
+OUT = fg.OUT
+# Glyphs drawn as another's mirror image (the skeletons' MIRROR: "]" from
+# "[", ...), not fitted on their own: two fits of a pair came out a little
+# unlike each other.
+MIRROR = {}
 torch.set_default_dtype(torch.float64)
 S = fg.S
 K = 10  # line pieces per curve
@@ -63,6 +77,19 @@ H = 0.5  # the pen's half width in its own (scaled) space
 COMMA = [((0.0, -1.0), "s"), ((0.707, -0.707), "s"), ((1.0, 0.0), "s"), ((0.93, 0.85), "s"),
          ((0.5, 1.6), "s"), ((-0.7, 2.35), "c"), ((-0.08, 1.62), "s"), ((0.08, 0.97), "c"),
          ((-0.38, 0.925), "s"), ((-0.8, 0.6), "s"), ((-1.0, 0.0), "s"), ((-0.707, -0.707), "s")]
+
+
+def use(font):
+    """The tools pointed at a game font's skeletons, table and files
+    (profiles.PROFILES)."""
+    global FONT, SKELETONS, LIMIT_FOR, PULL_FOR, GLYPH_FOR, MIRROR, TABLE, BASE, OUT
+    prof = PROFILES[font]
+    sk = importlib.import_module(prof.skeletons)
+    FONT, SKELETONS, LIMIT_FOR, PULL_FOR, GLYPH_FOR = font, sk.SKELETONS, sk.LIMIT_FOR, sk.PULL_FOR, sk.GLYPH_FOR
+    MIRROR = getattr(sk, "MIRROR", {})
+    TABLE, BASE = HERE / prof.table, HERE / prof.base
+    OUT = fg.OUT / prof.folder if prof.folder else fg.OUT
+    _ANDIKA.clear()
 
 
 def unit(v):
@@ -136,7 +163,10 @@ class Stroke:
         # square to the stroke: a slanted leg stands flat.
         self.hcut = (not self.closed and not self.round and kinds[0] == "h",
                      not self.closed and not self.round and kinds[-1] == "h")
-        self.kinds = ["c" if k == "h" else k for k in kinds]
+        # The ends marked j, each joining another stroke (fit_char holds it
+        # on that stroke's centre line): their indices.
+        self.joins = [i for i, k in ((0, kinds[0]), (len(kinds) - 1, kinds[-1])) if k == "j"]
+        self.kinds = ["c" if k in "hj" else k for k in kinds]
 
     def level_ends(self, Q):
         """For each end cut level: (index, the end, the way into the stroke,
@@ -368,6 +398,10 @@ class StrokeRaster:
             if st.round and not st.closed:  # round ends: a disc on each
                 discs.append(torch.stack([Q[0], Q[-1]]))
                 cuts.append((torch.zeros(2, 2, 2), torch.zeros(2, 2, 2), torch.zeros(2, 2)))
+            elif st.joins and not st.closed:  # a joining end is round (outline_glyph)
+                m = len(st.joins)
+                discs.append(torch.stack([Q[0] if i == 0 else Q[-1] for i in st.joins]))
+                cuts.append((torch.zeros(m, 2, 2), torch.zeros(m, 2, 2), torch.zeros(m, 2)))
             polys += corner_polys(Q, corner_i, st.closed, limit)
         sd = list(fills)
         if A:
@@ -400,10 +434,167 @@ def loss_img(img, T):
     return ((img - T) ** 2).sum() + ((fg.blur(img) - fg.blur(T)) ** 2).sum() * 2
 
 
+# The fit's guard against kinks (--fair weighs it): two neighbouring nodes of
+# a stroke stay at least FAIR_SPACING of the skeleton's distance between
+# them apart, and a smooth node turns at most FAIR_TURN (in the cosine of the
+# angle between the pieces before and after it) more sharply than in the
+# skeleton. Without it the fit set two nodes side by side to follow a faint
+# pixel of the console's, a dent or a kink in the curve (the names' m, %, &,
+# @, a, g, l, t, y and braces, 2026-11-26).
+FAIR_SPACING = 0.5
+FAIR_TURN = 0.3
+
+
+def fairness(strokes, Ps, P0):
+    """Per stroke the guard's breaches, each squared, summed: neighbours
+    nearer than FAIR_SPACING of the skeleton's distance (in cell pixels), and
+    smooth nodes turning past FAIR_TURN beyond the skeleton's turn. Dots,
+    commas and Andika's parts have none (their two nodes are a centre and
+    radii)."""
+    total = torch.zeros(())
+    for st, P, Q in zip(strokes, Ps, P0):
+        if st.dot or st.comma or st.part or len(P) < 2:
+            continue
+        n = len(P)
+        pairs = [(i, i + 1) for i in range(n - 1)] + ([(n - 1, 0)] if st.closed and n > 2 else [])
+        for i, j in pairs:
+            d = torch.sqrt(((P[j] - P[i]) ** 2).sum() + 1e-12)
+            d0 = torch.sqrt(((Q[j] - Q[i]) ** 2).sum())
+            total = total + torch.relu(FAIR_SPACING * d0 - d) ** 2
+        for i in range(n):
+            if st.kinds[i] != "s" or not (st.closed or 0 < i < n - 1):
+                continue
+            a, b = (i - 1) % n, (i + 1) % n
+            cos = (unit(P[i] - P[a]) * unit(P[b] - P[i])).sum()
+            cos0 = (unit(Q[i] - Q[a]) * unit(Q[b] - Q[i])).sum()
+            total = total + torch.relu(cos0 - FAIR_TURN - cos) ** 2
+    return total
+
+
+def breaches(strokes, Ps, P0):
+    """The guard's breaches left after a fit, as words (a glyph to look at:
+    a kink, or a skeleton whose form the console's glyph does not have, as
+    a straight stroke the fit had to curl). Below a hundredth, the guard's
+    own give."""
+    out = []
+    for k, (st, P, Q) in enumerate(zip(strokes, Ps, P0)):
+        one = fairness([st], [P], [Q])
+        if float(one) > 0.01:
+            out.append(f"stroke {k} {float(one):.3f}")
+    return out
+
+
+# Fair curves (--smooth weighs it): the curvature of a stroke's centre line
+# changes gradually, within each piece and across each smooth node (s), the
+# energy of its change along the line (the integral of the square of the
+# curvature's derivative). A smooth node only keeps the curve's way, not its
+# bend: fitted to the console's pixels, the bend gathered at the nodes, the
+# pieces between them near straight, and the curves came out a polygon with
+# rounded corners at 4x and above (the names' C, S, e, 6, b, d...,
+# 2026-11-26). Nodes t and u join a straight piece to a curve: the bend may
+# start there at once.
+SMOOTH_SAMPLES = 8
+
+
+def table_growth(font):
+    """The stroke growth the game draws a game font with, from
+    src/typeface_table.inc, when the table draws it from the font the stroke
+    tools make for it; None otherwise (no table, or another typeface)."""
+    path = fg.ROOT / "src" / "typeface_table.inc"
+    if not path.exists():
+        return None
+    prof = PROFILES[font]
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("constexpr TypefaceFont ") and f'{{"{font}", ' in line:
+            fields = [f.strip() for f in line.split("{", 1)[1].split(",")]
+            return int(fields[7]) if fields[3].strip('"') == prof.ps_name + ".ttf" else None
+    return None
+
+
+def piece_curvature(p0, c1, c2, p3):
+    """A cubic piece's curvature (radians per cell pixel) at SMOOTH_SAMPLES+1
+    points along it, and the length between two of them."""
+    t = torch.linspace(0, 1, SMOOTH_SAMPLES + 1)[:, None]
+    d1 = 3 * (1 - t) ** 2 * (c1 - p0) + 6 * (1 - t) * t * (c2 - c1) + 3 * t ** 2 * (p3 - c2)
+    d2 = 6 * (1 - t) * (c2 - 2 * c1 + p0) + 6 * t * (p3 - 2 * c2 + c1)
+    speed = torch.sqrt((d1 ** 2).sum(-1) + 1e-9)
+    kappa = ((d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0]) / speed ** 3).clamp(-5, 5)
+    return kappa, (speed.mean() / SMOOTH_SAMPLES).clamp_min(0.05)
+
+
+def smoothness(strokes, Ps):
+    """The energy of the change of curvature along each stroke's centre
+    line, summed (dots, commas, Andika's parts and filled shapes have none)."""
+    total = torch.zeros(())
+    for st, P in zip(strokes, Ps):
+        if st.dot or st.comma or st.part or st.fill or len(P) < 2:
+            continue
+        cub = st.cubics(P)
+        first = prev = None
+        for s, piece in enumerate(cub):
+            kappa, ds = piece_curvature(*piece)
+            total = total + ((kappa[1:] - kappa[:-1]) ** 2).sum() / ds
+            if prev is not None and st.kinds[s] == "s":
+                total = total + (kappa[0] - prev[0]) ** 2 / ((ds + prev[1]) / 2)
+            if first is None:
+                first = (kappa[0], ds)
+            prev = (kappa[-1], ds)
+        if st.closed and st.kinds[0] == "s" and len(cub) > 1:
+            total = total + (first[0] - prev[0]) ** 2 / ((first[1] + prev[1]) / 2)
+    return total
+
+
+def segment_distance(p, Q, closed):
+    """The distance from point p to the polyline Q (a closed one wraps)."""
+    A, B = (Q, torch.roll(Q, -1, 0)) if closed else (Q[:-1], Q[1:])
+    d = B - A
+    t = (((p - A) * d).sum(-1) / (d * d).sum(-1).clamp_min(1e-12)).clamp(0, 1)
+    proj = A + t[:, None] * d
+    return torch.sqrt(((p - proj) ** 2).sum(-1) + 1e-12).min()
+
+
+def join_targets(strokes):
+    """For each end marked j: (its stroke, the end's index, the stroke it
+    joins), the other stroke whose skeleton passes nearest the end."""
+    lines = [None if st.dot or st.comma or st.part else flatten_stroke(st, torch.tensor(st.xy0))[0]
+             for st in strokes]
+    out = []
+    for k, st in enumerate(strokes):
+        for i in st.joins:
+            e = torch.tensor(st.xy0[i])
+            near = [(float(segment_distance(e, Q, strokes[o].closed)), o) for o, Q in enumerate(lines)
+                    if o != k and Q is not None]
+            if not near:
+                raise ValueError(f"stroke {k}: an end marked j, but no other stroke to join")
+            out.append((k, i, min(near)[1]))
+    return out
+
+
+# How hard a joined end is held near its place in the skeleton (along the
+# stroke it joins, where only the skeleton says how high it joins).
+JOIN_HOLD = 0.3
+
+
+def joining(strokes, Ps, targets):
+    """Each joined end's distance from the centre line of the stroke it
+    joins, squared, summed."""
+    total = torch.zeros(())
+    for k, i, o in targets:
+        Q, _ = flatten_stroke(strokes[o], Ps[o])
+        total = total + segment_distance(Ps[k][i], Q, strokes[o].closed) ** 2
+    return total
+
+
 def fit_char(strokes, T, ras, args, pen0, limit, pull_w=None):
     pull_w = args.pull if pull_w is None else pull_w
+    # PULL_FOR gives a glyph one weight, or one a stroke (the a's foot held
+    # to its drawing, its bowl free).
+    pull_ws = list(pull_w) if isinstance(pull_w, (list, tuple)) else [pull_w] * len(strokes)
+    if len(pull_ws) != len(strokes):
+        raise SystemExit(f"PULL_FOR: {len(pull_ws)} weights for {len(strokes)} strokes")
     Ps = [torch.tensor(st.xy0, requires_grad=not st.held) for st in strokes]
     P0 = [P.detach().clone() for P in Ps]
+    targets = join_targets(strokes)
     # The pen keeps its shape (pen0); only its size is the glyph's own.
     base = torch.tensor(pen0)
     lsize = torch.zeros((), requires_grad=not args.fixed_size)
@@ -418,8 +609,14 @@ def fit_char(strokes, T, ras, args, pen0, limit, pull_w=None):
         opt.zero_grad()
         sharp = 3.0 if it < args.steps // 3 else (2.0 if it < 2 * args.steps // 3 else 1.0)
         img = ras.render(strokes, Ps, base * torch.exp(lsize), sharp, limit)
-        pull = sum(((P - Q) ** 2).sum() for P, Q in zip(Ps, P0))
-        loss = loss_img(img, T) + pull_w * pull
+        pull = sum(w * ((P - Q) ** 2).sum() for w, P, Q in zip(pull_ws, Ps, P0))
+        # A joined end also stays near where the skeleton joins it: held on
+        # the other stroke's centre line alone, it slid along it (the b's
+        # bowl came off its stem four pixels low).
+        hold = sum((((Ps[k][i] - P0[k][i]) ** 2).sum() for k, i, _ in targets), torch.zeros(()))
+        loss = (loss_img(img, T) + pull + args.fair * fairness(strokes, Ps, P0)
+                + args.smooth * smoothness(strokes, Ps) + args.join * joining(strokes, Ps, targets)
+                + (JOIN_HOLD * hold if args.join > 0 else 0))
         loss.backward()
         opt.step()
     with torch.no_grad():
@@ -429,6 +626,19 @@ def fit_char(strokes, T, ras, args, pen0, limit, pull_w=None):
 
 
 # ---------------------------------------------------------------- outlines
+
+def circle_path(cx, cy, r):
+    """A circle as four cubic arcs."""
+    k = 0.5522847498 * r
+    path = pathops.Path()
+    path.moveTo(cx + r, cy)
+    path.cubicTo(cx + r, cy + k, cx + k, cy + r, cx, cy + r)
+    path.cubicTo(cx - k, cy + r, cx - r, cy + k, cx - r, cy)
+    path.cubicTo(cx - r, cy - k, cx - k, cy - r, cx, cy - r)
+    path.cubicTo(cx + k, cy - r, cx + r, cy - k, cx + r, cy)
+    path.close()
+    return path
+
 
 def outline_glyph(strokes, Ps, pen, to_font, limit):
     """Stroke the skeleton with skia (in the pen's space, where it is round),
@@ -483,6 +693,12 @@ def outline_glyph(strokes, Ps, pen, to_font, limit):
             box.moveTo(ex - half, y0); box.lineTo(ex + half, y0); box.lineTo(ex + half, y1)
             box.lineTo(ex - half, y1); box.close()
             path = pathops.op(path, box, pathops.PathOp.DIFFERENCE)
+        # A joining end is round: the pen's disc on it. On the centre line of
+        # the stroke it joins, the disc stays inside that stroke whatever way
+        # it comes in; a square end coming in aslant stood a corner out of it.
+        for i in ([] if st.closed or st.round or st.fill else st.joins):
+            E = cub[0][0] if i == 0 else cub[-1][3]
+            path = pathops.op(path, circle_path(float(E[0]), float(E[1]), H), pathops.PathOp.UNION)
         # Each piece made whole on its own, then merged: a filled shape and a
         # stroke may run opposite ways, which would cut holes in one path.
         path.simplify(fix_winding=True, keep_starting_points=False)
@@ -513,7 +729,7 @@ class Setup:
         self.andika = TTFont(str(self.src))
         upm = self.andika["head"].unitsPerEm
         fonts = fg.pages.load_fonts(fg.ROOT / "disc")
-        self.console = {g.char: g for g in fonts["normal"] if g.char}
+        self.console = {g.char: g for g in fonts[FONT] if g.char}
         p = self.params
         self.oras = fg.Raster(p["cw"], p["ch"], p["em_x"], p["em_y"], p["baseline"], upm)
         self.ras = StrokeRaster(p["cw"], p["ch"], limit)
@@ -548,7 +764,7 @@ def skeleton_form(c):
     words as written, each node as "." or its kind letter (a dot's, a
     comma's and a part's size the same). The fitted nodes hold for the
     skeleton while this is the same (table_strokes)."""
-    return [" ".join((t[-1] if t[-1] in "cshtu" else ".") if "," in t else t for t in spec.split())
+    return [" ".join((t[-1] if t[-1] in "cshtuj" else ".") if "," in t else t for t in spec.split())
             for spec in SKELETONS[c]]
 
 
@@ -568,8 +784,8 @@ def table_lock():
     """Fits run side by side (--part) write the table in turn. A fit killed
     while writing may leave the lock (build/typeface/strokes/strokes.lock):
     delete it (said after a few seconds of waiting)."""
-    fg.OUT.mkdir(parents=True, exist_ok=True)
-    lock = fg.OUT / "strokes.lock"
+    OUT.mkdir(parents=True, exist_ok=True)
+    lock = OUT / "strokes.lock"
     waited = 0
     while True:
         try:
@@ -605,15 +821,25 @@ def table_strokes(table, c):
 
 # ---------------------------------------------------------------- the steps
 
-def fit_step(setup, chars, args, pen0):
+def fit_step(setup, chars, args, pen0, full=None):
     """Each glyph fitted and written into the table; beside it, in
     build/typeface/strokes/glyphs, the console's cell, Andika's and the fit
-    at 1x (CODE.npy, for looking at)."""
-    per = fg.OUT / "glyphs"
+    at 1x (CODE.npy, for looking at). full is every glyph of a fit run in
+    parts (--part): a mirror whose source another part fits is drawn
+    there."""
+    full = full or chars
+    per = OUT / "glyphs"
     per.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    for c in chars:
+    # A mirror asked for is drawn after the others; a glyph fitted has its
+    # mirrors drawn again right after it (below).
+    for c in [c for c in chars if c not in MIRROR] + [c for c in chars if c in MIRROR]:
         T = setup.target(c)
+        if c in MIRROR:
+            if MIRROR[c] in full and MIRROR[c] not in chars:
+                continue  # its source's part draws it
+            mirror_step(setup, c, T, args.limit)
+            continue
         strokes = [Stroke(s) for s in SKELETONS[c]]
         with torch.no_grad():
             start = setup.ras.render(strokes, [torch.tensor(st.xy0) for st in strokes], torch.tensor(pen0),
@@ -629,8 +855,54 @@ def fit_step(setup, chars, args, pen0):
             table[c] = entry
             write_table(table)
         np.save(per / f"{ord(c):04X}.npy", np.stack((T.numpy(), before.numpy(), img.numpy())))
+        left = breaches(strokes, Ps, [torch.tensor(st.xy0) for st in strokes])
         print(f"{c!a} andika {fg.measure(before, T):.3f}  start {fg.measure(start, T):.3f}  "
-              f"fit {fg.measure(img, T):.3f}  pen {entry['pen']}  ({time.time() - t0:.0f} s)", flush=True)
+              f"fit {fg.measure(img, T):.3f}  pen {entry['pen']}  ({time.time() - t0:.0f} s)"
+              + (f"  KINKS: {', '.join(left)}" if left else ""), flush=True)
+        for m in [m for m, src in MIRROR.items() if src == c and m not in chars]:
+            mirror_step(setup, m, setup.target(m), args.limit)
+
+
+def mirror_entry(setup, table, c):
+    """The table's entry for a glyph drawn as its MIRROR's mirror image: the
+    other's fitted nodes reflected across, the same pen, centred on this
+    glyph's console ink as the other is on its own (its skeleton has the
+    other's form)."""
+    src = MIRROR[c]
+    if skeleton_form(c) != skeleton_form(src):
+        raise SystemExit(f"{c!a}: its skeleton is not of {src!a}'s form, which it mirrors")
+    if src not in table or table_strokes(table, src) is None:
+        raise SystemExit(f"{c!a} mirrors {src!a}: fit {src!a} first")
+    strokes = [Stroke(s) for s in SKELETONS[src]]
+    if any(st.comma for st in strokes):
+        raise SystemExit(f"{c!a} mirrors {src!a}, which has a comma: the comma's tail is drawn one way only")
+
+    # Each glyph's middle across: its console ink's centre of mass (the ink
+    # boxes take faint end pixels unlike in the two: the mirrored ")" stood
+    # half a pixel off the console's).
+    def middle(g):
+        a = np.asarray(g.cell, dtype=np.float64)
+        return float((a.sum(0) * (np.arange(a.shape[1]) + 0.5)).sum() / a.sum())
+    turn = middle(setup.console[src]) + middle(setup.console[c])  # x' = turn - x
+    # A dot's or a part's second node is its size, not a point: kept.
+    nodes = [[[round(turn - x, 3), round(y, 3)] if j == 0 or not (st.dot or st.part) else [x, y]
+              for j, (x, y) in enumerate(P)] for st, P in zip(strokes, table[src]["nodes"])]
+    return {"pen": table[src]["pen"], "nodes": nodes, "form": skeleton_form(c)}
+
+
+def mirror_step(setup, c, T, limit):
+    """A mirror (mirror_entry) written into the table, with its preview."""
+    with table_lock():
+        table = load_table()
+        entry = table[c] = mirror_entry(setup, table, c)
+        write_table(table)
+    strokes = [Stroke(s) for s in SKELETONS[c]]
+    with torch.no_grad():
+        img = setup.ras.render(strokes, [torch.tensor(n) for n in entry["nodes"]], torch.tensor(entry["pen"]),
+                               limit=LIMIT_FOR.get(c, limit))
+    _, before = setup.andika_today(c)
+    np.save(OUT / "glyphs" / f"{ord(c):04X}.npy", np.stack((T.numpy(), before.numpy(), img.numpy())))
+    print(f"{c!a} mirrors {MIRROR[c]!a}: fit {fg.measure(img, T):.3f}  pen {entry['pen']}", flush=True)
 
 
 def assemble_step(setup, limit):
@@ -641,6 +913,14 @@ def assemble_step(setup, limit):
     difference with the console's: Andika's, the fit's and the outline's as
     written)."""
     table = load_table()
+    # The mirrors from their sources as they stand: a fit in parts may have
+    # drawn one from its source's fit before.
+    if MIRROR:
+        with table_lock():
+            table = load_table()
+            for c in MIRROR:
+                table[c] = mirror_entry(setup, table, c)
+            write_table(table)
     stale = [c for c in SKELETONS if c not in table or table_strokes(table, c) is None]
     unknown = [c for c in table if c not in SKELETONS]
     if stale or unknown:
@@ -688,15 +968,15 @@ def assemble_step(setup, limit):
             rec.string = "Strokes Draft"
         elif rec.nameID == 6:
             rec.string = "StrokesDraft"
-    fg.OUT.mkdir(parents=True, exist_ok=True)
-    tt.save(str(fg.OUT / "Fitted-Regular.ttf"))
-    fg.remapped_copy(setup.src, fg.OUT / "Andika-remapped.ttf", cmap_old)
-    (fg.OUT / "fit_report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
+    OUT.mkdir(parents=True, exist_ok=True)
+    tt.save(str(OUT / "Fitted-Regular.ttf"))
+    fg.remapped_copy(setup.src, OUT / "Andika-remapped.ttf", cmap_old)
+    (OUT / "fit_report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
     worst = sorted(report.items(), key=lambda kv: -abs(kv[1]["after"] - kv[1]["fit"]))[:5]
     print(f"{len(report)} glyphs; mean {np.mean([v['before'] for v in report.values()]):.3f} -> "
           f"{np.mean([v['after'] for v in report.values()]):.3f}; written vs fitted, the farthest: "
           + ", ".join(f"{c!a} {v['fit']:.3f}/{v['after']:.3f}" for c, v in worst))
-    print(fg.OUT / "Fitted-Regular.ttf")
+    print(OUT / "Fitted-Regular.ttf")
 
 
 def base_step():
@@ -704,13 +984,13 @@ def base_step():
     alternates) to the message font: the em the strokes are drawn in, and
     the glyph each character took, whose place in the font it takes."""
     import make_table  # tools/typeface
-    work = fg.OUT / "work"
+    work = OUT / "work"
     work.mkdir(parents=True, exist_ok=True)
     fonts = fg.pages.load_fonts(fg.ROOT / "disc")
-    t = make_table.table_for("normal", str(ANDIKA) + "+alt", fonts["normal"], work)
+    t = make_table.table_for(FONT, str(ANDIKA) + "+alt", fonts[FONT], work)
     out = {k: t[k] for k in ("font", "cw", "ch", "file", "em_x", "em_y", "baseline", "grow", "pen_x", "pen_y",
                              "slant")}
-    out["extra_grow"] = make_table.EXTRA_GROW.get("normal", 0)
+    out["extra_grow"] = make_table.EXTRA_GROW.get(FONT, 0)
     out["rows"] = [{"char": c, "gid": gid, "glyph": name, "shift": s, "lift": lift, "err": e, "gap": gap}
                    for c, gid, name, s, lift, e, gap in t["rows"]]
     out["tags"] = t["tags"]
@@ -727,12 +1007,27 @@ def main():
     ap.add_argument("--steps", type=int, default=450)
     ap.add_argument("--lr", type=float, default=0.03)
     ap.add_argument("--pull", type=float, default=0.002)
+    ap.add_argument("--fair", type=float, default=None,
+                    help="the weight of the guard against kinks (default: the font's, profiles.py; 0 fits "
+                         "as before it)")
+    ap.add_argument("--smooth", type=float, default=None,
+                    help="the weight of fair curves, the change of curvature along a stroke (default: the "
+                         "font's; 0 fits as before it)")
+    ap.add_argument("--join", type=float, default=None,
+                    help="the weight holding an end marked j on the stroke it joins and near its place "
+                         "(default: the font's; 0 frees it, its end still round)")
     ap.add_argument("--pen", default="1.75,1.65",
                     help="the pen's wx,wy (cell pixels): its shape, and its size unless fitted")
     ap.add_argument("--fixed-size", action="store_true", help="every glyph with the pen's size as given")
     ap.add_argument("--limit", type=float, default=2.0, help="miter limit (skia's); LIMIT_FOR overrides")
     ap.add_argument("--threads", type=int, default=8)
+    ap.add_argument("--font", default="normal", choices=sorted(PROFILES),
+                    help="the game font drawn: the message font's (normal) or the names' (name)")
     args = ap.parse_args()
+    use(args.font)
+    for term in ("fair", "smooth", "join"):
+        if getattr(args, term) is None:
+            setattr(args, term, getattr(PROFILES[args.font], term))
     if args.base:
         base_step()
         return
@@ -742,12 +1037,13 @@ def main():
     unknown = [c for c in chars if c not in SKELETONS]
     if unknown:
         raise SystemExit(f"no skeleton for {''.join(unknown)!a}")
+    full = chars
     if args.part:
         i, n = (int(v) for v in args.part.split("/"))
         chars = chars[i::n]
     setup = Setup(args.limit)
     if not args.assemble:
-        fit_step(setup, chars, args, pen0)
+        fit_step(setup, chars, args, pen0, full)
     if args.assemble or (args.chars is None and args.part is None):
         assemble_step(setup, args.limit)
 

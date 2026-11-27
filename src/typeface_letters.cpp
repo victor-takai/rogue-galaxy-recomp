@@ -51,6 +51,8 @@ extern const unsigned char rg_typeface_andika_bold[];
 extern const size_t rg_typeface_andika_bold_size;
 extern const unsigned char rg_typeface_rogue_letters_regular[];
 extern const size_t rg_typeface_rogue_letters_regular_size;
+extern const unsigned char rg_typeface_rogue_letters_names_regular[];
+extern const size_t rg_typeface_rogue_letters_names_regular_size;
 
 namespace rg::typeface
 {
@@ -263,6 +265,8 @@ Typeface g_typefaces[] = {
     {"Andika-Regular.ttf", rg_typeface_andika_regular, &rg_typeface_andika_regular_size},
     {"Andika-Bold.ttf", rg_typeface_andika_bold, &rg_typeface_andika_bold_size},
     {"RogueLetters-Regular.ttf", rg_typeface_rogue_letters_regular, &rg_typeface_rogue_letters_regular_size, true},
+    {"RogueLettersNames-Regular.ttf", rg_typeface_rogue_letters_names_regular,
+     &rg_typeface_rogue_letters_names_regular_size, true},
 };
 
 // A draw past 0x80 alpha (dq8::gfx::RegionRequest::bold; the game's menus
@@ -308,13 +312,15 @@ std::atomic<bool> g_traceTiming{false};
 // a half (2026-11-24). RG_TYPEFACE_GAP=N, 0 to 40, for comparing.
 constexpr int kGapOpening = 5;
 std::atomic<int> g_gapOpening{kGapOpening};
-// The same for the names' fonts (name, name_eur: the speaker's name over the
-// dialogue, the names over heads), drawn with a border ring a pixel wide
-// that took the half pixel's gaps: the name's letters touched (Simon's cores
-// 0.75, 0.25, 0 and 0.5 pixels apart, the console's 2, 2, 1 and 1; with this,
-// 1.5, 1.5, 1 and 1). One and a half, picked by the user against one
-// (2026-11-25). The menus' and the load screen's letters keep half a pixel,
-// which the user kept there; RG_TYPEFACE_GAP does not change this one.
+// The same for the names' fonts in Andika (name_eur, the European text's
+// speaker's name over the dialogue and names over heads; the English one,
+// name, is Rogue Letters Names, drawn after the console's), drawn with a
+// border ring a pixel wide that took the half pixel's gaps: the name's
+// letters touched (Simon's cores 0.75, 0.25, 0 and 0.5 pixels apart, the
+// console's 2, 2, 1 and 1; with this, 1.5, 1.5, 1 and 1). One and a half,
+// picked by the user against one (2026-11-25). The menus' and the load
+// screen's letters keep half a pixel, which the user kept there;
+// RG_TYPEFACE_GAP does not change this one.
 constexpr int kNameGapOpening = 15;
 // The "+" (the settings pages' - and + buttons, the texts' bonuses) is drawn
 // with arms that come out equal on the screen, whatever its shape
@@ -334,12 +340,15 @@ std::atomic<int> g_shapeStep{37};
 constexpr int kShapeSettleFrames = 10;
 
 // A typeface drawn after the console's own glyphs (Rogue Letters, the English
-// message font's; Typeface::afterConsole): each glyph is already as wide as
-// the console's ink, so it keeps its width and the table's place, and the
-// gaps are the console's less the font's stroke growth, as the user saw and
-// kept them in the game (2026-11-25). The even gaps above are for Andika's
-// (the European message font's too). Only fields never written after start
-// are read here: no lock.
+// message font's, and Rogue Letters Names, the English names';
+// Typeface::afterConsole): each glyph is already as wide as the console's
+// ink, so it keeps its width and the table's place, and the gaps are the
+// console's less the font's stroke growth, as the user saw and kept them in
+// the game (2026-11-25). The names' gaps come out so a little wider than the
+// console's (Simon's cores 2.5, 2.25, 1.75 and 2 pixels apart, the console's
+// 2, 2, 1 and 1, as a 4x capture's warm fill shows them). The even gaps
+// above are for Andika's (the European message and names fonts' too). Only
+// fields never written after start are read here: no lock.
 bool drawnAfterConsole(const TypefaceFont &font)
 {
     for (const Typeface &face : g_typefaces)
@@ -1660,6 +1669,9 @@ Picture draw(const Job &job)
         left -= int(std::lround(glyph.shift * float(r)));
         const double inkWidth = inkRight + 1 - inkLeft;
         const double consoleWidth = double(job.ink.right - job.ink.left) * r;
+        // The names' fonts open by kNameGapOpening: today only the European
+        // one comes here, the English names' (Rogue Letters Names) being
+        // drawn after the console's (drawnAfterConsole).
         const bool names = job.font == &kNameFont || job.font == &kNameEurFont;
         const int opening = names ? kNameGapOpening : g_gapOpening.load(std::memory_order_relaxed);
         const double wanted = consoleWidth - opening / 10.0 * r;

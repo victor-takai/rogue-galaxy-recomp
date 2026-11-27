@@ -9,7 +9,7 @@ usage (from the repository's root, with the disc extracted):
   python -I tools/typeface/make_table.py \\
       normal=thirdparty/fonts/rogue-letters/RogueLetters-Regular.ttf \\
       system=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
-      name=thirdparty/fonts/andika/Andika-Regular.ttf+alt \\
+      name=thirdparty/fonts/rogue-letters/RogueLettersNames-Regular.ttf \\
       normal_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \\
       system_eur=thirdparty/fonts/andika/Andika-Bold.ttf+alt \\
       name_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \\

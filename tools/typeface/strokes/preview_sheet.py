@@ -1,8 +1,9 @@
 """A sheet to judge the glyphs by: per character, the console's (nearest)
 beside Andika as the typeface table drew it and the fitted strokes, drawn as
 make_table.py's fit draws them (FreeType at 8x the cell, the table's size,
-horizontal scale and baseline, the stroke grown by the message font's two
-steps, as in the game), box-filtered to the sheet's scale. Both are placed
+horizontal scale and baseline, the stroke grown as in the game: Andika by
+its fit's growth and the font's extra steps, the strokes by the extra steps,
+the message font's two), box-filtered to the sheet's scale. Both are placed
 as the table placed Andika (andika_fit.json's shift, on the baseline, no
 lift); the game places Rogue Letters by its own rows (src/typeface_table.inc,
 fitted again by make_table.py), so a mark can sit up to half a pixel off the
@@ -10,7 +11,7 @@ game's (the quotes: 0.75 across here, 0.5 across and 0.25 down in the game).
 Into build/typeface/strokes (the console's glyphs are in it: never into the
 repository).
 
-    python -I tools/typeface/strokes/preview_sheet.py [--scale 4] [--grow 2] [--chars ...]
+    python -I tools/typeface/strokes/preview_sheet.py [--font name] [--scale 4] [--grow 2] [--chars ...]
         [--face LABEL=PATH ...] [--name preview_4x.png]
 """
 import argparse
@@ -26,6 +27,7 @@ sys.path.insert(0, str(HERE))
 import raster  # noqa: E402  (puts tools/typeface on the path)
 import fit  # noqa: E402
 import pages  # noqa: E402
+import stroke_fit as sf  # noqa: E402
 
 BG = (20, 28, 52)
 
@@ -67,9 +69,10 @@ def tint(a: Image.Image) -> Image.Image:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--dir", type=Path, default=raster.OUT, help="stroke_fit.py's output")
+    ap.add_argument("--font", default="normal", choices=sorted(sf.PROFILES), help="as stroke_fit.py's")
+    ap.add_argument("--dir", type=Path, default=None, help="stroke_fit.py's output (default: the font's)")
     ap.add_argument("--scale", type=int, default=4)
-    ap.add_argument("--grow", type=int, default=2)
+    ap.add_argument("--grow", type=int, default=None, help="steps of growth for every face (default: as in the game)")
     ap.add_argument("--chars", default=None)
     ap.add_argument("--cols", type=int, default=6)
     ap.add_argument("--name", default=None)
@@ -77,12 +80,14 @@ def main():
                     help="LABEL=PATH (a .ttf whose cmap maps each character to the glyph to show), "
                          "repeatable; default: Andika as the table drew it, and the fitted strokes")
     args = ap.parse_args()
-    params = json.loads((HERE / "andika_fit.json").read_text(encoding="utf-8"))
+    sf.use(args.font)
+    args.dir = args.dir or sf.OUT
+    params = json.loads(sf.BASE.read_text(encoding="utf-8"))
     rows = {r["char"]: r for r in params["rows"]}
     report = json.loads((args.dir / "fit_report.json").read_text(encoding="utf-8"))
     chars = args.chars or "".join(report)
     fonts = pages.load_fonts(raster.ROOT / "disc")
-    console = {g.char: g for g in fonts["normal"] if g.char}
+    console = {g.char: g for g in fonts[args.font] if g.char}
     cw, ch = params["cw"], params["ch"]
     cap = console["H"].ink[3] - console["H"].ink[1] + 1
     size = int(round(cap * fit.R * 1.4))
@@ -92,6 +97,16 @@ def main():
     specs = args.face or [f"Andika={args.dir / 'Andika-remapped.ttf'}",
                           f"strokes={args.dir / 'Fitted-Regular.ttf'}"]
     labels = [s.split("=", 1)[0] for s in specs]
+    # Andika drawn as the table draws it (its fit's growth and the extra
+    # steps), the strokes (and a face named) with the extra steps.
+    extra = params.get("extra_grow", 0)
+    # The strokes as the game grows them: the table's growth for this font
+    # when it draws it from the strokes' font, else the extra steps (a stroke
+    # font fitted at no growth).
+    drawn = sf.table_growth(args.font)
+    extra = drawn if drawn is not None else extra
+    grows = [args.grow if args.grow is not None else
+             params["grow"] + extra if args.face is None and j == 0 else extra for j in range(len(specs))]
     faces = [fit.open_font(fit.Instance(s.split("=", 1)[1]), size) for s in specs]
     nf = len(faces) + 1
     s = args.scale
@@ -104,7 +119,7 @@ def main():
     out = Image.new("RGB", (ncols * tile_w + pad, 44 + nrows * tile_h), (12, 16, 30))
     d = ImageDraw.Draw(out)
     lf = label_font()
-    d.text((pad, 8), f"console | {' | '.join(labels)}  ({s}x, stroke +{args.grow} as in the game; "
+    d.text((pad, 8), f"console | {' | '.join(labels)}  ({s}x, stroke {' '.join(f'{g:+d}' for g in grows)}; "
            f"numbers: difference with the console's, Andika -> strokes)", fill=(200, 200, 200), font=lf)
     for i, c in enumerate(chars):
         tx = pad + (i % ncols) * tile_w
@@ -116,7 +131,7 @@ def main():
         o = console[c]
         oc = (o.ink[0] + o.ink[2] + 1) / 2 + rows[c]["shift"]
         for j, face in enumerate(faces):
-            g = fit.grown(fit.render_glyph(face, c, 4 * fit.R, None), args.grow)
+            g = fit.grown(fit.render_glyph(face, c, 4 * fit.R, None), grows[j])
             img = cell_at(g, sigma, k, bl, cw, ch, oc, s)
             img = img.point(lambda v: min(255, v))
             out.paste(tint(img), (tx + (j + 1) * (pw + pad), ty + labh))

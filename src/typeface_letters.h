@@ -11,10 +11,11 @@ class SdlGpuBackend;
 // glyphs enlarged: each glyph the renderer is about to draw from the font
 // sheet is redrawn from a free typeface made to look like the console's
 // (SIL Open Font License, thirdparty/fonts: Rogue Letters for the English
-// dialogue, drawn after the console's own glyphs; Andika for the rest), at
-// the internal resolution, in the glyph's own cell, so the game's layout,
-// widths and borders stay. An Andika glyph is drawn as wide as the console's
-// ink less half a pixel (a name's, under its border, one and a half; before
+// dialogue and Rogue Letters Names for the English names, both drawn after
+// the console's own glyphs; Andika for the rest), at the internal
+// resolution, in the glyph's own cell, so the game's layout, widths and
+// borders stay. An Andika glyph is drawn as wide as the console's ink less
+// half a pixel (a European name's, under its border, one and a half; before
 // its strokes' growth), so the gaps between letters are even; a Rogue
 // Letters glyph keeps its own width. The "+" of every font is as wide as it
 // is tall on the screen, a Widescreen picture's included (setPixelShape).

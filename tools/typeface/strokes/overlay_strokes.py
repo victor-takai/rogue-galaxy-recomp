@@ -4,7 +4,7 @@ red, and the glyph alone filled at the same scale beside it. Into
 build/typeface/strokes (the console's glyphs are in it: never into the
 repository); run stroke_fit.py --assemble first.
 
-    python -I tools/typeface/strokes/overlay_strokes.py --chars ",;j" [--scale 24] [--name overlay.png]
+    python -I tools/typeface/strokes/overlay_strokes.py --chars ",;j" [--font name] [--scale 24] [--name overlay.png]
 """
 import argparse
 import json
@@ -25,11 +25,14 @@ from preview_sheet import label_font  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--dir", type=Path, default=fg.OUT, help="stroke_fit.py's output")
+    ap.add_argument("--font", default="normal", choices=sorted(sf.PROFILES), help="as stroke_fit.py's")
+    ap.add_argument("--dir", type=Path, default=None, help="stroke_fit.py's output (default: the font's)")
     ap.add_argument("--chars", required=True)
     ap.add_argument("--scale", type=int, default=24)
     ap.add_argument("--name", default="overlay.png")
     args = ap.parse_args()
+    sf.use(args.font)
+    args.dir = args.dir or sf.OUT
     setup = sf.Setup(2.0)
     table = sf.load_table()
     tt = TTFont(str(args.dir / "Fitted-Regular.ttf"))
