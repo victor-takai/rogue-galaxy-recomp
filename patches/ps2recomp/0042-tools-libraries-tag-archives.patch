@@ -1,0 +1,108 @@
+diff --git a/ps2xAnalyzer/CMakeLists.txt b/ps2xAnalyzer/CMakeLists.txt
+index 97d4cee..b9e70bb 100644
+--- a/ps2xAnalyzer/CMakeLists.txt
++++ b/ps2xAnalyzer/CMakeLists.txt
+@@ -6,11 +6,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ 
+ include(FetchContent)
+ 
++# The tag's archive, 8.1 MB, rather than a clone (175 MB of .git, 14 s of
++# a first configure; ps2xRecomp/CMakeLists.txt says why no URL_HASH and
++# TLS_VERIFY).
+ FetchContent_Declare(
+     nlohmann_json
+-    GIT_REPOSITORY https://github.com/nlohmann/json.git
+-    GIT_TAG v3.11.3
+-    GIT_SHALLOW TRUE
++    URL "https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.gz"
++    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
++    TLS_VERIFY TRUE
+ )
+ FetchContent_MakeAvailable(nlohmann_json)
+ 
+diff --git a/ps2xRecomp/CMakeLists.txt b/ps2xRecomp/CMakeLists.txt
+index 5ed0d07..8957cd5 100644
+--- a/ps2xRecomp/CMakeLists.txt
++++ b/ps2xRecomp/CMakeLists.txt
+@@ -9,33 +9,45 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
+ 
+ include(FetchContent)
+ 
++# Each library as its tag's archive from GitHub rather than a clone of its
++# repository, as raylib is: the clones brought whole histories (or, with
++# GIT_SHALLOW, every branch's tip), toml11's with its test and
++# documentation submodules (359 MB of .git), and a first configure of the
++# recompiler and analyzer took 78-84 s against 28 s (2026-11-27). The same
++# files, with LF line endings, and no submodules (toml11's are its tests'
++# and its documentation's). No URL_HASH: GitHub makes these archives on
++# request and does not promise the same bytes, and a changed hash would
++# stop every configure; TLS_VERIFY instead, which before CMake 3.30 is off
++# by default, so the download is as checked as the clone was.
+ FetchContent_Declare(
+     elfio
+-    GIT_REPOSITORY https://github.com/serge1/ELFIO.git
+-    GIT_TAG Release_3.12
+-    GIT_SHALLOW TRUE
++    URL "https://github.com/serge1/ELFIO/archive/refs/tags/Release_3.12.tar.gz"
++    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
++    TLS_VERIFY TRUE
+ )
+ FetchContent_MakeAvailable(elfio)
+ 
+ FetchContent_Declare(
+     toml11
+-    GIT_REPOSITORY https://github.com/ToruNiina/toml11.git
+-    GIT_TAG v4.4.0
++    URL "https://github.com/ToruNiina/toml11/archive/refs/tags/v4.4.0.tar.gz"
++    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
++    TLS_VERIFY TRUE
+ )
+ FetchContent_MakeAvailable(toml11)
+ 
+ FetchContent_Declare(
+     fmt
+-    GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+-    GIT_TAG 12.1.0
++    URL "https://github.com/fmtlib/fmt/archive/refs/tags/12.1.0.tar.gz"
++    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
++    TLS_VERIFY TRUE
+ )
+ FetchContent_MakeAvailable(fmt)
+  
+ FetchContent_Declare(
+     libdwarf
+-    GIT_REPOSITORY https://github.com/davea42/libdwarf-code.git
+-    GIT_TAG v2.2.0
+-    GIT_SHALLOW TRUE
++    URL "https://github.com/davea42/libdwarf-code/archive/refs/tags/v2.2.0.tar.gz"
++    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
++    TLS_VERIFY TRUE
+ )
+ 
+ set(BUILD_DWARFDUMP    OFF CACHE BOOL "" FORCE)
+@@ -51,8 +63,9 @@ set(LIBDWARF_INCLUDE_DIR "${libdwarf_SOURCE_DIR}/src/lib/libdwarf")
+ 
+ FetchContent_Declare(
+     rabbitizer
+-    GIT_REPOSITORY https://github.com/Decompollaborate/rabbitizer.git
+-    GIT_TAG 1.14.3
++    URL "https://github.com/Decompollaborate/rabbitizer/archive/refs/tags/1.14.3.tar.gz"
++    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
++    TLS_VERIFY TRUE
+ )
+ FetchContent_MakeAvailable(rabbitizer)
+ 
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index d5785fd..1ac4535 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -86,6 +86,9 @@ else()
+         raylib
+         URL "https://github.com/raysan5/raylib/archive/refs/tags/5.5.tar.gz" # we will migrate to 4.2.0 later, trust me it will be better
+         DOWNLOAD_EXTRACT_TIMESTAMP FALSE
++        # Before CMake 3.30 a download checks no certificate by default; the
++        # clone this replaced did (patch 0042).
++        TLS_VERIFY TRUE
+     )
+     FetchContent_MakeAvailable(raylib)
+ 

@@ -378,8 +378,10 @@ function Set-BuildEnvironment {
     }
     $env:PYTHONUTF8 = "1"
     $env:PYTHONUNBUFFERED = "1"
-    # One library's tests sit deeper than Windows' old path limit; the
-    # dependency downloads check out at fixed tags.
+    # The dependency clones (SDL3's) check out at fixed tags, and may
+    # check out deep paths (a file in toml11's json submodule once passed
+    # Windows' old limit; patch 0042 fetches toml11 as an archive, without
+    # its submodules).
     $env:GIT_CONFIG_COUNT = "3"
     $env:GIT_CONFIG_KEY_0 = "core.longpaths"
     $env:GIT_CONFIG_VALUE_0 = "true"
