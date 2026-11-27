@@ -2,8 +2,10 @@
 # install.ps1 builds through and update.ps1 writes through. Dot-sourced by
 # both.
 #
-# The deepest path the build writes is 185 characters below the game's folder
-# (build\tools\_deps\toml11-src\tests\...), and Windows programs stop at 259
+# The deepest path the build writes is 187 characters below the game's folder
+# (nlohmann/json's tests, while CMake extracts its archive into
+# build\tools\_deps\ex-nlohmann_json-populate1234\...; 185 in toml11's
+# json submodule before patch 0042), and Windows programs stop at 259
 # characters unless long paths are turned on in the registry, which they are
 # not by default. So a folder whose path is longer than $ShortNameLimit, or
 # has spaces, symbols or letters other than A-Z, is reached through a directory

@@ -527,4 +527,7 @@ toolchain, which `Dq8Sdl3Preseed.cmake` loads when the SDL release and its
 patches, the compiler and its target, CMake, the flags and the headers match
 (2.5 s, the same `SDL_build_config.h`). In a fresh build folder
 `-DDQ8_SDL3_PRESEED=OFF` leaves them out, and `tools/install/sdl3_preseed.py`
-regenerates the file.
+regenerates the file. glslang, fetched when no GLSL compiler is installed,
+comes as the 15.4.0 tag's archive (4.2 MB, the clone's files, with
+`TLS_VERIFY`) instead of a shallow clone: a first configure took 59-60 s
+with the clone, 48-50 s with the archive, the 16 shader headers the same.

@@ -60,11 +60,16 @@ function(dq8_find_shader_compiler)
     set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
     set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS OFF)
+    # The tag's archive, 4.2 MB, rather than a clone (Rogue Galaxy: changed;
+    # the same files, as the PS2Recomp patches 0039 and 0042 do for raylib
+    # and the recompiler's libraries). No URL_HASH: GitHub makes these
+    # archives on request and does not promise the same bytes. TLS_VERIFY,
+    # off by default before CMake 3.30, checks the certificate as the
+    # clone did.
     FetchContent_Declare(glslang
-        GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
-        GIT_TAG 15.4.0
-        GIT_SHALLOW TRUE
-        GIT_PROGRESS TRUE)
+        URL "https://github.com/KhronosGroup/glslang/archive/refs/tags/15.4.0.tar.gz"
+        DOWNLOAD_EXTRACT_TIMESTAMP FALSE
+        TLS_VERIFY TRUE)
     FetchContent_MakeAvailable(glslang)
     if(NOT TARGET glslang-standalone)
         message(FATAL_ERROR

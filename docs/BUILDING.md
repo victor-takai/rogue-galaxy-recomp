@@ -36,9 +36,12 @@ python setup.py check
 
 From the repository root. The generated code is built with clang (the flags
 are GNU-style; on Windows an LLVM MinGW clang works). Configuring the game
-downloads raylib (the 5.5 tag's archive) and SDL3, glslang (for the GPU
-backend's shaders) when no GLSL compiler is installed, and, on Windows, a
-prebuilt LGPL FFmpeg whose hash the framework pins. `-DRG_GS_SDLGPU=OFF`
+downloads raylib (the 5.5 tag's archive), SDL3 (a clone), glslang (the
+15.4.0 tag's archive, for the GPU backend's shaders) when no GLSL compiler
+is installed, and, on Windows, a prebuilt LGPL FFmpeg whose hash the
+framework pins; configuring the recompiler downloads its libraries as their
+tags' archives (patch 0042; sse2neon, fetched on ARM only, is still a
+clone). `-DRG_GS_SDLGPU=OFF`
 at configure leaves out the GPU backend, and with it the menu: the game
 draws with the software GS.
 
