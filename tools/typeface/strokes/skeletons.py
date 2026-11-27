@@ -16,7 +16,10 @@ draws it: the fit only places it (its centre at x,y), sizes and narrows it.
 a tail, a "9"), its head's centre and radii; the fit leaves it as it is
 here. Node kinds t and u are smooth nodes whose curve leaves along the
 straight piece before (t) or after (u) them: a straight stem bending into a
-straight foot.
+straight foot. An end marked j joins the stroke it lies on (a bowl's end on
+its stem, an arm's on the stem): the fit holds it on that stroke's centre
+line, so its end stays inside the other stroke instead of standing out of
+it.
 The fit (stroke_fit.py) moves every other node; these are the starting
 places, read from the console's pixels (dump_cells.py). Where the fit left
 them, and the pen of each glyph, is strokes.json.
@@ -242,10 +245,12 @@ def parse(spec: str):
     nodes = []
     for i, t in enumerate(toks):
         kind = None
-        if t[-1] in "cshtu":
+        if t[-1] in "cshtuj":
             kind, t = t[-1], t[:-1]
         x, y = (float(v) for v in t.split(","))
         if kind is None:
             kind = "s" if (closed or 0 < i < len(toks) - 1) else "c"
+        if kind == "j" and (closed or 0 < i < len(toks) - 1):
+            raise ValueError(f"{spec!r}: j marks an end of an open stroke")
         nodes.append((x, y, kind))
     return {"nodes": nodes, "closed": closed, "round": "r" in flags, "fill": "f" in flags, "shape": None}

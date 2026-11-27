@@ -10,7 +10,7 @@ typeface to the console's glyphs:
 python -I tools/typeface/make_table.py \
     normal=thirdparty/fonts/rogue-letters/RogueLetters-Regular.ttf \
     system=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
-    name=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
+    name=thirdparty/fonts/rogue-letters/RogueLettersNames-Regular.ttf \
     normal_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
     system_eur=thirdparty/fonts/andika/Andika-Bold.ttf+alt \
     name_eur=thirdparty/fonts/andika/Andika-Regular.ttf+alt \
@@ -58,6 +58,10 @@ numbers, hashes and glyph indices.
   `typeface_letters.cpp`) where it evens the gaps of Andika's. It is drawn
   with the tools in `strokes/` (below). The European message font is still
   Andika's: Rogue Letters has no accents yet.
+- **The names font's own typeface** (`name`): Rogue Letters Names, drawn
+  the same way from the console's names font, another design than the
+  message font's (below), and drawn the same way in the game (its widths
+  kept). The European names font is still Andika's.
 - **The European fonts** (`normal_eur`, `system_eur`, `name_eur`): the European
   text's pages, `FontTex_<font>_EUR_0.tm2` of the language's
   `meswin\fontset_main_<lang>.pak` in `disc/EU` (one pack for the four
@@ -198,7 +202,34 @@ repository's root with that Python.
   into outlines with skia, merged and put in a copy of Andika, into
   `build/typeface/strokes/Fitted-Regular.ttf`, with `fit_report.json`
   (each glyph's difference with the console's: Andika's, the fit's and the
-  outline's as written).
+  outline's as written). Three terms keep the drawing a type designer's,
+  not a copy of the console's pixel steps; each font has its weights in
+  `profiles.py`: on for the names' font, off for the message font's, whose
+  table was fitted before them, so a glyph of it fits again as its
+  neighbours did:
+  - a guard (`--fair`; `FAIR_SPACING`, `FAIR_TURN`): two neighbouring nodes
+    stay at least half as far apart as the skeleton sets them, and a smooth
+    node turns little more sharply than in the skeleton (else a dent; a
+    glyph still breaking it is marked `KINKS` in the fit's line);
+  - fair curves (`--smooth`, the names' 0.2): the change of curvature along each
+    stroke weighs in, within its pieces and across its smooth nodes (else
+    the bend gathers at the nodes, flat between them: a polygon with
+    rounded corners at 4x);
+  - joins (`--join`): an end marked `j` in the skeleton stays on the centre
+    line of the stroke it joins, near its place there, and is drawn round
+    (else it stands out of that stem, a blot).
+- **`check_glyphs.py`**: checks the assembled glyphs as they come out
+  large: blots out of the console's ink, counters (the holes of a, e, o,
+  8) as many as the console's, uneven curves, bends tighter than the pen,
+  joins off their stroke and ends touching a stroke without `j`; into
+  `check.json` beside the font. A round is shown only once it lists none.
+- **`review_page.py`**: a page a round
+  (`build/typeface/strokes/.../review/round-N/index.html`, for a browser):
+  each glyph numbered, the console's at 4x beside ours at 4x and ours big,
+  with the checks' notes and a mark on the glyphs changed since the round
+  before, and names set in both, a dark ring around (`--lang pt` writes it
+  in Portuguese). It holds the console's glyphs: never for the
+  repository.
 - **`build_font.py`**: the repository's font from that copy:
   `thirdparty/fonts/rogue-letters/RogueLetters-Regular.ttf` (the message
   font's characters only, no hinting nor layout tables, Rogue Letters'
@@ -225,3 +256,42 @@ build/venv/Scripts/python -I tools/typeface/make_table.py normal=... (the comman
 
 `stroke_fit.py --assemble` and `build_font.py` with the table as it is
 give back the font in the repository byte for byte.
+
+### The names' font: Rogue Letters Names
+
+The console's names font (`name`: the speaker's name over the dialogue
+box, the names over heads) is another design, not the message font made
+smaller: heavier and narrower, with a two-storey a, a 4 closed at the top,
+a 9 whose stem curves round, a J with a bar on top, an M with upright legs.
+It gets a typeface of its own, Rogue Letters Names
+(`thirdparty/fonts/rogue-letters/RogueLettersNames-Regular.ttf`), drawn the
+same way with `--font name` on every tool (`profiles.py` lists the fonts):
+its skeletons in `skeletons_name.py` (its 16x18 cell; `dump_cells.py CHARS
+--font name`), its fit in `strokes_name.json`, Andika's fit to it in
+`andika_fit_name.json`, its files in `build/typeface/strokes/name`. Its
+comma, apostrophe and quotes are the message font's drawn "9".
+
+Its skeletons' module holds more than the message font's:
+- `MIRROR`: a glyph drawn as another's mirror image, not fitted on its own
+  (`]` from `[`, `)`, `}`, `>`): the other's fitted nodes reflected across
+  their console ink's centres of mass, the same pen. Fit the other first;
+  a fit of every glyph does.
+- `PULL_FOR` may give one weight a stroke: the a's stem and foot held to
+  their drawing, its bowl free.
+- `ACCEPT`: a check of `check_glyphs.py` a glyph is let off where the user
+  chose a drawing the console's does not have (the @'s ring left open).
+- Where the user wanted a glyph unlike the console's (the t's and a's ends
+  turned up, the ±'s plus on its bars' middle, the l's shorter foot), its
+  nodes are held (`PULL_FOR`), or the fit draws it back to the console's.
+
+A round of work: fit, assemble, check, look at every glyph big, then the
+review page for the user; the font and the table once it is approved.
+
+```
+build/venv/Scripts/python -I tools/typeface/strokes/stroke_fit.py --font name --chars "a9"
+build/venv/Scripts/python -I tools/typeface/strokes/stroke_fit.py --font name --assemble
+build/venv/Scripts/python -I tools/typeface/strokes/check_glyphs.py --font name
+build/venv/Scripts/python -I tools/typeface/strokes/review_page.py --font name
+build/venv/Scripts/python -I tools/typeface/strokes/build_font.py --font name
+build/venv/Scripts/python -I tools/typeface/make_table.py name=... (the command above)
+```
